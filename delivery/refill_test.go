@@ -29,24 +29,28 @@ func TestRefillSuite(t *testing.T) {
 	suite.Run(t, new(RefillSuite))
 }
 
-func (rs *RefillSuite) SetupSuite() {
+func (s *RefillSuite) SetupSuite() {
 	var err error
-	rs.ctx = context.Background()
-	rs.etalonNewFileName = "blablalblaUUID"
-	rs.cfg = &delivery.FileStorageConfig{
-		Dir:      "/tmp/refill",
+	s.ctx = context.Background()
+	s.etalonNewFileName = "blablalblaUUID"
+
+	dir, err := os.MkdirTemp("", filepath.Clean("refill-"))
+	s.Require().NoError(err)
+
+	s.cfg = &delivery.FileStorageConfig{
+		Dir:      dir,
 		FileName: "current",
 	}
-	rs.etalonsNames = []string{
+	s.etalonsNames = []string{
 		"www.collector.com",
 		"www.collector-dev.com",
 		"www.collector-prod.com",
 		"www.collector-replica.com",
 	}
-	rs.etalonNumberOfShards = 1
-	rs.etalonBlockID, err = uuid.NewRandom()
-	rs.NoError(err)
-	rs.etalonsData = newDataTest([]byte{
+	s.etalonNumberOfShards = 1
+	s.etalonBlockID, err = uuid.NewRandom()
+	s.NoError(err)
+	s.etalonsData = newDataTest([]byte{
 		1,
 		2,
 		3,
@@ -92,153 +96,167 @@ func (rs *RefillSuite) SetupSuite() {
 	})
 }
 
-func (rs *RefillSuite) SetupTest() {
+func (s *RefillSuite) SetupTest() {
 	var err error
-	rs.mr, err = delivery.NewRefill(
-		rs.cfg,
-		rs.etalonNumberOfShards,
-		rs.etalonBlockID,
-		rs.etalonsNames...,
+	s.mr, err = delivery.NewRefill(
+		s.cfg,
+		s.etalonNumberOfShards,
+		s.etalonBlockID,
+		s.etalonsNames...,
 	)
-	rs.NoError(err)
-	rs.Equal(rs.etalonBlockID.String(), rs.mr.BlockID().String())
-	rs.True(rs.mr.IsContinuable())
+	s.NoError(err)
+	s.Equal(s.etalonBlockID.String(), s.mr.BlockID().String())
+	s.True(s.mr.IsContinuable())
 }
 
-func (rs *RefillSuite) TearDownTest() {
-	err := os.RemoveAll(rs.cfg.Dir)
-	rs.NoError(err)
-
-	err = rs.mr.Shutdown(rs.ctx)
-	rs.NoError(err)
+func (s *RefillSuite) TearDownTest() {
+	s.NoError(os.RemoveAll(s.cfg.Dir))
 }
 
-func (rs *RefillSuite) TestManagerInitIsContinuable() {
+func (s *RefillSuite) TestManagerInitIsContinuable() {
 	segKey := delivery.SegmentKey{
 		ShardID: 0,
 		Segment: 1,
 	}
 
-	err := rs.mr.WriteSnapshot(rs.ctx, segKey, rs.etalonsData)
-	rs.NoError(err)
-	err = rs.mr.WriteSegment(rs.ctx, segKey, rs.etalonsData)
-	rs.NoError(err)
-	err = rs.mr.WriteAckStatus(rs.ctx)
-	rs.NoError(err)
+	err := s.mr.WriteSnapshot(s.ctx, segKey, s.etalonsData)
+	s.NoError(err)
+	err = s.mr.WriteSegment(s.ctx, segKey, s.etalonsData)
+	s.NoError(err)
+	err = s.mr.WriteAckStatus(s.ctx)
+	s.NoError(err)
 
-	err = rs.mr.Shutdown(rs.ctx)
-	rs.NoError(err)
-
-	mr, err := delivery.NewRefill(
-		rs.cfg,
+	mr1, err := delivery.NewRefill(
+		s.cfg,
 		2,
-		rs.etalonBlockID,
-		rs.etalonsNames...,
+		s.etalonBlockID,
+		s.etalonsNames...,
 	)
-	rs.NoError(err)
-	rs.False(mr.IsContinuable())
+	s.NoError(err)
+	s.False(mr1.IsContinuable())
 
-	mr, err = delivery.NewRefill(
-		rs.cfg,
-		rs.etalonNumberOfShards,
-		rs.etalonBlockID,
-		rs.etalonsNames[:2]...,
+	mr2, err := delivery.NewRefill(
+		s.cfg,
+		s.etalonNumberOfShards,
+		s.etalonBlockID,
+		s.etalonsNames[:2]...,
 	)
-	rs.NoError(err)
-	rs.False(mr.IsContinuable())
+	s.NoError(err)
+	s.False(mr2.IsContinuable())
+
+	err = mr1.Shutdown(s.ctx)
+	s.NoError(err)
+
+	err = mr2.Shutdown(s.ctx)
+	s.NoError(err)
+
+	err = s.mr.Shutdown(s.ctx)
+	s.NoError(err)
 }
 
-func (rs *RefillSuite) TestSegment() {
+func (s *RefillSuite) TestSegment() {
 	segKey := delivery.SegmentKey{
 		ShardID: 0,
 		Segment: 0,
 	}
 
-	rs.mr.WriteSegment(
-		rs.ctx,
+	s.mr.WriteSegment(
+		s.ctx,
 		segKey,
-		rs.etalonsData,
+		s.etalonsData,
 	)
 
-	actualSeg, err := rs.mr.Get(rs.ctx, segKey)
-	rs.NoError(err)
+	actualSeg, err := s.mr.Get(s.ctx, segKey)
+	s.NoError(err)
 
-	rs.Equal(rs.etalonsData.Bytes(), actualSeg.Bytes())
+	s.Equal(s.etalonsData.Bytes(), actualSeg.Bytes())
 }
 
-func (rs *RefillSuite) TestRestoreWithSegment() {
+func (s *RefillSuite) TestRestoreWithSegment() {
 	segKey := delivery.SegmentKey{
 		ShardID: 0,
 		Segment: 1,
 	}
 
-	rs.mr.WriteSnapshot(rs.ctx, segKey, rs.etalonsData)
-	rs.mr.WriteSegment(rs.ctx, segKey, rs.etalonsData)
+	s.mr.WriteSnapshot(s.ctx, segKey, s.etalonsData)
+	s.mr.WriteSegment(s.ctx, segKey, s.etalonsData)
 	segKey.Segment++
-	rs.mr.WriteSegment(rs.ctx, segKey, rs.etalonsData)
+	s.mr.WriteSegment(s.ctx, segKey, s.etalonsData)
 	segKey.Segment++
-	rs.mr.WriteSegment(rs.ctx, segKey, rs.etalonsData)
+	s.mr.WriteSegment(s.ctx, segKey, s.etalonsData)
 
-	actualSnap, actSegments, err := rs.mr.Restore(rs.ctx, segKey)
-	rs.NoError(err)
-	rs.Equal(3, len(actSegments))
-	rs.Equal(rs.etalonsData.Bytes(), actualSnap.Bytes())
-	rs.Equal(rs.etalonsData.Bytes(), actSegments[0].Bytes())
+	actualSnap, actSegments, err := s.mr.Restore(s.ctx, segKey)
+	s.NoError(err)
+	s.Equal(3, len(actSegments))
+	s.Equal(s.etalonsData.Bytes(), actualSnap.Bytes())
+	s.Equal(s.etalonsData.Bytes(), actSegments[0].Bytes())
+
+	err = s.mr.Shutdown(s.ctx)
+	s.NoError(err)
 }
 
-func (rs *RefillSuite) TestRestoreWithoutSegment() {
+func (s *RefillSuite) TestRestoreWithoutSegment() {
 	segKey := delivery.SegmentKey{
 		ShardID: 0,
 		Segment: 1,
 	}
 
-	rs.mr.WriteSnapshot(rs.ctx, segKey, rs.etalonsData)
-	rs.mr.WriteSegment(rs.ctx, segKey, rs.etalonsData)
+	s.mr.WriteSnapshot(s.ctx, segKey, s.etalonsData)
+	s.mr.WriteSegment(s.ctx, segKey, s.etalonsData)
 
-	actualSnap, actSegments, err := rs.mr.Restore(rs.ctx, segKey)
-	rs.NoError(err)
-	rs.Equal(0, len(actSegments))
-	rs.Equal(rs.etalonsData.Bytes(), actualSnap.Bytes())
+	actualSnap, actSegments, err := s.mr.Restore(s.ctx, segKey)
+	s.NoError(err)
+	s.Equal(0, len(actSegments))
+	s.Equal(s.etalonsData.Bytes(), actualSnap.Bytes())
+
+	err = s.mr.Shutdown(s.ctx)
+	s.NoError(err)
 }
 
-func (rs *RefillSuite) TestRestoreError() {
+func (s *RefillSuite) TestRestoreError() {
 	segKey := delivery.SegmentKey{
 		ShardID: 0,
 		Segment: 2,
 	}
 
-	rs.mr.WriteSnapshot(rs.ctx, segKey, rs.etalonsData)
-	rs.mr.WriteSegment(rs.ctx, segKey, rs.etalonsData)
+	s.mr.WriteSnapshot(s.ctx, segKey, s.etalonsData)
+	s.mr.WriteSegment(s.ctx, segKey, s.etalonsData)
 
 	segKey.Segment = 1
 
-	actualSnap, actSegments, err := rs.mr.Restore(rs.ctx, segKey)
-	rs.Error(err)
-	rs.ErrorIs(err, delivery.ErrSegmentNotFoundRefill)
-	rs.Equal(0, len(actSegments))
-	rs.Nil(actualSnap)
+	actualSnap, actSegments, err := s.mr.Restore(s.ctx, segKey)
+	s.Error(err)
+	s.ErrorIs(err, delivery.ErrSegmentNotFoundRefill{})
+	s.Equal(0, len(actSegments))
+	s.Nil(actualSnap)
+
+	err = s.mr.Shutdown(s.ctx)
+	s.NoError(err)
 }
 
-func (rs *RefillSuite) TestRestoreError_2() {
+func (s *RefillSuite) TestRestoreError_2() {
 	segKey := delivery.SegmentKey{
 		ShardID: 0,
 		Segment: 1,
 	}
 
-	rs.mr.WriteSegment(rs.ctx, segKey, rs.etalonsData)
+	s.mr.WriteSegment(s.ctx, segKey, s.etalonsData)
 	segKey.Segment++
-	rs.mr.WriteSegment(rs.ctx, segKey, rs.etalonsData)
+	s.mr.WriteSegment(s.ctx, segKey, s.etalonsData)
 	segKey.Segment++
-	rs.mr.WriteSegment(rs.ctx, segKey, rs.etalonsData)
+	s.mr.WriteSegment(s.ctx, segKey, s.etalonsData)
 
-	actualSnap, actSegments, err := rs.mr.Restore(rs.ctx, segKey)
-	rs.Error(err)
-	rs.ErrorIs(err, delivery.ErrSegmentNotFoundRefill)
-	rs.Equal(0, len(actSegments))
-	rs.Nil(actualSnap)
+	actualSnap, actSegments, err := s.mr.Restore(s.ctx, segKey)
+	s.Error(err)
+	s.ErrorIs(err, delivery.ErrSegmentNotFoundRefill{})
+	s.Equal(0, len(actSegments))
+	s.Nil(actualSnap)
+
+	err = s.mr.Shutdown(s.ctx)
+	s.NoError(err)
 }
 
-func (rs *RefillSuite) TestWriteSegmentError() {
+func (s *RefillSuite) TestWriteSegmentError() {
 	segKey := delivery.SegmentKey{
 		ShardID: 0,
 		Segment: 2,
@@ -249,136 +267,148 @@ func (rs *RefillSuite) TestWriteSegmentError() {
 		Segment: segKey.Segment + 2,
 	}
 
-	err := rs.mr.WriteSnapshot(rs.ctx, segKey, rs.etalonsData)
-	rs.NoError(err)
-	err = rs.mr.WriteSegment(rs.ctx, errSegKey, rs.etalonsData)
-	rs.ErrorIs(err, delivery.ErrSnapshotRequired)
+	err := s.mr.WriteSnapshot(s.ctx, segKey, s.etalonsData)
+	s.NoError(err)
+	err = s.mr.WriteSegment(s.ctx, errSegKey, s.etalonsData)
+	s.ErrorIs(err, delivery.ErrSnapshotRequired)
+
+	err = s.mr.Shutdown(s.ctx)
+	s.NoError(err)
 }
 
-func (rs *RefillSuite) TestAckStatus() {
-	rs.T().Log("write ack status and check file not exist")
-	err := rs.mr.WriteAckStatus(rs.ctx)
-	rs.NoError(err)
-	_, err = os.Stat(filepath.Clean(filepath.Join(rs.cfg.Dir, rs.cfg.FileName+".refill")))
-	rs.Error(err, "File not deleted")
+func (s *RefillSuite) TestAckStatus() {
+	s.T().Log("write ack status and check file not exist")
+	err := s.mr.WriteAckStatus(s.ctx)
+	s.NoError(err)
+	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.cfg.FileName+".refill"))
+	s.Error(err, "File not deleted")
 
-	rs.T().Log("write segment, ack status and check file exist")
-	err = rs.mr.WriteSegment(rs.ctx, delivery.SegmentKey{0, 0}, rs.etalonsData)
-	rs.NoError(err)
-	err = rs.mr.WriteAckStatus(rs.ctx)
-	rs.NoError(err)
-	_, err = os.Stat(filepath.Clean(filepath.Join(rs.cfg.Dir, rs.cfg.FileName+".refill")))
-	rs.NoError(err, "File deleted")
+	s.T().Log("write segment, ack status and check file exist")
+	err = s.mr.WriteSegment(s.ctx, delivery.SegmentKey{0, 0}, s.etalonsData)
+	s.NoError(err)
+	err = s.mr.WriteAckStatus(s.ctx)
+	s.NoError(err)
+	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.cfg.FileName+".refill"))
+	s.NoError(err, "File deleted")
 
-	rs.T().Log("ack segments for all name and check file deleted")
-	for _, name := range rs.etalonsNames {
-		rs.mr.Ack(delivery.SegmentKey{0, 0}, name)
-		rs.mr.Ack(delivery.SegmentKey{0, 1}, name)
+	s.T().Log("ack segments for all name and check file deleted")
+	for _, name := range s.etalonsNames {
+		s.mr.Ack(delivery.SegmentKey{0, 0}, name)
+		s.mr.Ack(delivery.SegmentKey{0, 1}, name)
 	}
-	err = rs.mr.WriteAckStatus(rs.ctx)
-	rs.NoError(err)
-	_, err = os.Stat(filepath.Clean(filepath.Join(rs.cfg.Dir, rs.cfg.FileName+".refill")))
-	rs.Error(err, "File not deleted")
+	err = s.mr.WriteAckStatus(s.ctx)
+	s.NoError(err)
+	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.cfg.FileName+".refill"))
+	s.Error(err, "File not deleted")
+
+	err = s.mr.Shutdown(s.ctx)
+	s.NoError(err)
 }
 
-func (rs *RefillSuite) TestAckStatusWithReject() {
-	rs.T().Log("write ack status and check file not exist")
-	err := rs.mr.WriteAckStatus(rs.ctx)
-	rs.NoError(err)
-	_, err = os.Stat(filepath.Clean(filepath.Join(rs.cfg.Dir, rs.cfg.FileName+".refill")))
-	rs.Error(err, "File not deleted")
+func (s *RefillSuite) TestAckStatusWithReject() {
+	s.T().Log("write ack status and check file not exist")
+	err := s.mr.WriteAckStatus(s.ctx)
+	s.NoError(err)
+	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.cfg.FileName+".refill"))
+	s.Error(err, "File not deleted")
 
-	rs.T().Log("write segment, ack status and check file exist")
-	err = rs.mr.WriteSegment(rs.ctx, delivery.SegmentKey{0, 0}, rs.etalonsData)
-	rs.NoError(err)
-	err = rs.mr.WriteAckStatus(rs.ctx)
-	rs.NoError(err)
-	_, err = os.Stat(filepath.Clean(filepath.Join(rs.cfg.Dir, rs.cfg.FileName+".refill")))
-	rs.NoError(err, "File deleted")
+	s.T().Log("write segment, ack status and check file exist")
+	err = s.mr.WriteSegment(s.ctx, delivery.SegmentKey{0, 0}, s.etalonsData)
+	s.NoError(err)
+	err = s.mr.WriteAckStatus(s.ctx)
+	s.NoError(err)
+	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.cfg.FileName+".refill"))
+	s.NoError(err, "File deleted")
 
-	rs.T().Log("ack segments for all name and 1 reject and check file not deleted")
-	for _, name := range rs.etalonsNames {
-		rs.mr.Ack(delivery.SegmentKey{0, 0}, name)
-		rs.mr.Ack(delivery.SegmentKey{0, 1}, name)
+	s.T().Log("ack segments for all name and 1 reject and check file not deleted")
+	for _, name := range s.etalonsNames {
+		s.mr.Ack(delivery.SegmentKey{0, 0}, name)
+		s.mr.Ack(delivery.SegmentKey{0, 1}, name)
 	}
-	rs.mr.Reject(delivery.SegmentKey{0, 3}, rs.etalonsNames[0])
-	err = rs.mr.WriteAckStatus(rs.ctx)
-	rs.NoError(err)
-	_, err = os.Stat(filepath.Clean(filepath.Join(rs.cfg.Dir, rs.cfg.FileName+".refill")))
-	rs.NoError(err, "File deleted")
+	s.mr.Reject(delivery.SegmentKey{0, 3}, s.etalonsNames[0])
+	err = s.mr.WriteAckStatus(s.ctx)
+	s.NoError(err)
+	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.cfg.FileName+".refill"))
+	s.NoError(err, "File deleted")
+
+	err = s.mr.Shutdown(s.ctx)
+	s.NoError(err)
 }
 
-func (rs *RefillSuite) TestAckStatusWithSnapshot() {
-	rs.T().Log("init segKey")
+func (s *RefillSuite) TestAckStatusWithSnapshot() {
+	s.T().Log("init segKey")
 	segKey := delivery.SegmentKey{
 		ShardID: 0,
 		Segment: 2,
 	}
 
-	rs.T().Log("write snapshot")
-	err := rs.mr.WriteSnapshot(
-		rs.ctx,
+	s.T().Log("write snapshot")
+	err := s.mr.WriteSnapshot(
+		s.ctx,
 		segKey,
-		rs.etalonsData,
+		s.etalonsData,
 	)
-	rs.NoError(err)
+	s.NoError(err)
 
-	rs.T().Log("check file exist")
-	_, err = os.Stat(filepath.Clean(filepath.Join(rs.cfg.Dir, rs.cfg.FileName+".refill")))
-	rs.NoError(err, "File exist")
+	s.T().Log("check file exist")
+	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.cfg.FileName+".refill"))
+	s.NoError(err, "File exist")
 
-	rs.T().Log("write ack status")
-	err = rs.mr.WriteAckStatus(rs.ctx)
-	rs.NoError(err)
+	s.T().Log("write ack status")
+	err = s.mr.WriteAckStatus(s.ctx)
+	s.NoError(err)
 
-	rs.T().Log("check file exist")
-	_, err = os.Stat(filepath.Clean(filepath.Join(rs.cfg.Dir, rs.cfg.FileName+".refill")))
-	rs.NoError(err, "File exist")
+	s.T().Log("check file exist")
+	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.cfg.FileName+".refill"))
+	s.NoError(err, "File exist")
 
-	rs.T().Log("acked status for 0 shard for all name")
-	for _, name := range rs.etalonsNames {
-		rs.mr.Ack(delivery.SegmentKey{0, 0}, name)
-		rs.mr.Ack(delivery.SegmentKey{0, 1}, name)
-		rs.mr.Ack(delivery.SegmentKey{0, 2}, name)
+	s.T().Log("acked status for 0 shard for all name")
+	for _, name := range s.etalonsNames {
+		s.mr.Ack(delivery.SegmentKey{0, 0}, name)
+		s.mr.Ack(delivery.SegmentKey{0, 1}, name)
+		s.mr.Ack(delivery.SegmentKey{0, 2}, name)
 	}
 
-	rs.T().Log("write ack status")
-	err = rs.mr.WriteAckStatus(rs.ctx)
-	rs.NoError(err)
+	s.T().Log("write ack status")
+	err = s.mr.WriteAckStatus(s.ctx)
+	s.NoError(err)
 
-	rs.T().Log("check file does not exist, file must be deleted")
-	_, err = os.Stat(filepath.Clean(filepath.Join(rs.cfg.Dir, rs.cfg.FileName+".refill")))
-	rs.Error(err, "File not deleted")
+	s.T().Log("check file does not exist, file must be deleted")
+	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.cfg.FileName+".refill"))
+	s.Error(err, "File not deleted")
 
-	rs.T().Log("write again snapshot")
-	err = rs.mr.WriteSnapshot(
-		rs.ctx,
+	s.T().Log("write again snapshot")
+	err = s.mr.WriteSnapshot(
+		s.ctx,
 		segKey,
-		rs.etalonsData,
+		s.etalonsData,
 	)
-	rs.NoError(err)
+	s.NoError(err)
 
-	rs.T().Log("check file exist")
-	_, err = os.Stat(filepath.Clean(filepath.Join(rs.cfg.Dir, rs.cfg.FileName+".refill")))
-	rs.NoError(err, "File exist")
+	s.T().Log("check file exist")
+	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.cfg.FileName+".refill"))
+	s.NoError(err, "File exist")
+
+	err = s.mr.Shutdown(s.ctx)
+	s.NoError(err)
 }
 
-func (rs *RefillSuite) TestRotate() {
+func (s *RefillSuite) TestRename() {
 	segKey := delivery.SegmentKey{
 		ShardID: 0,
 		Segment: 2,
 	}
 
-	err := rs.mr.WriteSnapshot(
-		rs.ctx,
+	err := s.mr.WriteSnapshot(
+		s.ctx,
 		segKey,
-		rs.etalonsData,
+		s.etalonsData,
 	)
-	rs.NoError(err)
+	s.NoError(err)
 
-	err = rs.mr.Rotate()
-	rs.NoError(err)
+	s.NoError(s.mr.TemporarilyRename())
+	s.NoError(s.mr.Shutdown(s.ctx))
 
-	_, err = os.Stat(filepath.Clean(filepath.Join(rs.cfg.Dir, rs.etalonBlockID.String()+".refill")))
-	rs.NoError(err, "File not rotated")
+	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.cfg.FileName+".refill"))
+	s.Error(err, "File not rotated")
 }

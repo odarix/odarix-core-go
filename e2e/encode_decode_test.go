@@ -101,23 +101,22 @@ func (*EncoderDecoderSuite) transferringData(income []byte) []byte {
 }
 
 func (eds *EncoderDecoderSuite) TestEncodeDecode() {
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 10; i++ {
 		eds.T().Log("generate protobuf")
 		expectedWr := eds.makeData(10, int64(i))
 		data, err := expectedWr.Marshal()
 		eds.Require().NoError(err)
 
 		eds.T().Log("sharding protobuf")
-		h := delivery.NewHashdex()
-		h.PreSharding(context.Background(), data)
+		h := delivery.NewHashdex(data)
 
 		eds.T().Log("encoding protobuf")
 		_, gos, gor, err := eds.enc.Encode(eds.ctx, h)
+		eds.T().Log("destroy hashdex")
+		h.Destroy()
 		eds.Require().NoError(err)
 		eds.T().Log("destroy redundant")
 		gor.Destroy()
-		eds.T().Log("destroy hashdex")
-		h.Destroy()
 
 		eds.T().Log("transferring segment")
 		segByte := eds.transferringData(gos.Bytes())
@@ -130,7 +129,6 @@ func (eds *EncoderDecoderSuite) TestEncodeDecode() {
 		eds.Require().NoError(err)
 
 		eds.T().Log("compare income and outcome protobuf")
-		eds.ElementsMatch(protob.Bytes(), data)
 		actualWr := &prompb.WriteRequest{}
 		err = actualWr.Unmarshal(protob.Bytes())
 		eds.Require().NoError(err)
@@ -152,15 +150,13 @@ func (eds *EncoderDecoderSuite) TestEncodeDecodeSnapshot() {
 		eds.Require().NoError(err)
 
 		eds.T().Log("sharding protobuf")
-		h := delivery.NewHashdex()
-		h.PreSharding(context.Background(), data)
+		h := delivery.NewHashdex(data)
 
 		eds.T().Log("encoding protobuf")
 		_, gos, rt, err := eds.enc.Encode(eds.ctx, h)
-		eds.Require().NoError(err)
-
 		eds.T().Log("destroy hashdex")
 		h.Destroy()
+		eds.Require().NoError(err)
 
 		eds.T().Log("transferring segment")
 		segByte := eds.transferringData(gos.Bytes())
@@ -180,7 +176,6 @@ func (eds *EncoderDecoderSuite) TestEncodeDecodeSnapshot() {
 		eds.Require().NoError(err)
 
 		eds.T().Log("compare income and outcome protobuf")
-		eds.ElementsMatch(protob.Bytes(), data)
 		actualWr := &prompb.WriteRequest{}
 		err = actualWr.Unmarshal(protob.Bytes())
 		eds.Require().NoError(err)
@@ -218,8 +213,6 @@ func (eds *EncoderDecoderSuite) TestEncodeDecodeSnapshot() {
 		eds.Require().NoError(err)
 
 		eds.T().Log("after restore compare income and outcome and restored protobuf")
-		eds.ElementsMatch(resProtob.Bytes(), protob.Bytes())
-
 		actualWr := &prompb.WriteRequest{}
 		err = actualWr.Unmarshal(protob.Bytes())
 		eds.Require().NoError(err)
@@ -247,15 +240,13 @@ func (eds *EncoderDecoderSuite) TestEncodeDecodeSnapshotWithDrySegment() {
 		eds.Require().NoError(err)
 
 		eds.T().Log("sharding protobuf")
-		h := delivery.NewHashdex()
-		h.PreSharding(context.Background(), data)
+		h := delivery.NewHashdex(data)
 
 		eds.T().Log("encoding protobuf")
 		_, gos, rt, err := eds.enc.Encode(eds.ctx, h)
-		eds.Require().NoError(err)
-
 		eds.T().Log("destroy hashdex")
 		h.Destroy()
+		eds.Require().NoError(err)
 
 		eds.T().Log("transferring segment")
 		segByte := eds.transferringData(gos.Bytes())
@@ -275,7 +266,6 @@ func (eds *EncoderDecoderSuite) TestEncodeDecodeSnapshotWithDrySegment() {
 		eds.Require().NoError(err)
 
 		eds.T().Log("compare income and outcome protobuf")
-		eds.ElementsMatch(protob.Bytes(), data)
 		actualWr := &prompb.WriteRequest{}
 		err = actualWr.Unmarshal(protob.Bytes())
 		eds.Require().NoError(err)
@@ -314,16 +304,14 @@ func (eds *EncoderDecoderSuite) TestEncodeDecodeSnapshotWithDrySegment() {
 	eds.Require().NoError(err)
 
 	eds.T().Log("after restore sharding protobuf")
-	h := delivery.NewHashdex()
-	h.PreSharding(context.Background(), data)
+	h := delivery.NewHashdex(data)
 
 	eds.T().Log("after restore encoding protobuf")
 	_, gos, rt, err := eds.enc.Encode(eds.ctx, h)
-	eds.Require().NoError(err)
-	rt.Destroy()
-
 	eds.T().Log("after restore destroy hashdex")
 	h.Destroy()
+	eds.Require().NoError(err)
+	rt.Destroy()
 
 	eds.T().Log("after restore transferring segment")
 	segByte := eds.transferringData(gos.Bytes())
@@ -340,9 +328,6 @@ func (eds *EncoderDecoderSuite) TestEncodeDecodeSnapshotWithDrySegment() {
 	eds.Require().NoError(err)
 
 	eds.T().Log("after restore compare income and outcome and restored protobuf")
-	eds.ElementsMatch(protob.Bytes(), data)
-	eds.ElementsMatch(resProtob.Bytes(), data)
-
 	actualWr := &prompb.WriteRequest{}
 	err = actualWr.Unmarshal(protob.Bytes())
 	eds.Require().NoError(err)
@@ -363,14 +348,11 @@ func (eds *EncoderDecoderSuite) EncodeDecodeBench(i int64) {
 	expectedWr := eds.makeData(100, i)
 	data, err := expectedWr.Marshal()
 	eds.Require().NoError(err)
-
-	h := delivery.NewHashdex()
-	h.PreSharding(context.Background(), data)
-
+	h := delivery.NewHashdex(data)
 	_, gos, gor, err := eds.enc.Encode(eds.ctx, h)
-	eds.Require().NoError(err)
 	h.Destroy()
 	gor.Destroy()
+	eds.Require().NoError(err)
 
 	segByte := eds.transferringData(gos.Bytes())
 	gos.Destroy()

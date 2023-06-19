@@ -243,25 +243,29 @@ func TestStorageManagerSuite(t *testing.T) {
 	suite.Run(t, new(StorageManagerSuite))
 }
 
-func (sms *StorageManagerSuite) SetupSuite() {
+func (s *StorageManagerSuite) SetupSuite() {
 	var err error
-	sms.ctx = context.Background()
-	sms.etalonNewFileName = "blablalblaUUID"
-	sms.cfg = &delivery.FileStorageConfig{
-		Dir:      "/tmp/refill",
+	s.ctx = context.Background()
+	s.etalonNewFileName = "blablalblaUUID"
+
+	dir, err := os.MkdirTemp("", filepath.Clean("refill-"))
+	s.Require().NoError(err)
+
+	s.cfg = &delivery.FileStorageConfig{
+		Dir:      dir,
 		FileName: "current",
 	}
 
-	sms.etalonsNames = []string{
+	s.etalonsNames = []string{
 		"www.collector.com",
 		"www.collector-dev.com",
 		"www.collector-prod.com",
 		"www.collector-replica.com",
 	}
-	sms.etalonShardsNumberPower = 1
-	sms.etalonBlockID, err = uuid.NewRandom()
-	sms.NoError(err)
-	sms.etalonsData = newDataTest([]byte{
+	s.etalonShardsNumberPower = 1
+	s.etalonBlockID, err = uuid.NewRandom()
+	s.NoError(err)
+	s.etalonsData = newDataTest([]byte{
 		1,
 		2,
 		3,
@@ -307,201 +311,201 @@ func (sms *StorageManagerSuite) SetupSuite() {
 	})
 }
 
-func (sms *StorageManagerSuite) SetupTest() {
+func (s *StorageManagerSuite) SetupTest() {
 	var err error
-	sms.sm, err = delivery.NewStorageManager(
-		sms.cfg,
-		sms.etalonShardsNumberPower,
-		sms.etalonBlockID,
-		sms.etalonsNames...,
+	s.sm, err = delivery.NewStorageManager(
+		s.cfg,
+		s.etalonShardsNumberPower,
+		s.etalonBlockID,
+		s.etalonsNames...,
 	)
-	sms.NoError(err)
-	sms.Equal(sms.etalonBlockID.String(), sms.sm.BlockID().String())
+	s.NoError(err)
+	s.Equal(s.etalonBlockID.String(), s.sm.BlockID().String())
 }
 
-func (sms *StorageManagerSuite) TearDownTest() {
-	err := os.RemoveAll(sms.cfg.Dir)
-	sms.NoError(err)
+func (s *StorageManagerSuite) TearDownTest() {
+	s.NoError(os.RemoveAll(s.cfg.Dir))
 
-	err = sms.sm.Close()
-	sms.NoError(err)
+	s.NoError(s.sm.Close())
 }
 
-func (sms *StorageManagerSuite) TestStorageManagerInit() {
-	ok, err := sms.sm.FileExist()
-	sms.NoError(err)
-	sms.False(ok)
+func (s *StorageManagerSuite) TestStorageManagerInit() {
+	ok, err := s.sm.FileExist()
+	s.NoError(err)
+	s.False(ok)
 }
 
-func (sms *StorageManagerSuite) TestSegment() {
-	ok, err := sms.sm.FileExist()
-	sms.NoError(err)
-	sms.False(ok)
+func (s *StorageManagerSuite) TestSegment() {
+	ok, err := s.sm.FileExist()
+	s.NoError(err)
+	s.False(ok)
 
 	segKey := delivery.SegmentKey{
 		ShardID: 0,
 		Segment: 0,
 	}
 
-	err = sms.sm.WriteSegment(
+	err = s.sm.WriteSegment(
 		context.Background(),
 		segKey,
-		sms.etalonsData,
+		s.etalonsData,
 	)
-	sms.NoError(err)
+	s.NoError(err)
 
-	ok, err = sms.sm.FileExist()
-	sms.NoError(err)
-	sms.True(ok)
+	ok, err = s.sm.FileExist()
+	s.NoError(err)
+	s.True(ok)
 
-	actualSeg, err := sms.sm.GetSegment(sms.ctx, segKey)
-	sms.NoError(err)
+	actualSeg, err := s.sm.GetSegment(s.ctx, segKey)
+	s.NoError(err)
 
-	sms.ElementsMatch(sms.etalonsData.Bytes(), actualSeg.Bytes())
+	s.ElementsMatch(s.etalonsData.Bytes(), actualSeg.Bytes())
 }
 
-func (sms *StorageManagerSuite) TestWriteSegmentWithError() {
-	ok, err := sms.sm.FileExist()
-	sms.NoError(err)
-	sms.False(ok)
+func (s *StorageManagerSuite) TestWriteSegmentWithError() {
+	ok, err := s.sm.FileExist()
+	s.NoError(err)
+	s.False(ok)
 
-	err = sms.sm.WriteSegment(
+	err = s.sm.WriteSegment(
 		context.Background(),
 		delivery.SegmentKey{
 			ShardID: 0,
 			Segment: 2,
 		},
-		sms.etalonsData,
+		s.etalonsData,
 	)
-	sms.ErrorIs(err, delivery.ErrSnapshotRequired)
+	s.ErrorIs(err, delivery.ErrSnapshotRequired)
 }
 
-func (sms *StorageManagerSuite) TestSnapshot() {
-	ok, err := sms.sm.FileExist()
-	sms.NoError(err)
-	sms.False(ok)
+func (s *StorageManagerSuite) TestSnapshot() {
+	ok, err := s.sm.FileExist()
+	s.NoError(err)
+	s.False(ok)
 
 	segKey := delivery.SegmentKey{
 		ShardID: 0,
 		Segment: 2,
 	}
 
-	err = sms.sm.WriteSnapshot(
+	err = s.sm.WriteSnapshot(
 		context.Background(),
 		segKey,
-		sms.etalonsData,
+		s.etalonsData,
 	)
-	sms.NoError(err)
+	s.NoError(err)
 
-	ok, err = sms.sm.FileExist()
-	sms.NoError(err)
-	sms.True(ok)
+	ok, err = s.sm.FileExist()
+	s.NoError(err)
+	s.True(ok)
 
-	actualSnap, err := sms.sm.GetSnapshot(sms.ctx, segKey)
-	sms.NoError(err)
+	actualSnap, err := s.sm.GetSnapshot(s.ctx, segKey)
+	s.NoError(err)
 
-	sms.ElementsMatch(sms.etalonsData.Bytes(), actualSnap.Bytes())
+	s.ElementsMatch(s.etalonsData.Bytes(), actualSnap.Bytes())
 }
 
-func (sms *StorageManagerSuite) TestAckStatus() {
-	ok, err := sms.sm.FileExist()
-	sms.NoError(err)
-	sms.False(ok)
+func (s *StorageManagerSuite) TestAckStatus() {
+	ok, err := s.sm.FileExist()
+	s.NoError(err)
+	s.False(ok)
 
-	err = sms.sm.WriteAckStatus(context.Background())
-	sms.NoError(err)
+	err = s.sm.WriteAckStatus(context.Background())
+	s.NoError(err)
 
-	ok, err = sms.sm.FileExist()
-	sms.NoError(err)
-	sms.False(ok)
+	ok, err = s.sm.FileExist()
+	s.NoError(err)
+	s.False(ok)
 }
 
-func (sms *StorageManagerSuite) TestRotate() {
-	ok, err := sms.sm.FileExist()
-	sms.NoError(err)
-	sms.False(ok)
+func (s *StorageManagerSuite) TestRename() {
+	ok, err := s.sm.FileExist()
+	s.NoError(err)
+	s.False(ok)
 
 	segKey := delivery.SegmentKey{
 		ShardID: 0,
 		Segment: 2,
 	}
 
-	err = sms.sm.WriteSnapshot(
+	err = s.sm.WriteSnapshot(
 		context.Background(),
 		segKey,
-		sms.etalonsData,
+		s.etalonsData,
 	)
-	sms.NoError(err)
+	s.NoError(err)
 
-	ok, err = sms.sm.FileExist()
-	sms.NoError(err)
-	sms.True(ok)
+	ok, err = s.sm.FileExist()
+	s.NoError(err)
+	s.True(ok)
 
-	err = sms.sm.Rotate(sms.etalonNewFileName)
-	sms.NoError(err)
+	s.NoError(s.sm.TemporarilyRename(s.etalonNewFileName))
 
-	ok, err = sms.sm.FileExist()
-	sms.NoError(err)
-	sms.False(ok)
+	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.etalonNewFileName+".tmprefill"))
+	s.NoError(err)
 
-	_, err = os.Stat(filepath.Clean(filepath.Join(sms.cfg.Dir, sms.etalonNewFileName+".refill")))
-	sms.NoError(err)
+	s.NoError(s.sm.Close())
+
+	s.NoError(s.sm.StatefulRename())
+
+	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.etalonNewFileName+".refill"))
+	s.NoError(err)
 }
 
-func (sms *StorageManagerSuite) TestRestore() {
-	ok, err := sms.sm.FileExist()
-	sms.NoError(err)
-	sms.False(ok)
+func (s *StorageManagerSuite) TestRestore() {
+	ok, err := s.sm.FileExist()
+	s.NoError(err)
+	s.False(ok)
 
 	segKey := delivery.SegmentKey{
 		ShardID: 0,
 		Segment: 1,
 	}
 
-	err = sms.sm.WriteAckStatus(context.Background())
-	sms.NoError(err)
+	err = s.sm.WriteAckStatus(context.Background())
+	s.NoError(err)
 
-	err = sms.sm.WriteSnapshot(context.Background(), segKey, sms.etalonsData)
-	sms.NoError(err)
+	err = s.sm.WriteSnapshot(context.Background(), segKey, s.etalonsData)
+	s.NoError(err)
 
-	err = sms.sm.WriteSegment(context.Background(), segKey, sms.etalonsData)
-	sms.NoError(err)
+	err = s.sm.WriteSegment(context.Background(), segKey, s.etalonsData)
+	s.NoError(err)
 
-	expectAckStatus := sms.sm.GetAckStatus()
+	expectAckStatus := s.sm.GetAckStatus()
 	expectAckStatus.Ack(delivery.SegmentKey{0, 0}, "www.collector.com")
-	err = sms.sm.WriteAckStatus(context.Background())
-	sms.NoError(err)
+	err = s.sm.WriteAckStatus(context.Background())
+	s.NoError(err)
 
-	ok, err = sms.sm.FileExist()
-	sms.NoError(err)
-	sms.True(ok)
+	ok, err = s.sm.FileExist()
+	s.NoError(err)
+	s.True(ok)
 
-	err = sms.sm.Close()
-	sms.NoError(err)
+	err = s.sm.Close()
+	s.NoError(err)
 
 	newBlockID, err := uuid.NewRandom()
-	sms.NoError(err)
+	s.NoError(err)
 	var shardsNumberPower uint8 = 1
 
-	sms.sm, err = delivery.NewStorageManager(sms.cfg, shardsNumberPower, newBlockID, sms.etalonsNames...)
-	sms.NoError(err)
-	sms.Equal(sms.etalonBlockID.String(), sms.sm.BlockID().String())
+	s.sm, err = delivery.NewStorageManager(s.cfg, shardsNumberPower, newBlockID, s.etalonsNames...)
+	s.NoError(err)
+	s.Equal(s.etalonBlockID.String(), s.sm.BlockID().String())
 
-	actualSeg, err := sms.sm.GetSegment(sms.ctx, segKey)
-	sms.NoError(err)
-	sms.ElementsMatch(sms.etalonsData.Bytes(), actualSeg.Bytes())
+	actualSeg, err := s.sm.GetSegment(s.ctx, segKey)
+	s.NoError(err)
+	s.ElementsMatch(s.etalonsData.Bytes(), actualSeg.Bytes())
 
-	actualSnap, err := sms.sm.GetSnapshot(sms.ctx, segKey)
-	sms.NoError(err)
-	sms.ElementsMatch(sms.etalonsData.Bytes(), actualSnap.Bytes())
+	actualSnap, err := s.sm.GetSnapshot(s.ctx, segKey)
+	s.NoError(err)
+	s.ElementsMatch(s.etalonsData.Bytes(), actualSnap.Bytes())
 
-	actualAckStatus := sms.sm.GetAckStatus()
+	actualAckStatus := s.sm.GetAckStatus()
 	index, ok := actualAckStatus.Index("www.collector.com")
-	sms.True(ok)
-	sms.Equal(3, index)
+	s.True(ok)
+	s.Equal(3, index)
 
-	sms.Equal(expectAckStatus.GetCopyAckStatuses(), actualAckStatus.GetCopyAckStatuses())
-	sms.Equal(sms.etalonsNames, actualAckStatus.GetNames().ToString())
+	s.Equal(expectAckStatus.GetCopyAckStatuses(), actualAckStatus.GetCopyAckStatuses())
+	s.Equal(s.etalonsNames, actualAckStatus.GetNames().ToString())
 }
 
 type TitleFrameSuite struct {

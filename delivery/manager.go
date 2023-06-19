@@ -48,6 +48,7 @@ type (
 		LastEncodedSegment() uint32
 		Encode(context.Context, ShardedData) (SegmentKey, Segment, Redundant, error)
 		Snapshot(context.Context, []Redundant) (Snapshot, error)
+		Destroy()
 	}
 
 	// ManagerEncoderCtor - func-constuctor for ManagerEncoder.
@@ -71,6 +72,7 @@ type (
 		WriteSegment(context.Context, SegmentKey, Segment) error
 		WriteSnapshot(context.Context, SegmentKey, Snapshot) error
 		WriteAckStatus(context.Context) error
+		TemporarilyRename() error
 		Shutdown(context.Context) error
 	}
 
@@ -115,7 +117,18 @@ func NewManager(
 		return nil, fmt.Errorf("create refill: %w", err)
 	}
 	if !refill.IsContinuable() {
-		return nil, ErrNotContinuableRefill
+		if err = refill.TemporarilyRename(); err != nil {
+			return nil, fmt.Errorf("rename refill: %w", err)
+		}
+
+		if err = refill.Shutdown(ctx); err != nil {
+			return nil, fmt.Errorf("shutdown refill: %w", err)
+		}
+
+		refill, err = refillCtor(ctx, blockID, destinations, shardsNumberPower)
+		if err != nil {
+			return nil, fmt.Errorf("create refill: %w", err)
+		}
 	}
 	blockID = refill.BlockID()
 	exchange := NewExchange(refill.Shards(), refill.Destinations())
@@ -241,6 +254,11 @@ func (mgr *Manager) Restore(ctx context.Context, key SegmentKey) (Snapshot, []Se
 	return snapshot, segments
 }
 
+// Close - rename refill file for close file and shutdown manager.
+func (mgr *Manager) Close() error {
+	return mgr.refill.TemporarilyRename()
+}
+
 // Shutdown - safe shutdown manager with clearing queue and shutdown senders.
 func (mgr *Manager) Shutdown(ctx context.Context) error {
 	mgr.exchange.Shutdown(ctx)
@@ -265,6 +283,13 @@ func (mgr *Manager) Shutdown(ctx context.Context) error {
 		}(sender)
 	}
 	wg.Wait()
+
+	mgr.encodersLock.Lock()
+	for i := range mgr.encoders {
+		mgr.encoders[i].Destroy()
+	}
+	mgr.encodersLock.Unlock()
+
 	return multierr.Append(errs, mgr.refill.Shutdown(ctx))
 }
 
@@ -347,12 +372,11 @@ func (mgr *Manager) snapshot(ctx context.Context, key SegmentKey) (Snapshot, err
 
 	lastSegment := mgr.encoders[key.ShardID].LastEncodedSegment()
 
-	var redundants []Redundant
-	if key.Segment > lastSegment {
-		lastSegment = key.Segment
+	if key.Segment > lastSegment+1 {
+		panic("invalid segment key: more last segment +1")
 	}
 
-	redundants = make([]Redundant, 0, lastSegment-key.Segment+1)
+	redundants := make([]Redundant, 0, lastSegment-key.Segment+1)
 	for segment := key.Segment; segment <= lastSegment; segment++ {
 		key = SegmentKey{ShardID: key.ShardID, Segment: segment}
 		redundant, err := mgr.exchange.Redundant(ctx, key)
@@ -363,4 +387,12 @@ func (mgr *Manager) snapshot(ctx context.Context, key SegmentKey) (Snapshot, err
 	}
 
 	return mgr.encoders[key.ShardID].Snapshot(ctx, redundants)
+}
+
+// DefaultShardsNumberPower - default shards number power.
+const DefaultShardsNumberPower = 0
+
+// CalculateRequiredShardsNumberPower - get need shards number power.
+func (*Manager) CalculateRequiredShardsNumberPower() uint8 {
+	return DefaultShardsNumberPower
 }

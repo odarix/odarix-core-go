@@ -62,11 +62,12 @@ func (ex *Exchange) deleteRecord(key any) {
 // If exchange locked (after Shutdown), and there is not putted segment,
 // it returns ErrPromiseCanceled.
 func (ex *Exchange) Get(ctx context.Context, key SegmentKey) (Segment, error) {
+	lastSegment := atomic.LoadUint32(&ex.lastSegments[key.ShardID])
 	record, ok := ex.records.Load(key)
 	if ok {
 		return record.(*exchangeRecord).Segment(ctx)
 	}
-	lastSegment := atomic.LoadUint32(&ex.lastSegments[key.ShardID])
+
 	if lastSegment != math.MaxUint32 && lastSegment >= key.Segment {
 		return nil, ErrSegmentGone
 	}
@@ -91,14 +92,12 @@ func (ex *Exchange) Put(
 	if atomic.LoadUint32(&ex.locked) != 0 {
 		panic("put data in locked exchange")
 	}
-	defer func() {
-		if !atomic.CompareAndSwapUint32(&ex.lastSegments[key.ShardID], key.Segment-1, key.Segment) {
-			panic("invalid segment putted in exchange")
-		}
-	}()
 
 	record, _ := ex.records.LoadOrStore(key, newExchangeRecord())
 	record.(*exchangeRecord).Resolve(segment, redundant, ex.destinations, sendPromise, expiredAt)
+	if !atomic.CompareAndSwapUint32(&ex.lastSegments[key.ShardID], key.Segment-1, key.Segment) {
+		panic("invalid segment putted in exchange")
+	}
 }
 
 // Ack segment by key

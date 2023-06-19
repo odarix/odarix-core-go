@@ -80,8 +80,7 @@ func (es *EncoderSuite) TestEncode() {
 	es.T().Log("encode data and accumulate segment and redundant")
 	for i := 0; i < es.encodeCount; i++ {
 		data := es.makeData()
-		h := delivery.NewHashdex()
-		h.PreSharding(context.Background(), data)
+		h := delivery.NewHashdex(data)
 
 		segKey, gos, gor, err := es.enc.Encode(es.ctx, h)
 		es.NoError(err)
@@ -109,10 +108,9 @@ func (es *EncoderSuite) TestEncode() {
 
 func (es *EncoderSuite) TestEncodeError() {
 	ctx, cancel := context.WithCancel(es.ctx)
-	data := es.makeData()
 	cancel()
-	h := delivery.NewHashdex()
-	h.PreSharding(context.Background(), data)
+
+	h := delivery.NewHashdex(es.makeData())
 	defer h.Destroy()
 
 	_, _, _, err := es.enc.Encode(ctx, h)
@@ -163,9 +161,7 @@ func BenchmarkEncoder(b *testing.B) {
 	require.NoError(b, err)
 
 	for i := 0; i < b.N; i++ {
-		h := delivery.NewHashdex()
-		h.PreSharding(ctx, data)
-
+		h := delivery.NewHashdex(data)
 		_, gos, gor, _ := enc.Encode(ctx, h)
 		h.Destroy()
 		gos.Destroy()

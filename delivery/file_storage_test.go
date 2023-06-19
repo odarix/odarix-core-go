@@ -25,15 +25,19 @@ func TestFileManagerSuite(t *testing.T) {
 	suite.Run(t, new(FileManagerSuite))
 }
 
-func (fms *FileManagerSuite) SetupSuite() {
+func (s *FileManagerSuite) SetupSuite() {
 	var err error
-	fms.etalonNewFileName = "blablalbla1UUID"
-	fms.cfg = &delivery.FileStorageConfig{
-		Dir:      "/tmp/refill",
+	s.etalonNewFileName = "blablalbla1UUID"
+
+	dir, err := os.MkdirTemp("", filepath.Clean("refill-"))
+	s.Require().NoError(err)
+
+	s.cfg = &delivery.FileStorageConfig{
+		Dir:      dir,
 		FileName: "current",
 	}
 
-	fms.etalonsData = []byte{
+	s.etalonsData = []byte{
 		1,
 		2,
 		3,
@@ -78,88 +82,98 @@ func (fms *FileManagerSuite) SetupSuite() {
 		42,
 	}
 
-	fms.fm, err = delivery.NewFileStorage(fms.cfg)
-	fms.NoError(err)
+	s.fm, err = delivery.NewFileStorage(s.cfg)
+	s.Require().NoError(err)
 }
 
-func (fms *FileManagerSuite) TearDownTest() {
-	err := os.RemoveAll(fms.cfg.Dir)
-	fms.NoError(err)
+func (s *FileManagerSuite) TearDownTest() {
+	s.NoError(os.RemoveAll(s.cfg.Dir))
 }
 
-func (fms *FileManagerSuite) TestOpenCloseFile() {
-	ok, err := fms.fm.FileExist()
-	fms.NoError(err)
-	fms.False(ok)
+func (s *FileManagerSuite) TestOpenCloseFile() {
+	ok, err := s.fm.FileExist()
+	s.NoError(err)
+	s.False(ok)
 
-	err = fms.fm.OpenFile()
-	fms.NoError(err)
+	err = s.fm.OpenFile()
+	s.NoError(err)
 
-	n, err := fms.fm.WriteAt(context.Background(), fms.etalonsData, io.SeekStart)
-	fms.NoError(err)
-	fms.Equal(len(fms.etalonsData), n)
+	n, err := s.fm.WriteAt(context.Background(), s.etalonsData, io.SeekStart)
+	s.NoError(err)
+	s.Equal(len(s.etalonsData), n)
 
-	_, err = fms.fm.Seek(0, io.SeekStart)
-	fms.NoError(err)
+	_, err = s.fm.Seek(0, io.SeekStart)
+	s.NoError(err)
 
-	data := make([]byte, len(fms.etalonsData))
-	_, err = fms.fm.Read(data)
-	fms.NoError(err)
-	fms.ElementsMatch(fms.etalonsData, data)
+	data := make([]byte, len(s.etalonsData))
+	_, err = s.fm.Read(data)
+	s.NoError(err)
+	s.ElementsMatch(s.etalonsData, data)
 
-	err = fms.fm.Close()
-	fms.NoError(err)
+	s.NoError(s.fm.Close())
 
-	ok, err = fms.fm.FileExist()
-	fms.NoError(err)
-	fms.True(ok)
+	ok, err = s.fm.FileExist()
+	s.NoError(err)
+	s.True(ok)
 }
 
-func (fms *FileManagerSuite) TestRotate() {
-	ok, err := fms.fm.FileExist()
-	fms.NoError(err)
-	fms.False(ok)
+func (s *FileManagerSuite) TestRename() {
+	ok, err := s.fm.FileExist()
+	s.NoError(err)
+	s.False(ok)
 
-	err = fms.fm.OpenFile()
-	fms.NoError(err)
+	err = s.fm.OpenFile()
+	s.NoError(err)
 
-	err = fms.fm.Close()
-	fms.NoError(err)
+	err = s.fm.Close()
+	s.NoError(err)
 
-	ok, err = fms.fm.FileExist()
-	fms.NoError(err)
-	fms.True(ok)
+	ok, err = s.fm.FileExist()
+	s.NoError(err)
+	s.True(ok)
 
-	err = fms.fm.Rotate(fms.etalonNewFileName)
-	fms.NoError(err)
+	err = s.fm.TemporarilyRename(s.etalonNewFileName)
+	s.NoError(err)
 
-	ok, err = fms.fm.FileExist()
-	fms.NoError(err)
-	fms.False(ok)
+	_, err = os.Stat(filepath.Join(s.cfg.Dir, "current.refill"))
+	s.Error(err)
 
-	_, err = os.Stat(filepath.Clean(filepath.Join(fms.cfg.Dir, fms.etalonNewFileName+".refill")))
-	fms.NoError(err)
+	ok, err = s.fm.FileExist()
+	s.NoError(err)
+	s.True(ok)
+
+	err = s.fm.Close()
+	s.NoError(err)
+
+	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.etalonNewFileName+".tmprefill"))
+	s.NoError(err)
+
+	err = s.fm.StatefulRename()
+	s.NoError(err)
+
+	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.etalonNewFileName+".refill"))
+	s.NoError(err)
 }
 
-func (fms *FileManagerSuite) TestDeleteCurrentFile() {
-	ok, err := fms.fm.FileExist()
-	fms.NoError(err)
-	fms.False(ok)
+func (s *FileManagerSuite) TestDeleteCurrentFile() {
+	ok, err := s.fm.FileExist()
+	s.NoError(err)
+	s.False(ok)
 
-	err = fms.fm.OpenFile()
-	fms.NoError(err)
+	err = s.fm.OpenFile()
+	s.NoError(err)
 
-	err = fms.fm.Close()
-	fms.NoError(err)
+	err = s.fm.Close()
+	s.NoError(err)
 
-	ok, err = fms.fm.FileExist()
-	fms.NoError(err)
-	fms.True(ok)
+	ok, err = s.fm.FileExist()
+	s.NoError(err)
+	s.True(ok)
 
-	err = fms.fm.DeleteCurrentFile()
-	fms.NoError(err)
+	err = s.fm.DeleteCurrentFile()
+	s.NoError(err)
 
-	ok, err = fms.fm.FileExist()
-	fms.NoError(err)
-	fms.False(ok)
+	ok, err = s.fm.FileExist()
+	s.NoError(err)
+	s.False(ok)
 }

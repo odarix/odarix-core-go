@@ -11,28 +11,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// Transport is a destination connection interface
-//
-// We suppose that Transport is full-initiated:
-// - authorized
-// - setted timeouts
-type Transport interface {
-	SendRestore(context.Context, Snapshot, []Segment) error
-	SendSegment(context.Context, Segment) error
-	OnAck(func(uint32))
-	OnReject(func(uint32))
-	WithReaderError(context.Context, func(context.Context) error) error
-	Close() error
-}
-
-// Dialer used for connect to backend
-//
-// We suppose that dialer has its own backoff and returns only permanent error.
-type Dialer interface {
-	String() string
-	Dial(context.Context) (Transport, error)
-}
-
 // Source is a manager
 type Source interface {
 	Get(ctx context.Context, key SegmentKey) (Segment, error)
@@ -96,6 +74,8 @@ func (sender *Sender) Shutdown(ctx context.Context) error {
 
 func (sender *Sender) mainLoop(ctx context.Context) {
 	writeDone := new(atomic.Bool)
+	errRead := errors.New("read error")
+
 	for ctx.Err() == nil {
 		transport, closeTransport, err := sender.dial(ctx)
 		if err != nil {
@@ -121,9 +101,18 @@ func (sender *Sender) mainLoop(ctx context.Context) {
 			onResponse(id)
 		})
 
-		lastSent, err = sender.writeLoop(ctx, transport, lastSent)
+		writeCtx, cancel := context.WithCancelCause(ctx)
+		transport.OnReadError(func(err error) {
+			// TODO EOF not errorHandler
+			sender.errorHandler(fmt.Sprintf("%s: fail to read response", sender), err)
+			cancel(errRead)
+		})
+
+		lastSent, err = sender.writeLoop(writeCtx, transport, lastSent)
 		if err != nil {
-			sender.errorHandler(fmt.Sprintf("%s: fail to send segment", sender), err)
+			if !errors.Is(err, errRead) {
+				sender.errorHandler(fmt.Sprintf("%s: fail to send segment", sender), err)
+			}
 			closeTransport()
 			continue
 		}
@@ -172,25 +161,16 @@ func (sender *Sender) dial(ctx context.Context) (transport Transport, closeFn fu
 
 func (sender *Sender) writeLoop(ctx context.Context, transport Transport, from uint32) (uint32, error) {
 	id := from + 1
-
-	err := transport.WithReaderError(
-		ctx,
-		func(fctx context.Context) error {
-			for ; fctx.Err() == nil; id++ {
-				segment, err := sender.getSegment(ctx, id)
-				if segment == nil {
-					return err
-				}
-				if err = transport.SendSegment(ctx, segment); err != nil {
-					return err
-				}
-			}
-
-			return context.Cause(fctx)
-		},
-	)
-
-	return id - 1, err
+	for ; ctx.Err() == nil; id++ {
+		segment, err := sender.getSegment(ctx, id)
+		if segment == nil {
+			return id - 1, err
+		}
+		if err = transport.SendSegment(ctx, segment); err != nil {
+			return id - 1, err
+		}
+	}
+	return id - 1, context.Cause(ctx)
 }
 
 // getSegment returns segment by sender shardID and given segment id

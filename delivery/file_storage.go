@@ -5,11 +5,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
-// fileExtension - file extension.
-const fileExtension = ".refill"
+const (
+	// refillExtension - file for refill extension.
+	refillExtension = ".refill"
+	// refillTmpExtension - file for temporary refill extension.
+	refillTmpExtension = ".tmprefill"
+)
 
 // FileStorageConfig - config for FileStorage.
 type FileStorageConfig struct {
@@ -28,7 +33,7 @@ type FileStorage struct {
 func NewFileStorage(cfg *FileStorageConfig) (*FileStorage, error) {
 	return &FileStorage{
 		dir:      cfg.Dir,
-		fileName: cfg.FileName + fileExtension,
+		fileName: cfg.FileName + refillExtension,
 	}, nil
 }
 
@@ -117,15 +122,39 @@ func (fs *FileStorage) FileExist() (bool, error) {
 
 // GetPath - return path to current file.
 func (fs *FileStorage) GetPath() string {
-	return filepath.Clean(filepath.Join(fs.dir, fs.fileName))
+	return filepath.Join(fs.dir, fs.fileName)
 }
 
-// Rotate - rename the current file to blockID for further conversion to refill.
-func (fs *FileStorage) Rotate(name string) error {
-	if err := fs.Close(); err != nil {
+// TemporarilyRename - rename the current file to blockID with temporary
+// extension for further conversion to refill.
+func (fs *FileStorage) TemporarilyRename(name string) error {
+	if ok, err := fs.FileExist(); !ok {
 		return err
 	}
-	return os.Rename(fs.GetPath(), filepath.Clean(filepath.Join(fs.dir, name+fileExtension)))
+
+	if err := os.Rename(fs.GetPath(), filepath.Join(fs.dir, name+refillTmpExtension)); err != nil {
+		return err
+	}
+
+	fs.fileName = name + refillTmpExtension
+
+	return nil
+}
+
+// StatefulRename - change extension the current file for further conversion to refill.
+func (fs *FileStorage) StatefulRename() error {
+	if ok, err := fs.FileExist(); !ok {
+		return err
+	}
+
+	newName := strings.TrimSuffix(fs.GetPath(), refillTmpExtension) + refillExtension
+	if err := os.Rename(fs.GetPath(), filepath.Clean(newName)); err != nil {
+		return err
+	}
+
+	fs.fileName = newName
+
+	return nil
 }
 
 // DeleteCurrentFile - delete current file.
@@ -135,4 +164,17 @@ func (fs *FileStorage) DeleteCurrentFile() error {
 	}
 
 	return os.Remove(fs.GetPath())
+}
+
+// Truncate - changes the size of the file.
+func (fs *FileStorage) Truncate() error {
+	if err := fs.fileDescriptor.Truncate(0); err != nil {
+		return err
+	}
+
+	if _, err := fs.fileDescriptor.Seek(0, 0); err != nil {
+		return err
+	}
+
+	return nil
 }

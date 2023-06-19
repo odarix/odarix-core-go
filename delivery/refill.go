@@ -3,16 +3,17 @@ package delivery
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
+	"go.uber.org/multierr"
 )
 
 var (
 	// ErrSnapshotNotFoundRefill - error snapshot not found in refill.
 	ErrSnapshotNotFoundRefill = errors.New("snapshot not found")
-	// ErrSegmentNotFoundRefill - error segment not found in refill.
-	ErrSegmentNotFoundRefill = errors.New("segment not found")
 	// ErrSnapshotRequired - error for case if not found snapshots or prevous segment.
 	ErrSnapshotRequired = errors.New("snapshot is required")
 	// ErrShardsNotEqual - error when number of shards not equal.
@@ -174,18 +175,24 @@ func (rl *Refill) WriteAckStatus(ctx context.Context) error {
 	return rl.sm.DeleteCurrentFile()
 }
 
-// Rotate - rename the current file to blockID for further conversion to refill.
-func (rl *Refill) Rotate() error {
+// TemporarilyRename - rename the current file to blockID with temporary extension for further conversion to refill.
+func (rl *Refill) TemporarilyRename() error {
 	rl.mx.Lock()
 	defer rl.mx.Unlock()
 
-	return rl.sm.Rotate(rl.sm.BlockID().String())
+	return rl.sm.TemporarilyRename(
+		fmt.Sprintf(
+			"%013d_%s",
+			time.Now().UnixMilli(),
+			rl.sm.BlockID().String(),
+		),
+	)
 }
 
-// Shutdown - rename the current file to blockID for further conversion to refill.
+// Shutdown - finalize and close refill.
 func (rl *Refill) Shutdown(_ context.Context) error {
 	rl.mx.Lock()
 	defer rl.mx.Unlock()
 
-	return rl.sm.Close()
+	return multierr.Append(rl.sm.Close(), rl.sm.StatefulRename())
 }

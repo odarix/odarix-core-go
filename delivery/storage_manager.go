@@ -69,7 +69,15 @@ func NewStorageManager(
 	// trying to recover from a storage
 	ok, err := sm.restore()
 	if err != nil {
-		return nil, err
+		switch err {
+		case ErrUnknownFrameType, ErrServiceDataNotRestored{}:
+			// TODO errhandler
+			if err = sm.storage.Truncate(); err != nil {
+				return nil, err
+			}
+		default:
+			return nil, err
+		}
 	}
 	if !ok {
 		sm.title = NewTitle(shardsNumberPower, blockID)
@@ -112,8 +120,7 @@ func (sm *StorageManager) LastSegment(shardID uint16, dest string) uint32 {
 
 // CheckSegmentsSent - checking if all segments have been sent.
 func (sm *StorageManager) CheckSegmentsSent() bool {
-	// if there is rejects, then file should be persisted for refill sender
-	// TODO when restore set sm.hasRejects
+	// if there is at least 1 reject, then you cannot delete the refill
 	if sm.hasRejects.Load() {
 		return false
 	}
@@ -223,7 +230,7 @@ func (sm *StorageManager) GetSegment(ctx context.Context, segKey SegmentKey) (Se
 	// get position
 	pos := sm.getSegmentPosition(segKey)
 	if pos == posNotFound {
-		return nil, ErrSegmentNotFoundRefill
+		return nil, ErrSegmentNotFoundRefill{}
 	}
 
 	// read frame
@@ -242,7 +249,7 @@ func (sm *StorageManager) GetAckStatus() *AckStatus {
 
 // restoreFromBody - restore from body frame.
 func (sm *StorageManager) restoreFromBody(h *HeaderFrame, off int64) error {
-	// TODO: restore bad frame
+	// TODO restore bad frame, or bad file(not have title, DestinationsNames)
 	switch h.GetType() {
 	case TitleType:
 		return sm.restoreTitle(off)
@@ -255,6 +262,7 @@ func (sm *StorageManager) restoreFromBody(h *HeaderFrame, off int64) error {
 	case StatusType:
 		return sm.restoreStatuses(h, off)
 	case RejectStatusType:
+		sm.hasRejects.Store(true)
 		// skip reject statuses
 		return nil
 	}
@@ -284,8 +292,18 @@ func (sm *StorageManager) restoreDestinationsNames(off int64) error {
 	return sm.ackStatus.ReadDestinationsNames(sm.storage, off)
 }
 
+// checkRestoredServiceData - check restored service data(title, destinations names),
+// these data are required to be restored, without them you cant read the rest
+func (sm *StorageManager) checkRestoredServiceData() bool {
+	return sm.title != nil && sm.ackStatus != nil
+}
+
 // restore - restore Snapshot from frame.
 func (sm *StorageManager) restoreSnapshot(h *HeaderFrame, off int64) error {
+	if !sm.checkRestoredServiceData() {
+		return ErrServiceDataNotRestored{}
+	}
+
 	sm.setSnapshotPosition(
 		SegmentKey{
 			ShardID: h.GetShardID(),
@@ -299,6 +317,10 @@ func (sm *StorageManager) restoreSnapshot(h *HeaderFrame, off int64) error {
 
 // restore - restore Segment from frame.
 func (sm *StorageManager) restoreSegment(h *HeaderFrame, off int64) error {
+	if !sm.checkRestoredServiceData() {
+		return ErrServiceDataNotRestored{}
+	}
+
 	sm.setSegmentPosition(
 		SegmentKey{
 			ShardID: h.GetShardID(),
@@ -312,6 +334,10 @@ func (sm *StorageManager) restoreSegment(h *HeaderFrame, off int64) error {
 
 // restoreStatuses - restore states of writers from frame.
 func (sm *StorageManager) restoreStatuses(h *HeaderFrame, off int64) error {
+	if !sm.checkRestoredServiceData() {
+		return ErrServiceDataNotRestored{}
+	}
+
 	buf := make([]byte, h.size)
 	if _, err := sm.storage.ReadAt(buf, off); err != nil {
 		return err
@@ -357,6 +383,11 @@ func (sm *StorageManager) restore() (bool, error) {
 
 		// move cursor position
 		off += int64(h.GetSize())
+	}
+
+	// check for nil file
+	if !sm.checkRestoredServiceData() {
+		return false, ErrServiceDataNotRestored{}
 	}
 
 	return true, nil
@@ -503,6 +534,10 @@ func (sm *StorageManager) WriteAckStatus(ctx context.Context) error {
 	}
 	if !sm.statuses.Equal(ss) {
 		frame, err := NewStatusesFrame(ss)
+		if err != nil {
+			// TODO: unrotate
+			return err
+		}
 		n, err := sm.storage.WriteAt(ctx, frame.Encode(), sm.lastWriteOffset)
 		if err != nil {
 			// TODO: unrotate
@@ -519,11 +554,14 @@ func (sm *StorageManager) FileExist() (bool, error) {
 	return sm.storage.FileExist()
 }
 
-// Rotate - rename the current file to blockID for further conversion to refill.
-func (sm *StorageManager) Rotate(name string) error {
-	// set flag and rotate
-	sm.isOpenFile = false
-	return sm.storage.Rotate(name)
+// TemporarilyRename - rename the current file to blockID with temporary extension for further conversion to refill.
+func (sm *StorageManager) TemporarilyRename(name string) error {
+	return sm.storage.TemporarilyRename(name)
+}
+
+// StatefulRename - change extension the current file for further conversion to refill.
+func (sm *StorageManager) StatefulRename() error {
+	return sm.storage.StatefulRename()
 }
 
 // DeleteCurrentFile - close and delete current file..
@@ -606,7 +644,7 @@ type TypeFrame uint8
 
 // Validate - validate type frame.
 func (tf TypeFrame) Validate() error {
-	if tf < TitleType || tf > RejectStatusType {
+	if tf < TitleType || tf > RefillShardEOFType {
 		return ErrUnknownFrameType
 	}
 
@@ -628,6 +666,8 @@ const (
 	StatusType
 	// RejectStatusType - reject statuses type frame.
 	RejectStatusType
+	// RefillShardEOFType - refill shard EOF type frame.
+	RefillShardEOFType
 )
 
 // Frame - frame for write file.
@@ -757,6 +797,8 @@ func NewRejectStatusesFrame(rs encoding.BinaryMarshaler) (*Frame, error) {
 }
 
 // ReadFrameRejectStatuses - read frame from position pos and return reject statuses.
+//
+//nolint:dupl // this is not duplicate
 func ReadFrameRejectStatuses(ctx context.Context, r io.ReaderAt, off int64) (RejectStatuses, error) {
 	h, err := ReadHeader(ctx, r, off)
 	if err != nil {
@@ -789,6 +831,8 @@ func NewStatusesFrame(ss encoding.BinaryMarshaler) (*Frame, error) {
 }
 
 // ReadFrameStatuses - read frame from position pos and return statuses.
+//
+//nolint:dupl // this is not duplicate
 func ReadFrameStatuses(ctx context.Context, r io.ReaderAt, off int64) (Statuses, error) {
 	h, err := ReadHeader(ctx, r, off)
 	if err != nil {
@@ -973,10 +1017,13 @@ func (h *HeaderFrame) DecodeBinary(r io.ReaderAt, pos int64) error {
 
 // ReadHeader - read and return only header and skip body.
 func ReadHeader(ctx context.Context, r io.ReaderAt, off int64) (*HeaderFrame, error) {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+
 	h := NewHeaderFrameEmpty()
 	// TODO: use ReadTimeout for file descriptor
-	err := h.DecodeBinary(r, off)
-	if err != nil {
+	if err := h.DecodeBinary(r, off); err != nil {
 		return nil, err
 	}
 
@@ -1133,9 +1180,12 @@ func (sb *BinaryBody) Destroy() {
 
 // ReadBinaryBodyBody - read body to BinaryBody.
 func ReadBinaryBodyBody(ctx context.Context, r io.ReaderAt, off int64) (*BinaryBody, error) {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+
 	binaryBody := NewBinaryBodyEmpty()
-	err := binaryBody.decodeBinary(r, off)
-	if err != nil {
+	if err := binaryBody.decodeBinary(r, off); err != nil {
 		return nil, err
 	}
 
@@ -1334,9 +1384,12 @@ func (dn *DestinationsNames) decodeBinary(r io.ReaderAt, off int64) error {
 
 // ReadDestinationsNames - read body to DestinationsNames.
 func ReadDestinationsNames(ctx context.Context, r io.ReaderAt, off int64) (*DestinationsNames, error) {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+
 	dn := NewDestinationsNamesEmpty()
-	err := dn.decodeBinary(r, off)
-	if err != nil {
+	if err := dn.decodeBinary(r, off); err != nil {
 		return nil, err
 	}
 

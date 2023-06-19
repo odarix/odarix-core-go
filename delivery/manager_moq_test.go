@@ -5,8 +5,8 @@ package delivery_test
 
 import (
 	"context"
-	"github.com/odarix/odarix-core-go/delivery"
 	"github.com/google/uuid"
+	"github.com/odarix/odarix-core-go/delivery"
 	"sync"
 )
 
@@ -16,22 +16,22 @@ var _ delivery.Dialer = &DialerMock{}
 
 // DialerMock is a mock implementation of delivery.Dialer.
 //
-// 	func TestSomethingThatUsesDialer(t *testing.T) {
+//	func TestSomethingThatUsesDialer(t *testing.T) {
 //
-// 		// make and configure a mocked delivery.Dialer
-// 		mockedDialer := &DialerMock{
-// 			DialFunc: func(contextMoqParam context.Context) (delivery.Transport, error) {
-// 				panic("mock out the Dial method")
-// 			},
-// 			StringFunc: func() string {
-// 				panic("mock out the String method")
-// 			},
-// 		}
+//		// make and configure a mocked delivery.Dialer
+//		mockedDialer := &DialerMock{
+//			DialFunc: func(contextMoqParam context.Context) (delivery.Transport, error) {
+//				panic("mock out the Dial method")
+//			},
+//			StringFunc: func() string {
+//				panic("mock out the String method")
+//			},
+//		}
 //
-// 		// use mockedDialer in code that requires delivery.Dialer
-// 		// and then make assertions.
+//		// use mockedDialer in code that requires delivery.Dialer
+//		// and then make assertions.
 //
-// 	}
+//	}
 type DialerMock struct {
 	// DialFunc mocks the Dial method.
 	DialFunc func(contextMoqParam context.Context) (delivery.Transport, error)
@@ -72,7 +72,8 @@ func (mock *DialerMock) Dial(contextMoqParam context.Context) (delivery.Transpor
 
 // DialCalls gets all the calls that were made to Dial.
 // Check the length with:
-//     len(mockedDialer.DialCalls())
+//
+//	len(mockedDialer.DialCalls())
 func (mock *DialerMock) DialCalls() []struct {
 	ContextMoqParam context.Context
 } {
@@ -100,7 +101,8 @@ func (mock *DialerMock) String() string {
 
 // StringCalls gets all the calls that were made to String.
 // Check the length with:
-//     len(mockedDialer.StringCalls())
+//
+//	len(mockedDialer.StringCalls())
 func (mock *DialerMock) StringCalls() []struct {
 } {
 	var calls []struct {
@@ -117,34 +119,43 @@ var _ delivery.Transport = &TransportMock{}
 
 // TransportMock is a mock implementation of delivery.Transport.
 //
-// 	func TestSomethingThatUsesTransport(t *testing.T) {
+//	func TestSomethingThatUsesTransport(t *testing.T) {
 //
-// 		// make and configure a mocked delivery.Transport
-// 		mockedTransport := &TransportMock{
-// 			CloseFunc: func() error {
-// 				panic("mock out the Close method")
-// 			},
-// 			OnAckFunc: func(fn func(uint32))  {
-// 				panic("mock out the OnAck method")
-// 			},
-// 			OnRejectFunc: func(fn func(uint32))  {
-// 				panic("mock out the OnReject method")
-// 			},
-// 			SendRestoreFunc: func(contextMoqParam context.Context, snapshot delivery.Snapshot, segments []delivery.Segment) error {
-// 				panic("mock out the SendRestore method")
-// 			},
-// 			SendSegmentFunc: func(contextMoqParam context.Context, segment delivery.Segment) error {
-// 				panic("mock out the SendSegment method")
-// 			},
-// 			WithReaderErrorFunc: func(contextMoqParam context.Context, fn func(context.Context) error) error {
-// 				panic("mock out the WithReaderError method")
-// 			},
-// 		}
+//		// make and configure a mocked delivery.Transport
+//		mockedTransport := &TransportMock{
+//			CloseFunc: func() error {
+//				panic("mock out the Close method")
+//			},
+//			OnAckFunc: func(fn func(uint32))  {
+//				panic("mock out the OnAck method")
+//			},
+//			OnReadErrorFunc: func(fn func(err error))  {
+//				panic("mock out the OnReadError method")
+//			},
+//			OnRejectFunc: func(fn func(uint32))  {
+//				panic("mock out the OnReject method")
+//			},
+//			SendDrySegmentFunc: func(contextMoqParam context.Context, segment delivery.Segment) error {
+//				panic("mock out the SendDrySegment method")
+//			},
+//			SendRefillFunc: func(contextMoqParam context.Context, preparedDatas []delivery.PreparedData) error {
+//				panic("mock out the SendRefill method")
+//			},
+//			SendRestoreFunc: func(contextMoqParam context.Context, snapshot delivery.Snapshot, segments []delivery.Segment) error {
+//				panic("mock out the SendRestore method")
+//			},
+//			SendSegmentFunc: func(contextMoqParam context.Context, segment delivery.Segment) error {
+//				panic("mock out the SendSegment method")
+//			},
+//			SendSnapshotFunc: func(contextMoqParam context.Context, snapshot delivery.Snapshot) error {
+//				panic("mock out the SendSnapshot method")
+//			},
+//		}
 //
-// 		// use mockedTransport in code that requires delivery.Transport
-// 		// and then make assertions.
+//		// use mockedTransport in code that requires delivery.Transport
+//		// and then make assertions.
 //
-// 	}
+//	}
 type TransportMock struct {
 	// CloseFunc mocks the Close method.
 	CloseFunc func() error
@@ -152,8 +163,17 @@ type TransportMock struct {
 	// OnAckFunc mocks the OnAck method.
 	OnAckFunc func(fn func(uint32))
 
+	// OnReadErrorFunc mocks the OnReadError method.
+	OnReadErrorFunc func(fn func(err error))
+
 	// OnRejectFunc mocks the OnReject method.
 	OnRejectFunc func(fn func(uint32))
+
+	// SendDrySegmentFunc mocks the SendDrySegment method.
+	SendDrySegmentFunc func(contextMoqParam context.Context, segment delivery.Segment) error
+
+	// SendRefillFunc mocks the SendRefill method.
+	SendRefillFunc func(contextMoqParam context.Context, preparedDatas []delivery.PreparedData) error
 
 	// SendRestoreFunc mocks the SendRestore method.
 	SendRestoreFunc func(contextMoqParam context.Context, snapshot delivery.Snapshot, segments []delivery.Segment) error
@@ -161,8 +181,8 @@ type TransportMock struct {
 	// SendSegmentFunc mocks the SendSegment method.
 	SendSegmentFunc func(contextMoqParam context.Context, segment delivery.Segment) error
 
-	// WithReaderErrorFunc mocks the WithReaderError method.
-	WithReaderErrorFunc func(contextMoqParam context.Context, fn func(context.Context) error) error
+	// SendSnapshotFunc mocks the SendSnapshot method.
+	SendSnapshotFunc func(contextMoqParam context.Context, snapshot delivery.Snapshot) error
 
 	// calls tracks calls to the methods.
 	calls struct {
@@ -174,10 +194,29 @@ type TransportMock struct {
 			// Fn is the fn argument value.
 			Fn func(uint32)
 		}
+		// OnReadError holds details about calls to the OnReadError method.
+		OnReadError []struct {
+			// Fn is the fn argument value.
+			Fn func(err error)
+		}
 		// OnReject holds details about calls to the OnReject method.
 		OnReject []struct {
 			// Fn is the fn argument value.
 			Fn func(uint32)
+		}
+		// SendDrySegment holds details about calls to the SendDrySegment method.
+		SendDrySegment []struct {
+			// ContextMoqParam is the contextMoqParam argument value.
+			ContextMoqParam context.Context
+			// Segment is the segment argument value.
+			Segment delivery.Segment
+		}
+		// SendRefill holds details about calls to the SendRefill method.
+		SendRefill []struct {
+			// ContextMoqParam is the contextMoqParam argument value.
+			ContextMoqParam context.Context
+			// PreparedDatas is the preparedDatas argument value.
+			PreparedDatas []delivery.PreparedData
 		}
 		// SendRestore holds details about calls to the SendRestore method.
 		SendRestore []struct {
@@ -195,20 +234,23 @@ type TransportMock struct {
 			// Segment is the segment argument value.
 			Segment delivery.Segment
 		}
-		// WithReaderError holds details about calls to the WithReaderError method.
-		WithReaderError []struct {
+		// SendSnapshot holds details about calls to the SendSnapshot method.
+		SendSnapshot []struct {
 			// ContextMoqParam is the contextMoqParam argument value.
 			ContextMoqParam context.Context
-			// Fn is the fn argument value.
-			Fn func(context.Context) error
+			// Snapshot is the snapshot argument value.
+			Snapshot delivery.Snapshot
 		}
 	}
-	lockClose           sync.RWMutex
-	lockOnAck           sync.RWMutex
-	lockOnReject        sync.RWMutex
-	lockSendRestore     sync.RWMutex
-	lockSendSegment     sync.RWMutex
-	lockWithReaderError sync.RWMutex
+	lockClose          sync.RWMutex
+	lockOnAck          sync.RWMutex
+	lockOnReadError    sync.RWMutex
+	lockOnReject       sync.RWMutex
+	lockSendDrySegment sync.RWMutex
+	lockSendRefill     sync.RWMutex
+	lockSendRestore    sync.RWMutex
+	lockSendSegment    sync.RWMutex
+	lockSendSnapshot   sync.RWMutex
 }
 
 // Close calls CloseFunc.
@@ -226,7 +268,8 @@ func (mock *TransportMock) Close() error {
 
 // CloseCalls gets all the calls that were made to Close.
 // Check the length with:
-//     len(mockedTransport.CloseCalls())
+//
+//	len(mockedTransport.CloseCalls())
 func (mock *TransportMock) CloseCalls() []struct {
 } {
 	var calls []struct {
@@ -255,7 +298,8 @@ func (mock *TransportMock) OnAck(fn func(uint32)) {
 
 // OnAckCalls gets all the calls that were made to OnAck.
 // Check the length with:
-//     len(mockedTransport.OnAckCalls())
+//
+//	len(mockedTransport.OnAckCalls())
 func (mock *TransportMock) OnAckCalls() []struct {
 	Fn func(uint32)
 } {
@@ -265,6 +309,38 @@ func (mock *TransportMock) OnAckCalls() []struct {
 	mock.lockOnAck.RLock()
 	calls = mock.calls.OnAck
 	mock.lockOnAck.RUnlock()
+	return calls
+}
+
+// OnReadError calls OnReadErrorFunc.
+func (mock *TransportMock) OnReadError(fn func(err error)) {
+	if mock.OnReadErrorFunc == nil {
+		panic("TransportMock.OnReadErrorFunc: method is nil but Transport.OnReadError was just called")
+	}
+	callInfo := struct {
+		Fn func(err error)
+	}{
+		Fn: fn,
+	}
+	mock.lockOnReadError.Lock()
+	mock.calls.OnReadError = append(mock.calls.OnReadError, callInfo)
+	mock.lockOnReadError.Unlock()
+	mock.OnReadErrorFunc(fn)
+}
+
+// OnReadErrorCalls gets all the calls that were made to OnReadError.
+// Check the length with:
+//
+//	len(mockedTransport.OnReadErrorCalls())
+func (mock *TransportMock) OnReadErrorCalls() []struct {
+	Fn func(err error)
+} {
+	var calls []struct {
+		Fn func(err error)
+	}
+	mock.lockOnReadError.RLock()
+	calls = mock.calls.OnReadError
+	mock.lockOnReadError.RUnlock()
 	return calls
 }
 
@@ -286,7 +362,8 @@ func (mock *TransportMock) OnReject(fn func(uint32)) {
 
 // OnRejectCalls gets all the calls that were made to OnReject.
 // Check the length with:
-//     len(mockedTransport.OnRejectCalls())
+//
+//	len(mockedTransport.OnRejectCalls())
 func (mock *TransportMock) OnRejectCalls() []struct {
 	Fn func(uint32)
 } {
@@ -296,6 +373,78 @@ func (mock *TransportMock) OnRejectCalls() []struct {
 	mock.lockOnReject.RLock()
 	calls = mock.calls.OnReject
 	mock.lockOnReject.RUnlock()
+	return calls
+}
+
+// SendDrySegment calls SendDrySegmentFunc.
+func (mock *TransportMock) SendDrySegment(contextMoqParam context.Context, segment delivery.Segment) error {
+	if mock.SendDrySegmentFunc == nil {
+		panic("TransportMock.SendDrySegmentFunc: method is nil but Transport.SendDrySegment was just called")
+	}
+	callInfo := struct {
+		ContextMoqParam context.Context
+		Segment         delivery.Segment
+	}{
+		ContextMoqParam: contextMoqParam,
+		Segment:         segment,
+	}
+	mock.lockSendDrySegment.Lock()
+	mock.calls.SendDrySegment = append(mock.calls.SendDrySegment, callInfo)
+	mock.lockSendDrySegment.Unlock()
+	return mock.SendDrySegmentFunc(contextMoqParam, segment)
+}
+
+// SendDrySegmentCalls gets all the calls that were made to SendDrySegment.
+// Check the length with:
+//
+//	len(mockedTransport.SendDrySegmentCalls())
+func (mock *TransportMock) SendDrySegmentCalls() []struct {
+	ContextMoqParam context.Context
+	Segment         delivery.Segment
+} {
+	var calls []struct {
+		ContextMoqParam context.Context
+		Segment         delivery.Segment
+	}
+	mock.lockSendDrySegment.RLock()
+	calls = mock.calls.SendDrySegment
+	mock.lockSendDrySegment.RUnlock()
+	return calls
+}
+
+// SendRefill calls SendRefillFunc.
+func (mock *TransportMock) SendRefill(contextMoqParam context.Context, preparedDatas []delivery.PreparedData) error {
+	if mock.SendRefillFunc == nil {
+		panic("TransportMock.SendRefillFunc: method is nil but Transport.SendRefill was just called")
+	}
+	callInfo := struct {
+		ContextMoqParam context.Context
+		PreparedDatas   []delivery.PreparedData
+	}{
+		ContextMoqParam: contextMoqParam,
+		PreparedDatas:   preparedDatas,
+	}
+	mock.lockSendRefill.Lock()
+	mock.calls.SendRefill = append(mock.calls.SendRefill, callInfo)
+	mock.lockSendRefill.Unlock()
+	return mock.SendRefillFunc(contextMoqParam, preparedDatas)
+}
+
+// SendRefillCalls gets all the calls that were made to SendRefill.
+// Check the length with:
+//
+//	len(mockedTransport.SendRefillCalls())
+func (mock *TransportMock) SendRefillCalls() []struct {
+	ContextMoqParam context.Context
+	PreparedDatas   []delivery.PreparedData
+} {
+	var calls []struct {
+		ContextMoqParam context.Context
+		PreparedDatas   []delivery.PreparedData
+	}
+	mock.lockSendRefill.RLock()
+	calls = mock.calls.SendRefill
+	mock.lockSendRefill.RUnlock()
 	return calls
 }
 
@@ -321,7 +470,8 @@ func (mock *TransportMock) SendRestore(contextMoqParam context.Context, snapshot
 
 // SendRestoreCalls gets all the calls that were made to SendRestore.
 // Check the length with:
-//     len(mockedTransport.SendRestoreCalls())
+//
+//	len(mockedTransport.SendRestoreCalls())
 func (mock *TransportMock) SendRestoreCalls() []struct {
 	ContextMoqParam context.Context
 	Snapshot        delivery.Snapshot
@@ -358,7 +508,8 @@ func (mock *TransportMock) SendSegment(contextMoqParam context.Context, segment 
 
 // SendSegmentCalls gets all the calls that were made to SendSegment.
 // Check the length with:
-//     len(mockedTransport.SendSegmentCalls())
+//
+//	len(mockedTransport.SendSegmentCalls())
 func (mock *TransportMock) SendSegmentCalls() []struct {
 	ContextMoqParam context.Context
 	Segment         delivery.Segment
@@ -373,38 +524,39 @@ func (mock *TransportMock) SendSegmentCalls() []struct {
 	return calls
 }
 
-// WithReaderError calls WithReaderErrorFunc.
-func (mock *TransportMock) WithReaderError(contextMoqParam context.Context, fn func(context.Context) error) error {
-	if mock.WithReaderErrorFunc == nil {
-		panic("TransportMock.WithReaderErrorFunc: method is nil but Transport.WithReaderError was just called")
+// SendSnapshot calls SendSnapshotFunc.
+func (mock *TransportMock) SendSnapshot(contextMoqParam context.Context, snapshot delivery.Snapshot) error {
+	if mock.SendSnapshotFunc == nil {
+		panic("TransportMock.SendSnapshotFunc: method is nil but Transport.SendSnapshot was just called")
 	}
 	callInfo := struct {
 		ContextMoqParam context.Context
-		Fn              func(context.Context) error
+		Snapshot        delivery.Snapshot
 	}{
 		ContextMoqParam: contextMoqParam,
-		Fn:              fn,
+		Snapshot:        snapshot,
 	}
-	mock.lockWithReaderError.Lock()
-	mock.calls.WithReaderError = append(mock.calls.WithReaderError, callInfo)
-	mock.lockWithReaderError.Unlock()
-	return mock.WithReaderErrorFunc(contextMoqParam, fn)
+	mock.lockSendSnapshot.Lock()
+	mock.calls.SendSnapshot = append(mock.calls.SendSnapshot, callInfo)
+	mock.lockSendSnapshot.Unlock()
+	return mock.SendSnapshotFunc(contextMoqParam, snapshot)
 }
 
-// WithReaderErrorCalls gets all the calls that were made to WithReaderError.
+// SendSnapshotCalls gets all the calls that were made to SendSnapshot.
 // Check the length with:
-//     len(mockedTransport.WithReaderErrorCalls())
-func (mock *TransportMock) WithReaderErrorCalls() []struct {
+//
+//	len(mockedTransport.SendSnapshotCalls())
+func (mock *TransportMock) SendSnapshotCalls() []struct {
 	ContextMoqParam context.Context
-	Fn              func(context.Context) error
+	Snapshot        delivery.Snapshot
 } {
 	var calls []struct {
 		ContextMoqParam context.Context
-		Fn              func(context.Context) error
+		Snapshot        delivery.Snapshot
 	}
-	mock.lockWithReaderError.RLock()
-	calls = mock.calls.WithReaderError
-	mock.lockWithReaderError.RUnlock()
+	mock.lockSendSnapshot.RLock()
+	calls = mock.calls.SendSnapshot
+	mock.lockSendSnapshot.RUnlock()
 	return calls
 }
 
@@ -414,26 +566,32 @@ var _ delivery.ManagerEncoder = &ManagerEncoderMock{}
 
 // ManagerEncoderMock is a mock implementation of delivery.ManagerEncoder.
 //
-// 	func TestSomethingThatUsesManagerEncoder(t *testing.T) {
+//	func TestSomethingThatUsesManagerEncoder(t *testing.T) {
 //
-// 		// make and configure a mocked delivery.ManagerEncoder
-// 		mockedManagerEncoder := &ManagerEncoderMock{
-// 			EncodeFunc: func(contextMoqParam context.Context, shardedData delivery.ShardedData) (delivery.SegmentKey, delivery.Segment, delivery.Redundant, error) {
-// 				panic("mock out the Encode method")
-// 			},
-// 			LastEncodedSegmentFunc: func() uint32 {
-// 				panic("mock out the LastEncodedSegment method")
-// 			},
-// 			SnapshotFunc: func(contextMoqParam context.Context, redundants []delivery.Redundant) (delivery.Snapshot, error) {
-// 				panic("mock out the Snapshot method")
-// 			},
-// 		}
+//		// make and configure a mocked delivery.ManagerEncoder
+//		mockedManagerEncoder := &ManagerEncoderMock{
+//			DestroyFunc: func()  {
+//				panic("mock out the Destroy method")
+//			},
+//			EncodeFunc: func(contextMoqParam context.Context, shardedData delivery.ShardedData) (delivery.SegmentKey, delivery.Segment, delivery.Redundant, error) {
+//				panic("mock out the Encode method")
+//			},
+//			LastEncodedSegmentFunc: func() uint32 {
+//				panic("mock out the LastEncodedSegment method")
+//			},
+//			SnapshotFunc: func(contextMoqParam context.Context, redundants []delivery.Redundant) (delivery.Snapshot, error) {
+//				panic("mock out the Snapshot method")
+//			},
+//		}
 //
-// 		// use mockedManagerEncoder in code that requires delivery.ManagerEncoder
-// 		// and then make assertions.
+//		// use mockedManagerEncoder in code that requires delivery.ManagerEncoder
+//		// and then make assertions.
 //
-// 	}
+//	}
 type ManagerEncoderMock struct {
+	// DestroyFunc mocks the Destroy method.
+	DestroyFunc func()
+
 	// EncodeFunc mocks the Encode method.
 	EncodeFunc func(contextMoqParam context.Context, shardedData delivery.ShardedData) (delivery.SegmentKey, delivery.Segment, delivery.Redundant, error)
 
@@ -445,6 +603,9 @@ type ManagerEncoderMock struct {
 
 	// calls tracks calls to the methods.
 	calls struct {
+		// Destroy holds details about calls to the Destroy method.
+		Destroy []struct {
+		}
 		// Encode holds details about calls to the Encode method.
 		Encode []struct {
 			// ContextMoqParam is the contextMoqParam argument value.
@@ -463,9 +624,37 @@ type ManagerEncoderMock struct {
 			Redundants []delivery.Redundant
 		}
 	}
+	lockDestroy            sync.RWMutex
 	lockEncode             sync.RWMutex
 	lockLastEncodedSegment sync.RWMutex
 	lockSnapshot           sync.RWMutex
+}
+
+// Destroy calls DestroyFunc.
+func (mock *ManagerEncoderMock) Destroy() {
+	if mock.DestroyFunc == nil {
+		panic("ManagerEncoderMock.DestroyFunc: method is nil but ManagerEncoder.Destroy was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockDestroy.Lock()
+	mock.calls.Destroy = append(mock.calls.Destroy, callInfo)
+	mock.lockDestroy.Unlock()
+	mock.DestroyFunc()
+}
+
+// DestroyCalls gets all the calls that were made to Destroy.
+// Check the length with:
+//
+//	len(mockedManagerEncoder.DestroyCalls())
+func (mock *ManagerEncoderMock) DestroyCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockDestroy.RLock()
+	calls = mock.calls.Destroy
+	mock.lockDestroy.RUnlock()
+	return calls
 }
 
 // Encode calls EncodeFunc.
@@ -488,7 +677,8 @@ func (mock *ManagerEncoderMock) Encode(contextMoqParam context.Context, shardedD
 
 // EncodeCalls gets all the calls that were made to Encode.
 // Check the length with:
-//     len(mockedManagerEncoder.EncodeCalls())
+//
+//	len(mockedManagerEncoder.EncodeCalls())
 func (mock *ManagerEncoderMock) EncodeCalls() []struct {
 	ContextMoqParam context.Context
 	ShardedData     delivery.ShardedData
@@ -518,7 +708,8 @@ func (mock *ManagerEncoderMock) LastEncodedSegment() uint32 {
 
 // LastEncodedSegmentCalls gets all the calls that were made to LastEncodedSegment.
 // Check the length with:
-//     len(mockedManagerEncoder.LastEncodedSegmentCalls())
+//
+//	len(mockedManagerEncoder.LastEncodedSegmentCalls())
 func (mock *ManagerEncoderMock) LastEncodedSegmentCalls() []struct {
 } {
 	var calls []struct {
@@ -549,7 +740,8 @@ func (mock *ManagerEncoderMock) Snapshot(contextMoqParam context.Context, redund
 
 // SnapshotCalls gets all the calls that were made to Snapshot.
 // Check the length with:
-//     len(mockedManagerEncoder.SnapshotCalls())
+//
+//	len(mockedManagerEncoder.SnapshotCalls())
 func (mock *ManagerEncoderMock) SnapshotCalls() []struct {
 	ContextMoqParam context.Context
 	Redundants      []delivery.Redundant
@@ -570,55 +762,58 @@ var _ delivery.ManagerRefill = &ManagerRefillMock{}
 
 // ManagerRefillMock is a mock implementation of delivery.ManagerRefill.
 //
-// 	func TestSomethingThatUsesManagerRefill(t *testing.T) {
+//	func TestSomethingThatUsesManagerRefill(t *testing.T) {
 //
-// 		// make and configure a mocked delivery.ManagerRefill
-// 		mockedManagerRefill := &ManagerRefillMock{
-// 			AckFunc: func(segmentKey delivery.SegmentKey, s string)  {
-// 				panic("mock out the Ack method")
-// 			},
-// 			BlockIDFunc: func() uuid.UUID {
-// 				panic("mock out the BlockID method")
-// 			},
-// 			DestinationsFunc: func() int {
-// 				panic("mock out the Destinations method")
-// 			},
-// 			GetFunc: func(contextMoqParam context.Context, segmentKey delivery.SegmentKey) (delivery.Segment, error) {
-// 				panic("mock out the Get method")
-// 			},
-// 			IsContinuableFunc: func() bool {
-// 				panic("mock out the IsContinuable method")
-// 			},
-// 			LastSegmentFunc: func(v uint16, s string) uint32 {
-// 				panic("mock out the LastSegment method")
-// 			},
-// 			RejectFunc: func(segmentKey delivery.SegmentKey, s string)  {
-// 				panic("mock out the Reject method")
-// 			},
-// 			RestoreFunc: func(contextMoqParam context.Context, segmentKey delivery.SegmentKey) (delivery.Snapshot, []delivery.Segment, error) {
-// 				panic("mock out the Restore method")
-// 			},
-// 			ShardsFunc: func() int {
-// 				panic("mock out the Shards method")
-// 			},
-// 			ShutdownFunc: func(contextMoqParam context.Context) error {
-// 				panic("mock out the Shutdown method")
-// 			},
-// 			WriteAckStatusFunc: func(contextMoqParam context.Context) error {
-// 				panic("mock out the WriteAckStatus method")
-// 			},
-// 			WriteSegmentFunc: func(contextMoqParam context.Context, segmentKey delivery.SegmentKey, segment delivery.Segment) error {
-// 				panic("mock out the WriteSegment method")
-// 			},
-// 			WriteSnapshotFunc: func(contextMoqParam context.Context, segmentKey delivery.SegmentKey, snapshot delivery.Snapshot) error {
-// 				panic("mock out the WriteSnapshot method")
-// 			},
-// 		}
+//		// make and configure a mocked delivery.ManagerRefill
+//		mockedManagerRefill := &ManagerRefillMock{
+//			AckFunc: func(segmentKey delivery.SegmentKey, s string)  {
+//				panic("mock out the Ack method")
+//			},
+//			BlockIDFunc: func() uuid.UUID {
+//				panic("mock out the BlockID method")
+//			},
+//			DestinationsFunc: func() int {
+//				panic("mock out the Destinations method")
+//			},
+//			GetFunc: func(contextMoqParam context.Context, segmentKey delivery.SegmentKey) (delivery.Segment, error) {
+//				panic("mock out the Get method")
+//			},
+//			IsContinuableFunc: func() bool {
+//				panic("mock out the IsContinuable method")
+//			},
+//			LastSegmentFunc: func(v uint16, s string) uint32 {
+//				panic("mock out the LastSegment method")
+//			},
+//			RejectFunc: func(segmentKey delivery.SegmentKey, s string)  {
+//				panic("mock out the Reject method")
+//			},
+//			RestoreFunc: func(contextMoqParam context.Context, segmentKey delivery.SegmentKey) (delivery.Snapshot, []delivery.Segment, error) {
+//				panic("mock out the Restore method")
+//			},
+//			ShardsFunc: func() int {
+//				panic("mock out the Shards method")
+//			},
+//			ShutdownFunc: func(contextMoqParam context.Context) error {
+//				panic("mock out the Shutdown method")
+//			},
+//			TemporarilyRenameFunc: func() error {
+//				panic("mock out the TemporarilyRename method")
+//			},
+//			WriteAckStatusFunc: func(contextMoqParam context.Context) error {
+//				panic("mock out the WriteAckStatus method")
+//			},
+//			WriteSegmentFunc: func(contextMoqParam context.Context, segmentKey delivery.SegmentKey, segment delivery.Segment) error {
+//				panic("mock out the WriteSegment method")
+//			},
+//			WriteSnapshotFunc: func(contextMoqParam context.Context, segmentKey delivery.SegmentKey, snapshot delivery.Snapshot) error {
+//				panic("mock out the WriteSnapshot method")
+//			},
+//		}
 //
-// 		// use mockedManagerRefill in code that requires delivery.ManagerRefill
-// 		// and then make assertions.
+//		// use mockedManagerRefill in code that requires delivery.ManagerRefill
+//		// and then make assertions.
 //
-// 	}
+//	}
 type ManagerRefillMock struct {
 	// AckFunc mocks the Ack method.
 	AckFunc func(segmentKey delivery.SegmentKey, s string)
@@ -649,6 +844,9 @@ type ManagerRefillMock struct {
 
 	// ShutdownFunc mocks the Shutdown method.
 	ShutdownFunc func(contextMoqParam context.Context) error
+
+	// TemporarilyRenameFunc mocks the TemporarilyRename method.
+	TemporarilyRenameFunc func() error
 
 	// WriteAckStatusFunc mocks the WriteAckStatus method.
 	WriteAckStatusFunc func(contextMoqParam context.Context) error
@@ -713,6 +911,9 @@ type ManagerRefillMock struct {
 			// ContextMoqParam is the contextMoqParam argument value.
 			ContextMoqParam context.Context
 		}
+		// TemporarilyRename holds details about calls to the TemporarilyRename method.
+		TemporarilyRename []struct {
+		}
 		// WriteAckStatus holds details about calls to the WriteAckStatus method.
 		WriteAckStatus []struct {
 			// ContextMoqParam is the contextMoqParam argument value.
@@ -737,19 +938,20 @@ type ManagerRefillMock struct {
 			Snapshot delivery.Snapshot
 		}
 	}
-	lockAck            sync.RWMutex
-	lockBlockID        sync.RWMutex
-	lockDestinations   sync.RWMutex
-	lockGet            sync.RWMutex
-	lockIsContinuable  sync.RWMutex
-	lockLastSegment    sync.RWMutex
-	lockReject         sync.RWMutex
-	lockRestore        sync.RWMutex
-	lockShards         sync.RWMutex
-	lockShutdown       sync.RWMutex
-	lockWriteAckStatus sync.RWMutex
-	lockWriteSegment   sync.RWMutex
-	lockWriteSnapshot  sync.RWMutex
+	lockAck               sync.RWMutex
+	lockBlockID           sync.RWMutex
+	lockDestinations      sync.RWMutex
+	lockGet               sync.RWMutex
+	lockIsContinuable     sync.RWMutex
+	lockLastSegment       sync.RWMutex
+	lockReject            sync.RWMutex
+	lockRestore           sync.RWMutex
+	lockShards            sync.RWMutex
+	lockShutdown          sync.RWMutex
+	lockTemporarilyRename sync.RWMutex
+	lockWriteAckStatus    sync.RWMutex
+	lockWriteSegment      sync.RWMutex
+	lockWriteSnapshot     sync.RWMutex
 }
 
 // Ack calls AckFunc.
@@ -772,7 +974,8 @@ func (mock *ManagerRefillMock) Ack(segmentKey delivery.SegmentKey, s string) {
 
 // AckCalls gets all the calls that were made to Ack.
 // Check the length with:
-//     len(mockedManagerRefill.AckCalls())
+//
+//	len(mockedManagerRefill.AckCalls())
 func (mock *ManagerRefillMock) AckCalls() []struct {
 	SegmentKey delivery.SegmentKey
 	S          string
@@ -802,7 +1005,8 @@ func (mock *ManagerRefillMock) BlockID() uuid.UUID {
 
 // BlockIDCalls gets all the calls that were made to BlockID.
 // Check the length with:
-//     len(mockedManagerRefill.BlockIDCalls())
+//
+//	len(mockedManagerRefill.BlockIDCalls())
 func (mock *ManagerRefillMock) BlockIDCalls() []struct {
 } {
 	var calls []struct {
@@ -828,7 +1032,8 @@ func (mock *ManagerRefillMock) Destinations() int {
 
 // DestinationsCalls gets all the calls that were made to Destinations.
 // Check the length with:
-//     len(mockedManagerRefill.DestinationsCalls())
+//
+//	len(mockedManagerRefill.DestinationsCalls())
 func (mock *ManagerRefillMock) DestinationsCalls() []struct {
 } {
 	var calls []struct {
@@ -859,7 +1064,8 @@ func (mock *ManagerRefillMock) Get(contextMoqParam context.Context, segmentKey d
 
 // GetCalls gets all the calls that were made to Get.
 // Check the length with:
-//     len(mockedManagerRefill.GetCalls())
+//
+//	len(mockedManagerRefill.GetCalls())
 func (mock *ManagerRefillMock) GetCalls() []struct {
 	ContextMoqParam context.Context
 	SegmentKey      delivery.SegmentKey
@@ -889,7 +1095,8 @@ func (mock *ManagerRefillMock) IsContinuable() bool {
 
 // IsContinuableCalls gets all the calls that were made to IsContinuable.
 // Check the length with:
-//     len(mockedManagerRefill.IsContinuableCalls())
+//
+//	len(mockedManagerRefill.IsContinuableCalls())
 func (mock *ManagerRefillMock) IsContinuableCalls() []struct {
 } {
 	var calls []struct {
@@ -920,7 +1127,8 @@ func (mock *ManagerRefillMock) LastSegment(v uint16, s string) uint32 {
 
 // LastSegmentCalls gets all the calls that were made to LastSegment.
 // Check the length with:
-//     len(mockedManagerRefill.LastSegmentCalls())
+//
+//	len(mockedManagerRefill.LastSegmentCalls())
 func (mock *ManagerRefillMock) LastSegmentCalls() []struct {
 	V uint16
 	S string
@@ -955,7 +1163,8 @@ func (mock *ManagerRefillMock) Reject(segmentKey delivery.SegmentKey, s string) 
 
 // RejectCalls gets all the calls that were made to Reject.
 // Check the length with:
-//     len(mockedManagerRefill.RejectCalls())
+//
+//	len(mockedManagerRefill.RejectCalls())
 func (mock *ManagerRefillMock) RejectCalls() []struct {
 	SegmentKey delivery.SegmentKey
 	S          string
@@ -990,7 +1199,8 @@ func (mock *ManagerRefillMock) Restore(contextMoqParam context.Context, segmentK
 
 // RestoreCalls gets all the calls that were made to Restore.
 // Check the length with:
-//     len(mockedManagerRefill.RestoreCalls())
+//
+//	len(mockedManagerRefill.RestoreCalls())
 func (mock *ManagerRefillMock) RestoreCalls() []struct {
 	ContextMoqParam context.Context
 	SegmentKey      delivery.SegmentKey
@@ -1020,7 +1230,8 @@ func (mock *ManagerRefillMock) Shards() int {
 
 // ShardsCalls gets all the calls that were made to Shards.
 // Check the length with:
-//     len(mockedManagerRefill.ShardsCalls())
+//
+//	len(mockedManagerRefill.ShardsCalls())
 func (mock *ManagerRefillMock) ShardsCalls() []struct {
 } {
 	var calls []struct {
@@ -1049,7 +1260,8 @@ func (mock *ManagerRefillMock) Shutdown(contextMoqParam context.Context) error {
 
 // ShutdownCalls gets all the calls that were made to Shutdown.
 // Check the length with:
-//     len(mockedManagerRefill.ShutdownCalls())
+//
+//	len(mockedManagerRefill.ShutdownCalls())
 func (mock *ManagerRefillMock) ShutdownCalls() []struct {
 	ContextMoqParam context.Context
 } {
@@ -1059,6 +1271,33 @@ func (mock *ManagerRefillMock) ShutdownCalls() []struct {
 	mock.lockShutdown.RLock()
 	calls = mock.calls.Shutdown
 	mock.lockShutdown.RUnlock()
+	return calls
+}
+
+// TemporarilyRename calls TemporarilyRenameFunc.
+func (mock *ManagerRefillMock) TemporarilyRename() error {
+	if mock.TemporarilyRenameFunc == nil {
+		panic("ManagerRefillMock.TemporarilyRenameFunc: method is nil but ManagerRefill.TemporarilyRename was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockTemporarilyRename.Lock()
+	mock.calls.TemporarilyRename = append(mock.calls.TemporarilyRename, callInfo)
+	mock.lockTemporarilyRename.Unlock()
+	return mock.TemporarilyRenameFunc()
+}
+
+// TemporarilyRenameCalls gets all the calls that were made to TemporarilyRename.
+// Check the length with:
+//
+//	len(mockedManagerRefill.TemporarilyRenameCalls())
+func (mock *ManagerRefillMock) TemporarilyRenameCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockTemporarilyRename.RLock()
+	calls = mock.calls.TemporarilyRename
+	mock.lockTemporarilyRename.RUnlock()
 	return calls
 }
 
@@ -1080,7 +1319,8 @@ func (mock *ManagerRefillMock) WriteAckStatus(contextMoqParam context.Context) e
 
 // WriteAckStatusCalls gets all the calls that were made to WriteAckStatus.
 // Check the length with:
-//     len(mockedManagerRefill.WriteAckStatusCalls())
+//
+//	len(mockedManagerRefill.WriteAckStatusCalls())
 func (mock *ManagerRefillMock) WriteAckStatusCalls() []struct {
 	ContextMoqParam context.Context
 } {
@@ -1115,7 +1355,8 @@ func (mock *ManagerRefillMock) WriteSegment(contextMoqParam context.Context, seg
 
 // WriteSegmentCalls gets all the calls that were made to WriteSegment.
 // Check the length with:
-//     len(mockedManagerRefill.WriteSegmentCalls())
+//
+//	len(mockedManagerRefill.WriteSegmentCalls())
 func (mock *ManagerRefillMock) WriteSegmentCalls() []struct {
 	ContextMoqParam context.Context
 	SegmentKey      delivery.SegmentKey
@@ -1154,7 +1395,8 @@ func (mock *ManagerRefillMock) WriteSnapshot(contextMoqParam context.Context, se
 
 // WriteSnapshotCalls gets all the calls that were made to WriteSnapshot.
 // Check the length with:
-//     len(mockedManagerRefill.WriteSnapshotCalls())
+//
+//	len(mockedManagerRefill.WriteSnapshotCalls())
 func (mock *ManagerRefillMock) WriteSnapshotCalls() []struct {
 	ContextMoqParam context.Context
 	SegmentKey      delivery.SegmentKey
@@ -1168,5 +1410,115 @@ func (mock *ManagerRefillMock) WriteSnapshotCalls() []struct {
 	mock.lockWriteSnapshot.RLock()
 	calls = mock.calls.WriteSnapshot
 	mock.lockWriteSnapshot.RUnlock()
+	return calls
+}
+
+// Ensure, that MangerRefillSenderMock does implement delivery.MangerRefillSender.
+// If this is not the case, regenerate this file with moq.
+var _ delivery.MangerRefillSender = &MangerRefillSenderMock{}
+
+// MangerRefillSenderMock is a mock implementation of delivery.MangerRefillSender.
+//
+//	func TestSomethingThatUsesMangerRefillSender(t *testing.T) {
+//
+//		// make and configure a mocked delivery.MangerRefillSender
+//		mockedMangerRefillSender := &MangerRefillSenderMock{
+//			RunFunc: func(contextMoqParam context.Context)  {
+//				panic("mock out the Run method")
+//			},
+//			ShutdownFunc: func(ctx context.Context) error {
+//				panic("mock out the Shutdown method")
+//			},
+//		}
+//
+//		// use mockedMangerRefillSender in code that requires delivery.MangerRefillSender
+//		// and then make assertions.
+//
+//	}
+type MangerRefillSenderMock struct {
+	// RunFunc mocks the Run method.
+	RunFunc func(contextMoqParam context.Context)
+
+	// ShutdownFunc mocks the Shutdown method.
+	ShutdownFunc func(ctx context.Context) error
+
+	// calls tracks calls to the methods.
+	calls struct {
+		// Run holds details about calls to the Run method.
+		Run []struct {
+			// ContextMoqParam is the contextMoqParam argument value.
+			ContextMoqParam context.Context
+		}
+		// Shutdown holds details about calls to the Shutdown method.
+		Shutdown []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+		}
+	}
+	lockRun      sync.RWMutex
+	lockShutdown sync.RWMutex
+}
+
+// Run calls RunFunc.
+func (mock *MangerRefillSenderMock) Run(contextMoqParam context.Context) {
+	if mock.RunFunc == nil {
+		panic("MangerRefillSenderMock.RunFunc: method is nil but MangerRefillSender.Run was just called")
+	}
+	callInfo := struct {
+		ContextMoqParam context.Context
+	}{
+		ContextMoqParam: contextMoqParam,
+	}
+	mock.lockRun.Lock()
+	mock.calls.Run = append(mock.calls.Run, callInfo)
+	mock.lockRun.Unlock()
+	mock.RunFunc(contextMoqParam)
+}
+
+// RunCalls gets all the calls that were made to Run.
+// Check the length with:
+//
+//	len(mockedMangerRefillSender.RunCalls())
+func (mock *MangerRefillSenderMock) RunCalls() []struct {
+	ContextMoqParam context.Context
+} {
+	var calls []struct {
+		ContextMoqParam context.Context
+	}
+	mock.lockRun.RLock()
+	calls = mock.calls.Run
+	mock.lockRun.RUnlock()
+	return calls
+}
+
+// Shutdown calls ShutdownFunc.
+func (mock *MangerRefillSenderMock) Shutdown(ctx context.Context) error {
+	if mock.ShutdownFunc == nil {
+		panic("MangerRefillSenderMock.ShutdownFunc: method is nil but MangerRefillSender.Shutdown was just called")
+	}
+	callInfo := struct {
+		Ctx context.Context
+	}{
+		Ctx: ctx,
+	}
+	mock.lockShutdown.Lock()
+	mock.calls.Shutdown = append(mock.calls.Shutdown, callInfo)
+	mock.lockShutdown.Unlock()
+	return mock.ShutdownFunc(ctx)
+}
+
+// ShutdownCalls gets all the calls that were made to Shutdown.
+// Check the length with:
+//
+//	len(mockedMangerRefillSender.ShutdownCalls())
+func (mock *MangerRefillSenderMock) ShutdownCalls() []struct {
+	Ctx context.Context
+} {
+	var calls []struct {
+		Ctx context.Context
+	}
+	mock.lockShutdown.RLock()
+	calls = mock.calls.Shutdown
+	mock.lockShutdown.RUnlock()
 	return calls
 }

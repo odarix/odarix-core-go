@@ -435,6 +435,7 @@ func (*ManagerSuite) transportWithReject(dialer delivery.Dialer, switcher *atomi
 					defer m.Unlock()
 					reject = fn
 				},
+				OnReadErrorFunc: func(fn func(error)) {},
 				SendRestoreFunc: func(ctx context.Context, snapshot delivery.Snapshot, segments []delivery.Segment) error {
 					return transport.SendRestore(ctx, snapshot, segments)
 				},
@@ -455,9 +456,6 @@ func (*ManagerSuite) transportWithReject(dialer delivery.Dialer, switcher *atomi
 					})
 					return nil
 				},
-				WithReaderErrorFunc: func(contextMoqParam context.Context, fn func(context.Context) error) error {
-					return fn(contextMoqParam)
-				},
 				CloseFunc: transport.Close,
 			}, nil
 		},
@@ -473,8 +471,9 @@ func (*ManagerSuite) transportWithError(dialer delivery.Dialer, switcher *atomic
 				return nil, err
 			}
 			return &TransportMock{
-				OnAckFunc:    transport.OnAck,
-				OnRejectFunc: transport.OnReject,
+				OnAckFunc:       transport.OnAck,
+				OnRejectFunc:    transport.OnReject,
+				OnReadErrorFunc: func(fn func(error)) {},
 				SendRestoreFunc: func(ctx context.Context, snapshot delivery.Snapshot, segments []delivery.Segment) error {
 					if switcher.Load() {
 						time.Sleep(delay)
@@ -488,9 +487,6 @@ func (*ManagerSuite) transportWithError(dialer delivery.Dialer, switcher *atomic
 						return assert.AnError
 					}
 					return transport.SendSegment(ctx, segment)
-				},
-				WithReaderErrorFunc: func(contextMoqParam context.Context, fn func(context.Context) error) error {
-					return fn(contextMoqParam)
 				},
 				CloseFunc: transport.Close,
 			}, nil
@@ -511,7 +507,8 @@ func (*ManagerSuite) transportNewAutoAck(name string, delay time.Duration, dest 
 					defer m.Unlock()
 					ack = fn
 				},
-				OnRejectFunc: func(fn func(uint32)) {},
+				OnRejectFunc:    func(fn func(uint32)) {},
+				OnReadErrorFunc: func(fn func(error)) {},
 				SendRestoreFunc: func(_ context.Context, _ delivery.Snapshot, _ []delivery.Segment) error {
 					return nil
 				},
@@ -540,9 +537,6 @@ func (*ManagerSuite) transportNewAutoAck(name string, delay time.Duration, dest 
 						}
 					})
 					return nil
-				},
-				WithReaderErrorFunc: func(contextMoqParam context.Context, fn func(context.Context) error) error {
-					return fn(contextMoqParam)
 				},
 				CloseFunc: func() error {
 					m.Lock()
@@ -778,6 +772,7 @@ func (*ManagerSuite) simpleEncoder() delivery.ManagerEncoderCtor {
 					blockID, shardID, shards, firstSegment,
 				))}, nil
 			},
+			DestroyFunc: func() {},
 		}, nil
 	}
 }

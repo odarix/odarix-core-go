@@ -3,6 +3,7 @@ package delivery
 import (
 	"fmt"
 	"math"
+	"runtime"
 	"unsafe" // nolint
 
 	"context"
@@ -101,12 +102,12 @@ func NewGoSnapshot() *GoSnapshot {
 
 // Bytes - convert in go-slice byte from struct.
 func (gs *GoSnapshot) Bytes() []byte {
-	return *(*[]byte)((unsafe.Pointer(&gs.data)))
+	return *(*[]byte)((unsafe.Pointer(&gs.data))) //nolint:gosec // this is memory optimisation
 }
 
 // Destroy - clear memory in C/C++.
 func (gs *GoSnapshot) Destroy() {
-	cSliceWithStreamBufferDestroy(unsafe.Pointer(gs))
+	cSliceWithStreamBufferDestroy(unsafe.Pointer(gs)) //nolint:gosec // this is memory optimisation
 }
 
 // GoSegment - GO wrapper for Segment, init from GO and filling from C/C++.
@@ -126,12 +127,12 @@ func NewGoSegment() *GoSegment {
 
 // Bytes - convert in go-slice byte from struct.
 func (gs *GoSegment) Bytes() []byte {
-	return *(*[]byte)((unsafe.Pointer(&gs.data)))
+	return *(*[]byte)((unsafe.Pointer(&gs.data))) //nolint:gosec // this is memory optimisation
 }
 
 // Destroy - clear memory in C/C++.
 func (gs *GoSegment) Destroy() {
-	cSliceWithStreamBufferDestroy(unsafe.Pointer(gs))
+	cSliceWithStreamBufferDestroy(unsafe.Pointer(gs)) //nolint:gosec // this is memory optimisation
 }
 
 // GoRedundant - GO wrapper for Redundant, init from GO and filling from C/C++.
@@ -152,28 +153,30 @@ func (gr *GoRedundant) PointerData() unsafe.Pointer {
 
 // Destroy - clear memory in C/C++.
 func (gr *GoRedundant) Destroy() {
-	cRedundantDestroy(unsafe.Pointer(gr))
+	cRedundantDestroy(unsafe.Pointer(gr)) //nolint:gosec // this is memory optimisation
 }
 
 // Hashdex - Presharding data, GO wrapper for Hashdex, init from GO and filling from C/C++.
 type Hashdex struct {
 	hashdex cHashdex
+	data    []byte
 }
 
 // NewHashdex - init new Hashdex.
-func NewHashdex() *Hashdex {
-	return &Hashdex{
+func NewHashdex(protoData []byte) *Hashdex {
+	h := &Hashdex{
 		hashdex: cHashdexCtor(),
+		data:    protoData,
 	}
-}
+	cHashdexPresharding(h.hashdex, h.data)
 
-// PreSharding - presharding inncome protobuf data in C/C++.
-func (h *Hashdex) PreSharding(_ context.Context, protoData []byte) error {
-	cHashdexPresharding(h.hashdex, protoData)
-	return nil
+	return h
 }
 
 // Destroy - clear memory in C/C++.
 func (h *Hashdex) Destroy() {
+	// so that the Garbage Collector does not clear the memory
+	// associated with the slice, we hold it through KeepAlive
+	runtime.KeepAlive(h.data)
 	cHashdexDtor(h.hashdex)
 }

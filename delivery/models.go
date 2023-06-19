@@ -2,6 +2,7 @@ package delivery
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"unsafe"
 )
@@ -99,4 +100,63 @@ func (promise *SendPromise) Await(ctx context.Context) (ack bool, err error) {
 	case <-promise.done:
 		return promise.refills == 0, nil
 	}
+}
+
+// IsPermanent - check if the error is permanent.
+func IsPermanent(err error) bool {
+	var p interface {
+		Permanent() bool
+	}
+	if errors.As(err, &p) {
+		return p.Permanent()
+	}
+	return false
+}
+
+// ErrSegmentNotFoundRefill - error segment not found in refill.
+type ErrSegmentNotFoundRefill struct{}
+
+// Error - implements error.
+func (ErrSegmentNotFoundRefill) Error() string {
+	return "segment not found"
+}
+
+// Unwrap - implements errors.Unwrap.
+func (e ErrSegmentNotFoundRefill) Unwrap() error {
+	return e
+}
+
+// Is - implements errors.Is.
+func (ErrSegmentNotFoundRefill) Is(target error) bool {
+	_, ok := target.(ErrSegmentNotFoundRefill)
+	return ok
+}
+
+// Permanent - sign of a permanent error.
+func (ErrSegmentNotFoundRefill) Permanent() bool {
+	return true
+}
+
+// ErrServiceDataNotRestored - error if service data not recovered(title, destinations names).
+type ErrServiceDataNotRestored struct{}
+
+// Error - implements error.
+func (ErrServiceDataNotRestored) Error() string {
+	return "service data not recovered"
+}
+
+// Unwrap - implements errors.Unwrap.
+func (e ErrServiceDataNotRestored) Unwrap() error {
+	return e
+}
+
+// Is - implements errors.Is.
+func (ErrServiceDataNotRestored) Is(target error) bool {
+	_, ok := target.(ErrServiceDataNotRestored)
+	return ok
+}
+
+// Permanent - sign of a permanent error.
+func (ErrServiceDataNotRestored) Permanent() bool {
+	return true
 }

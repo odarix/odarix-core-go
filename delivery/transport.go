@@ -12,6 +12,31 @@ import (
 	"github.com/odarix/odarix-core-go/transport"
 )
 
+// Dialer used for connect to backend
+//
+// We suppose that dialer has its own backoff and returns only permanent error.
+type Dialer interface {
+	String() string
+	Dial(context.Context) (Transport, error)
+}
+
+// Transport is a destination connection interface
+//
+// We suppose that Transport is full-initiated:
+// - authorized
+// - setted timeouts
+type Transport interface {
+	SendRestore(context.Context, Snapshot, []Segment) error
+	SendSegment(context.Context, Segment) error
+	SendRefill(context.Context, []PreparedData) error
+	SendSnapshot(context.Context, Snapshot) error
+	SendDrySegment(context.Context, Segment) error
+	OnAck(func(uint32))
+	OnReject(func(uint32))
+	OnReadError(fn func(err error))
+	Close() error
+}
+
 const (
 	protocolVersion uint8 = 3
 )
@@ -91,18 +116,17 @@ func (dialer *TCPDialer) Dial(ctx context.Context) (Transport, error) {
 
 // TCPTransport - transport implementation.
 type TCPTransport struct {
-	nt           *transport.Transport
-	onAckFunc    func(id uint32)
-	onRejectFunc func(id uint32)
-	cancel       context.CancelFunc
-	errChan      chan error
+	nt              *transport.Transport
+	onAckFunc       func(id uint32)
+	onRejectFunc    func(id uint32)
+	onReadErrorFunc func(err error)
+	cancel          context.CancelFunc
 }
 
 // NewTCPTransport - init new TCPTransport.
 func NewTCPTransport(cfg *transport.Config, conn net.Conn) *TCPTransport {
 	return &TCPTransport{
-		nt:      transport.New(cfg, conn),
-		errChan: make(chan error, 1),
+		nt: transport.New(cfg, conn),
 	}
 }
 
@@ -177,17 +201,92 @@ func (tt *TCPTransport) SendSegment(ctx context.Context, seg Segment) error {
 	return nil
 }
 
+// SendRefill - send Refill msg over connection.
+func (tt *TCPTransport) SendRefill(ctx context.Context, pd []PreparedData) error {
+	messages := make([]transport.MessageData, 0, len(pd))
+	for _, data := range pd {
+		switch data.MsgType {
+		case transport.MsgPut:
+			messages = append(
+				messages,
+				transport.MessageData{
+					ID:      data.SegmentID,
+					Size:    data.Value.size,
+					Typemsg: transport.MsgPut,
+				},
+			)
+		case transport.MsgDryPut:
+			messages = append(
+				messages,
+				transport.MessageData{
+					ID:      data.SegmentID,
+					Size:    data.Value.size,
+					Typemsg: transport.MsgDryPut,
+				},
+			)
+		case transport.MsgSnapshot:
+			messages = append(
+				messages,
+				transport.MessageData{
+					ID:      data.SegmentID,
+					Size:    data.Value.size,
+					Typemsg: transport.MsgSnapshot,
+				},
+			)
+		}
+	}
+	mr := transport.RefillMsg{
+		Messages: messages,
+	}
+
+	mb, err := mr.MarshalBinary()
+	if err != nil {
+		return err
+	}
+
+	if err := tt.nt.Write(
+		ctx,
+		transport.NewRawMessage(protocolVersion, transport.MsgRefill, mb),
+	); err != nil {
+		return fmt.Errorf("failed send refill: %w", err)
+	}
+
+	return nil
+}
+
+// SendSnapshot -  send Snapshot for restore over connection.
+func (tt *TCPTransport) SendSnapshot(ctx context.Context, snap Snapshot) error {
+	if err := tt.nt.Write(
+		ctx,
+		transport.NewRawMessage(protocolVersion, transport.MsgSnapshot, snap.Bytes()),
+	); err != nil {
+		return fmt.Errorf("failed send snapshot: %w", err)
+	}
+
+	return nil
+}
+
+// SendDrySegment - send dry Segment over connection.
+func (tt *TCPTransport) SendDrySegment(ctx context.Context, seg Segment) error {
+	if err := tt.nt.Write(ctx, transport.NewRawMessage(protocolVersion, transport.MsgDryPut, seg.Bytes())); err != nil {
+		return fmt.Errorf("failed send dry segment: %w", err)
+	}
+
+	return nil
+}
+
 // incomeStream - listener for income message.
 func (tt *TCPTransport) incomeStream(ctx context.Context) {
 	for {
 		raw, err := tt.nt.Read(ctx)
 		if err != nil {
-			tt.errChan <- fmt.Errorf("income stream: %w", err)
+			// TODO use of closed network connection when you close connection from the outside (close)
+			tt.onReadErrorFunc(err)
 			return
 		}
 
 		if raw.Header.Type != transport.MsgResponse {
-			tt.errChan <- fmt.Errorf("unknown msg type %d, expected %d", raw.Header.Type, raw.Header.Type)
+			tt.onReadErrorFunc(fmt.Errorf("unknown msg type %d, expected %d", raw.Header.Type, raw.Header.Type))
 			return
 		}
 
@@ -213,21 +312,9 @@ func (tt *TCPTransport) OnReject(fn func(id uint32)) {
 	tt.onRejectFunc = fn
 }
 
-// WithReaderError - run function with gorutines error.
-func (tt *TCPTransport) WithReaderError(ctx context.Context, fn func(context.Context) error) error {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	go func() {
-		tt.errChan <- fn(ctx)
-	}()
-
-	select {
-	case err := <-tt.errChan:
-		return err
-	case <-ctx.Done():
-		return context.Cause(ctx)
-	}
+// OnReadError - check error on income stream via fn.
+func (tt *TCPTransport) OnReadError(fn func(err error)) {
+	tt.onReadErrorFunc = fn
 }
 
 // Close - close connection.
