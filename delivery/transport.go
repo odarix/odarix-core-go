@@ -9,6 +9,7 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 
+	"github.com/odarix/odarix-core-go/common"
 	"github.com/odarix/odarix-core-go/transport"
 )
 
@@ -26,11 +27,11 @@ type Dialer interface {
 // - authorized
 // - setted timeouts
 type Transport interface {
-	SendRestore(context.Context, Snapshot, []Segment) error
-	SendSegment(context.Context, Segment) error
+	SendRestore(context.Context, common.Snapshot, []common.Segment) error
+	SendSegment(context.Context, common.Segment) error
 	SendRefill(context.Context, []PreparedData) error
-	SendSnapshot(context.Context, Snapshot) error
-	SendDrySegment(context.Context, Segment) error
+	SendSnapshot(context.Context, common.Snapshot) error
+	SendDrySegment(context.Context, common.Segment) error
 	OnAck(func(uint32))
 	OnReject(func(uint32))
 	OnReadError(fn func(err error))
@@ -172,7 +173,7 @@ func (tt *TCPTransport) auth(ctx context.Context, token, uuid string) error {
 }
 
 // SendRestore -  send Snapshot and Segments for restore over connection.
-func (tt *TCPTransport) SendRestore(ctx context.Context, snap Snapshot, segs []Segment) error {
+func (tt *TCPTransport) SendRestore(ctx context.Context, snap common.Snapshot, segs []common.Segment) error {
 	if err := tt.nt.Write(
 		ctx,
 		transport.NewRawMessage(protocolVersion, transport.MsgSnapshot, snap.Bytes()),
@@ -193,7 +194,7 @@ func (tt *TCPTransport) SendRestore(ctx context.Context, snap Snapshot, segs []S
 }
 
 // SendSegment - send Segment over connection.
-func (tt *TCPTransport) SendSegment(ctx context.Context, seg Segment) error {
+func (tt *TCPTransport) SendSegment(ctx context.Context, seg common.Segment) error {
 	if err := tt.nt.Write(ctx, transport.NewRawMessage(protocolVersion, transport.MsgPut, seg.Bytes())); err != nil {
 		return fmt.Errorf("failed send segment: %w", err)
 	}
@@ -255,7 +256,7 @@ func (tt *TCPTransport) SendRefill(ctx context.Context, pd []PreparedData) error
 }
 
 // SendSnapshot -  send Snapshot for restore over connection.
-func (tt *TCPTransport) SendSnapshot(ctx context.Context, snap Snapshot) error {
+func (tt *TCPTransport) SendSnapshot(ctx context.Context, snap common.Snapshot) error {
 	if err := tt.nt.Write(
 		ctx,
 		transport.NewRawMessage(protocolVersion, transport.MsgSnapshot, snap.Bytes()),
@@ -267,7 +268,7 @@ func (tt *TCPTransport) SendSnapshot(ctx context.Context, snap Snapshot) error {
 }
 
 // SendDrySegment - send dry Segment over connection.
-func (tt *TCPTransport) SendDrySegment(ctx context.Context, seg Segment) error {
+func (tt *TCPTransport) SendDrySegment(ctx context.Context, seg common.Segment) error {
 	if err := tt.nt.Write(ctx, transport.NewRawMessage(protocolVersion, transport.MsgDryPut, seg.Bytes())); err != nil {
 		return fmt.Errorf("failed send dry segment: %w", err)
 	}

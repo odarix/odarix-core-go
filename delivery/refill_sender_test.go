@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/odarix/odarix-core-go/common"
 	"github.com/odarix/odarix-core-go/delivery"
 )
 
@@ -97,21 +98,21 @@ func (*RefillSenderSuite) createDialerHappyPath(name string) delivery.Dialer {
 					numberOfMessage = uint32(len(preparedDatas))
 					return nil
 				},
-				SendSegmentFunc: func(_ context.Context, _ delivery.Segment) error {
+				SendSegmentFunc: func(_ context.Context, _ common.Segment) error {
 					numberOfMessage--
 					if numberOfMessage == 0 {
 						ack(0)
 					}
 					return nil
 				},
-				SendDrySegmentFunc: func(_ context.Context, _ delivery.Segment) error {
+				SendDrySegmentFunc: func(_ context.Context, _ common.Segment) error {
 					numberOfMessage--
 					if numberOfMessage == 0 {
 						ack(0)
 					}
 					return nil
 				},
-				SendSnapshotFunc: func(_ context.Context, _ delivery.Snapshot) error {
+				SendSnapshotFunc: func(_ context.Context, _ common.Snapshot) error {
 					numberOfMessage--
 					if numberOfMessage == 0 {
 						ack(0)
@@ -146,7 +147,7 @@ func (s *RefillSenderSuite) makeRefill(destinationsNames []string) {
 	)
 	s.Require().NoError(err)
 
-	segKey := delivery.SegmentKey{
+	segKey := common.SegmentKey{
 		ShardID: 0,
 		Segment: 2,
 	}
@@ -180,24 +181,24 @@ func (s *RefillSenderSuite) makeRefill(destinationsNames []string) {
 
 	// ack 0,1 segment, 2 - reject for all destinations
 	for _, name := range destinationsNames {
-		mr.Ack(delivery.SegmentKey{0, 0}, name)
-		mr.Ack(delivery.SegmentKey{0, 1}, name)
-		mr.Reject(delivery.SegmentKey{0, 2}, name)
+		mr.Ack(common.SegmentKey{0, 0}, name)
+		mr.Ack(common.SegmentKey{0, 1}, name)
+		mr.Reject(common.SegmentKey{0, 2}, name)
 	}
 
 	// ack 3 segment for all except 1 destination
 	for _, name := range destinationsNames[1:] {
-		mr.Ack(delivery.SegmentKey{0, 3}, name)
+		mr.Ack(common.SegmentKey{0, 3}, name)
 	}
 
 	// 4 - reject for all destinations
 	for _, name := range destinationsNames[1:] {
-		mr.Reject(delivery.SegmentKey{0, 4}, name)
+		mr.Reject(common.SegmentKey{0, 4}, name)
 	}
 
 	// ack 5 segment for all except 1,2 destination
 	for _, name := range destinationsNames[2:] {
-		mr.Ack(delivery.SegmentKey{0, 5}, name)
+		mr.Ack(common.SegmentKey{0, 5}, name)
 	}
 
 	err = mr.WriteAckStatus(s.baseCtx)
@@ -337,7 +338,7 @@ func (*RefillSenderSuite) createDialerReject(name string) delivery.Dialer {
 					numberOfMessage = uint32(len(preparedDatas))
 					return nil
 				},
-				SendSegmentFunc: func(_ context.Context, _ delivery.Segment) error {
+				SendSegmentFunc: func(_ context.Context, _ common.Segment) error {
 					numberOfMessage--
 					if numberOfMessage == 0 {
 						if switcher {
@@ -349,7 +350,7 @@ func (*RefillSenderSuite) createDialerReject(name string) delivery.Dialer {
 					}
 					return nil
 				},
-				SendDrySegmentFunc: func(_ context.Context, _ delivery.Segment) error {
+				SendDrySegmentFunc: func(_ context.Context, _ common.Segment) error {
 					numberOfMessage--
 					if numberOfMessage == 0 {
 						if switcher {
@@ -361,7 +362,7 @@ func (*RefillSenderSuite) createDialerReject(name string) delivery.Dialer {
 					}
 					return nil
 				},
-				SendSnapshotFunc: func(_ context.Context, _ delivery.Snapshot) error {
+				SendSnapshotFunc: func(_ context.Context, _ common.Snapshot) error {
 					numberOfMessage--
 					if numberOfMessage == 0 {
 						if switcher {

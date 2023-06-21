@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/jonboulle/clockwork"
+	"github.com/odarix/odarix-core-go/common"
 	"github.com/odarix/odarix-core-go/transport"
 	"go.uber.org/multierr"
 )
@@ -148,7 +149,7 @@ func (rsm *RefillSendManager) processing(ctx context.Context) error {
 			return context.Cause(ctx)
 		default:
 		}
-		// read, preapre to send, send
+		// read, prepare to send, send
 		if err = rsm.fileProcessing(ctx, strings.TrimSuffix(fileInfo.Name(), refillFileExtension)); err != nil {
 			rsm.errorHandler(fmt.Sprintf("fail send file: %s", fileInfo.Name()), err)
 			if IsPermanent(err) {
@@ -435,7 +436,7 @@ func (rs *RefillSender) collectedData() ([]PreparedData, error) {
 	for _, segment := range rs.dataToSend {
 		if lastSendSegment+1 != segment {
 			if err := rs.source.Restore(
-				SegmentKey{rs.shardID, segment},
+				common.SegmentKey{rs.shardID, segment},
 				lastSendSegment,
 				&pData,
 			); err != nil {
@@ -443,7 +444,7 @@ func (rs *RefillSender) collectedData() ([]PreparedData, error) {
 			}
 		}
 
-		key := SegmentKey{rs.shardID, segment}
+		key := common.SegmentKey{rs.shardID, segment}
 		mval := rs.source.SegmentPosition(key)
 		if mval == nil {
 			return nil, SegmentNotFoundInRefill(key)
@@ -583,7 +584,7 @@ type RefillReader struct {
 	title *Title
 	// last status of writers
 	ackStatus *AckStatus
-	// reader/writer for reastore file
+	// reader/writer for restore file
 	storage *FileStorage
 	// mutex for parallel writing
 	mx *sync.RWMutex
@@ -798,7 +799,7 @@ func (rr *RefillReader) setMarkupSnapshot(h *HeaderFrame, off int64) error {
 
 	mk := MarkupKey{
 		typeFrame: SnapshotType,
-		SegmentKey: SegmentKey{
+		SegmentKey: common.SegmentKey{
 			ShardID: h.GetShardID(),
 			Segment: h.GetSegmentID(),
 		},
@@ -817,7 +818,7 @@ func (rr *RefillReader) setMarkupSegment(h *HeaderFrame, off int64) error {
 		return ErrServiceDataNotRestored{}
 	}
 
-	segKey := SegmentKey{
+	segKey := common.SegmentKey{
 		ShardID: h.GetShardID(),
 		Segment: h.GetSegmentID(),
 	}
@@ -918,7 +919,7 @@ func (rr *RefillReader) checkRestoredServiceData() bool {
 }
 
 // Snapshot - return snapshot from storage.
-func (rr *RefillReader) Snapshot(ctx context.Context, mval *MarkupValue) (Snapshot, error) {
+func (rr *RefillReader) Snapshot(ctx context.Context, mval *MarkupValue) (common.Snapshot, error) {
 	rr.mx.RLock()
 	defer rr.mx.RUnlock()
 
@@ -932,7 +933,7 @@ func (rr *RefillReader) Snapshot(ctx context.Context, mval *MarkupValue) (Snapsh
 }
 
 // GetSnapshot - return snapshot from storage.
-func (rr *RefillReader) GetSnapshot(ctx context.Context, segKey SegmentKey) (Snapshot, error) {
+func (rr *RefillReader) GetSnapshot(ctx context.Context, segKey common.SegmentKey) (common.Snapshot, error) {
 	rr.mx.RLock()
 	defer rr.mx.RUnlock()
 
@@ -952,7 +953,7 @@ func (rr *RefillReader) GetSnapshot(ctx context.Context, segKey SegmentKey) (Sna
 }
 
 // getSnapshotPosition - return position in storage.
-func (rr *RefillReader) getSnapshotPosition(segKey SegmentKey) *MarkupValue {
+func (rr *RefillReader) getSnapshotPosition(segKey common.SegmentKey) *MarkupValue {
 	mk := MarkupKey{
 		typeFrame:  SnapshotType,
 		SegmentKey: segKey,
@@ -966,7 +967,7 @@ func (rr *RefillReader) getSnapshotPosition(segKey SegmentKey) *MarkupValue {
 }
 
 // Segment - return segment from storage.
-func (rr *RefillReader) Segment(ctx context.Context, mval *MarkupValue) (Segment, error) {
+func (rr *RefillReader) Segment(ctx context.Context, mval *MarkupValue) (common.Segment, error) {
 	rr.mx.RLock()
 	defer rr.mx.RUnlock()
 
@@ -980,7 +981,7 @@ func (rr *RefillReader) Segment(ctx context.Context, mval *MarkupValue) (Segment
 }
 
 // SegmentPosition - return position in storage.
-func (rr *RefillReader) SegmentPosition(segKey SegmentKey) *MarkupValue {
+func (rr *RefillReader) SegmentPosition(segKey common.SegmentKey) *MarkupValue {
 	rr.mx.RLock()
 	defer rr.mx.RUnlock()
 
@@ -988,7 +989,7 @@ func (rr *RefillReader) SegmentPosition(segKey SegmentKey) *MarkupValue {
 }
 
 // GetSegment - return segment from storage.
-func (rr *RefillReader) GetSegment(ctx context.Context, segKey SegmentKey) (Segment, error) {
+func (rr *RefillReader) GetSegment(ctx context.Context, segKey common.SegmentKey) (common.Segment, error) {
 	rr.mx.RLock()
 	defer rr.mx.RUnlock()
 
@@ -1008,7 +1009,7 @@ func (rr *RefillReader) GetSegment(ctx context.Context, segKey SegmentKey) (Segm
 }
 
 // getSegmentPosition - return position in storage.
-func (rr *RefillReader) getSegmentPosition(segKey SegmentKey) *MarkupValue {
+func (rr *RefillReader) getSegmentPosition(segKey common.SegmentKey) *MarkupValue {
 	mk := MarkupKey{
 		typeFrame:  SegmentType,
 		SegmentKey: segKey,
@@ -1022,7 +1023,7 @@ func (rr *RefillReader) getSegmentPosition(segKey SegmentKey) *MarkupValue {
 }
 
 // Restore - get data for restore.
-func (rr *RefillReader) Restore(key SegmentKey, lastSendSegment uint32, pData *[]PreparedData) error {
+func (rr *RefillReader) Restore(key common.SegmentKey, lastSendSegment uint32, pData *[]PreparedData) error {
 	rr.mx.RLock()
 	defer rr.mx.RUnlock()
 

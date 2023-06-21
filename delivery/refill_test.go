@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/odarix/odarix-core-go/common"
 	"github.com/odarix/odarix-core-go/delivery"
 )
 
@@ -114,7 +115,7 @@ func (s *RefillSuite) TearDownTest() {
 }
 
 func (s *RefillSuite) TestManagerInitIsContinuable() {
-	segKey := delivery.SegmentKey{
+	segKey := common.SegmentKey{
 		ShardID: 0,
 		Segment: 1,
 	}
@@ -155,7 +156,7 @@ func (s *RefillSuite) TestManagerInitIsContinuable() {
 }
 
 func (s *RefillSuite) TestSegment() {
-	segKey := delivery.SegmentKey{
+	segKey := common.SegmentKey{
 		ShardID: 0,
 		Segment: 0,
 	}
@@ -173,7 +174,7 @@ func (s *RefillSuite) TestSegment() {
 }
 
 func (s *RefillSuite) TestRestoreWithSegment() {
-	segKey := delivery.SegmentKey{
+	segKey := common.SegmentKey{
 		ShardID: 0,
 		Segment: 1,
 	}
@@ -196,7 +197,7 @@ func (s *RefillSuite) TestRestoreWithSegment() {
 }
 
 func (s *RefillSuite) TestRestoreWithoutSegment() {
-	segKey := delivery.SegmentKey{
+	segKey := common.SegmentKey{
 		ShardID: 0,
 		Segment: 1,
 	}
@@ -214,7 +215,7 @@ func (s *RefillSuite) TestRestoreWithoutSegment() {
 }
 
 func (s *RefillSuite) TestRestoreError() {
-	segKey := delivery.SegmentKey{
+	segKey := common.SegmentKey{
 		ShardID: 0,
 		Segment: 2,
 	}
@@ -235,7 +236,7 @@ func (s *RefillSuite) TestRestoreError() {
 }
 
 func (s *RefillSuite) TestRestoreError_2() {
-	segKey := delivery.SegmentKey{
+	segKey := common.SegmentKey{
 		ShardID: 0,
 		Segment: 1,
 	}
@@ -257,12 +258,12 @@ func (s *RefillSuite) TestRestoreError_2() {
 }
 
 func (s *RefillSuite) TestWriteSegmentError() {
-	segKey := delivery.SegmentKey{
+	segKey := common.SegmentKey{
 		ShardID: 0,
 		Segment: 2,
 	}
 
-	errSegKey := delivery.SegmentKey{
+	errSegKey := common.SegmentKey{
 		ShardID: segKey.ShardID,
 		Segment: segKey.Segment + 2,
 	}
@@ -284,7 +285,7 @@ func (s *RefillSuite) TestAckStatus() {
 	s.Error(err, "File not deleted")
 
 	s.T().Log("write segment, ack status and check file exist")
-	err = s.mr.WriteSegment(s.ctx, delivery.SegmentKey{0, 0}, s.etalonsData)
+	err = s.mr.WriteSegment(s.ctx, common.SegmentKey{0, 0}, s.etalonsData)
 	s.NoError(err)
 	err = s.mr.WriteAckStatus(s.ctx)
 	s.NoError(err)
@@ -293,8 +294,8 @@ func (s *RefillSuite) TestAckStatus() {
 
 	s.T().Log("ack segments for all name and check file deleted")
 	for _, name := range s.etalonsNames {
-		s.mr.Ack(delivery.SegmentKey{0, 0}, name)
-		s.mr.Ack(delivery.SegmentKey{0, 1}, name)
+		s.mr.Ack(common.SegmentKey{0, 0}, name)
+		s.mr.Ack(common.SegmentKey{0, 1}, name)
 	}
 	err = s.mr.WriteAckStatus(s.ctx)
 	s.NoError(err)
@@ -313,7 +314,7 @@ func (s *RefillSuite) TestAckStatusWithReject() {
 	s.Error(err, "File not deleted")
 
 	s.T().Log("write segment, ack status and check file exist")
-	err = s.mr.WriteSegment(s.ctx, delivery.SegmentKey{0, 0}, s.etalonsData)
+	err = s.mr.WriteSegment(s.ctx, common.SegmentKey{0, 0}, s.etalonsData)
 	s.NoError(err)
 	err = s.mr.WriteAckStatus(s.ctx)
 	s.NoError(err)
@@ -322,10 +323,10 @@ func (s *RefillSuite) TestAckStatusWithReject() {
 
 	s.T().Log("ack segments for all name and 1 reject and check file not deleted")
 	for _, name := range s.etalonsNames {
-		s.mr.Ack(delivery.SegmentKey{0, 0}, name)
-		s.mr.Ack(delivery.SegmentKey{0, 1}, name)
+		s.mr.Ack(common.SegmentKey{0, 0}, name)
+		s.mr.Ack(common.SegmentKey{0, 1}, name)
 	}
-	s.mr.Reject(delivery.SegmentKey{0, 3}, s.etalonsNames[0])
+	s.mr.Reject(common.SegmentKey{0, 3}, s.etalonsNames[0])
 	err = s.mr.WriteAckStatus(s.ctx)
 	s.NoError(err)
 	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.cfg.FileName+".refill"))
@@ -337,7 +338,7 @@ func (s *RefillSuite) TestAckStatusWithReject() {
 
 func (s *RefillSuite) TestAckStatusWithSnapshot() {
 	s.T().Log("init segKey")
-	segKey := delivery.SegmentKey{
+	segKey := common.SegmentKey{
 		ShardID: 0,
 		Segment: 2,
 	}
@@ -364,9 +365,9 @@ func (s *RefillSuite) TestAckStatusWithSnapshot() {
 
 	s.T().Log("acked status for 0 shard for all name")
 	for _, name := range s.etalonsNames {
-		s.mr.Ack(delivery.SegmentKey{0, 0}, name)
-		s.mr.Ack(delivery.SegmentKey{0, 1}, name)
-		s.mr.Ack(delivery.SegmentKey{0, 2}, name)
+		s.mr.Ack(common.SegmentKey{0, 0}, name)
+		s.mr.Ack(common.SegmentKey{0, 1}, name)
+		s.mr.Ack(common.SegmentKey{0, 2}, name)
 	}
 
 	s.T().Log("write ack status")
@@ -394,7 +395,7 @@ func (s *RefillSuite) TestAckStatusWithSnapshot() {
 }
 
 func (s *RefillSuite) TestRename() {
-	segKey := delivery.SegmentKey{
+	segKey := common.SegmentKey{
 		ShardID: 0,
 		Segment: 2,
 	}

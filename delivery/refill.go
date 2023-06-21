@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/odarix/odarix-core-go/common"
 	"go.uber.org/multierr"
 )
 
@@ -88,7 +89,7 @@ func (rl *Refill) LastSegment(shardID uint16, dest string) uint32 {
 }
 
 // Get - get segment from file.
-func (rl *Refill) Get(ctx context.Context, key SegmentKey) (Segment, error) {
+func (rl *Refill) Get(ctx context.Context, key common.SegmentKey) (common.Segment, error) {
 	rl.mx.RLock()
 	defer rl.mx.RUnlock()
 
@@ -96,21 +97,21 @@ func (rl *Refill) Get(ctx context.Context, key SegmentKey) (Segment, error) {
 }
 
 // Ack - increment status by destination and shard if segment is next for current value.
-func (rl *Refill) Ack(segKey SegmentKey, dest string) {
+func (rl *Refill) Ack(segKey common.SegmentKey, dest string) {
 	rl.sm.Ack(segKey, dest)
 }
 
 // Reject - accumulates rejects and serializes and writes to refill while recording statuses.
-func (rl *Refill) Reject(segKey SegmentKey, dest string) {
+func (rl *Refill) Reject(segKey common.SegmentKey, dest string) {
 	rl.sm.Reject(segKey, dest)
 }
 
 // Restore - return snapshot and segments.
-func (rl *Refill) Restore(ctx context.Context, key SegmentKey) (Snapshot, []Segment, error) {
+func (rl *Refill) Restore(ctx context.Context, key common.SegmentKey) (common.Snapshot, []common.Segment, error) {
 	rl.mx.RLock()
 	defer rl.mx.RUnlock()
 
-	segments := make([]Segment, 0)
+	segments := make([]common.Segment, 0)
 
 	snapshot, err := rl.sm.GetSnapshot(ctx, key)
 	if err == nil {
@@ -144,7 +145,7 @@ func (rl *Refill) Restore(ctx context.Context, key SegmentKey) (Snapshot, []Segm
 }
 
 // WriteSegment - write Segment in file.
-func (rl *Refill) WriteSegment(ctx context.Context, key SegmentKey, seg Segment) error {
+func (rl *Refill) WriteSegment(ctx context.Context, key common.SegmentKey, seg common.Segment) error {
 	rl.mx.Lock()
 	defer rl.mx.Unlock()
 
@@ -152,7 +153,7 @@ func (rl *Refill) WriteSegment(ctx context.Context, key SegmentKey, seg Segment)
 }
 
 // WriteSnapshot - write Snapshot in file.
-func (rl *Refill) WriteSnapshot(ctx context.Context, segKey SegmentKey, snapshot Snapshot) error {
+func (rl *Refill) WriteSnapshot(ctx context.Context, segKey common.SegmentKey, snapshot common.Snapshot) error {
 	rl.mx.Lock()
 	defer rl.mx.Unlock()
 

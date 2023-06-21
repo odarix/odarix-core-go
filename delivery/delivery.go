@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jonboulle/clockwork"
+	"github.com/odarix/odarix-core-go/common"
 )
 
 // ManagerCtor - func-constructor for Manager.
@@ -171,7 +172,7 @@ func (dk *ManagerKeeper) rotateLoop(ctx context.Context) {
 }
 
 // Send - send metrics data to encode and send.
-func (dk *ManagerKeeper) Send(ctx context.Context, data ShardedData) (bool, error) {
+func (dk *ManagerKeeper) Send(ctx context.Context, data common.ShardedData) (bool, error) {
 	dk.rwm.RLock()
 	defer dk.rwm.RUnlock()
 	select {

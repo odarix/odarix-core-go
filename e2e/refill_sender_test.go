@@ -14,6 +14,7 @@ import (
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/odarix/odarix-core-go/common"
 	"github.com/odarix/odarix-core-go/delivery"
 	"github.com/odarix/odarix-core-go/server"
 	"github.com/odarix/odarix-core-go/transport"
@@ -171,7 +172,7 @@ func (s *RefillSenderSuite) TestRefillSenderHappyPath() {
 		wr := s.makeData(5000, int64(i))
 		data, errLoop := wr.Marshal()
 		s.Require().NoError(errLoop)
-		h := delivery.NewHashdex(data)
+		h := common.NewHashdex(data)
 
 		delivered, errLoop := manager.Send(baseCtx, h)
 		h.Destroy()
@@ -392,7 +393,7 @@ func (s *RefillSenderSuite) TestRefillSenderBreakingConnection() {
 		wr := s.makeData(5000, int64(i))
 		data, errLoop := wr.Marshal()
 		s.Require().NoError(errLoop)
-		h := delivery.NewHashdex(data)
+		h := common.NewHashdex(data)
 
 		delivered, errLoop := manager.Send(baseCtx, h)
 		h.Destroy()

@@ -9,14 +9,15 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/google/uuid"
+	"github.com/odarix/odarix-core-go/common"
 )
 
 // Source is a manager
 type Source interface {
-	Get(ctx context.Context, key SegmentKey) (Segment, error)
-	Ack(key SegmentKey, dest string)
-	Reject(key SegmentKey, dest string)
-	Restore(ctx context.Context, key SegmentKey) (Snapshot, []Segment)
+	Get(ctx context.Context, key common.SegmentKey) (common.Segment, error)
+	Ack(key common.SegmentKey, dest string)
+	Reject(key common.SegmentKey, dest string)
+	Restore(ctx context.Context, key common.SegmentKey) (common.Snapshot, []common.Segment)
 }
 
 // Sender is a transport adapter for manager
@@ -93,11 +94,11 @@ func (sender *Sender) mainLoop(ctx context.Context) {
 			}
 		}
 		transport.OnAck(func(id uint32) {
-			sender.source.Ack(SegmentKey{ShardID: sender.shardID, Segment: id}, sender.String())
+			sender.source.Ack(common.SegmentKey{ShardID: sender.shardID, Segment: id}, sender.String())
 			onResponse(id)
 		})
 		transport.OnReject(func(id uint32) {
-			sender.source.Reject(SegmentKey{ShardID: sender.shardID, Segment: id}, sender.String())
+			sender.source.Reject(common.SegmentKey{ShardID: sender.shardID, Segment: id}, sender.String())
 			onResponse(id)
 		})
 
@@ -142,7 +143,7 @@ func (sender *Sender) dial(ctx context.Context) (transport Transport, closeFn fu
 
 	// restore connection state
 	if sender.lastDelivered != math.MaxUint32 {
-		snapshot, segments := sender.source.Restore(ctx, SegmentKey{
+		snapshot, segments := sender.source.Restore(ctx, common.SegmentKey{
 			ShardID: sender.shardID,
 			Segment: sender.lastDelivered + 1,
 		})
@@ -181,15 +182,15 @@ func (sender *Sender) writeLoop(ctx context.Context, transport Transport, from u
 // - get ErrPromiseCanceled (returns (nil, nil))
 //
 // So, it's correct to check that segment is nil, it is equivalent permanent state.
-func (sender *Sender) getSegment(ctx context.Context, id uint32) (Segment, error) {
-	key := SegmentKey{
+func (sender *Sender) getSegment(ctx context.Context, id uint32) (common.Segment, error) {
+	key := common.SegmentKey{
 		ShardID: sender.shardID,
 		Segment: id,
 	}
 	eb := backoff.NewExponentialBackOff()
 	eb.MaxElapsedTime = 0 // retry until context cancel
 	bo := backoff.WithContext(eb, ctx)
-	segment, err := backoff.RetryWithData(func() (Segment, error) {
+	segment, err := backoff.RetryWithData(func() (common.Segment, error) {
 		segment, err := sender.source.Get(ctx, key)
 		if errors.Is(err, ErrPromiseCanceled) {
 			return nil, nil

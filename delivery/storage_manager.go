@@ -15,6 +15,7 @@ import (
 	"unsafe"
 
 	"github.com/google/uuid"
+	"github.com/odarix/odarix-core-go/common"
 )
 
 const posNotFound int64 = -1
@@ -22,7 +23,7 @@ const posNotFound int64 = -1
 // MarkupKey - key for search position.
 type MarkupKey struct {
 	typeFrame TypeFrame
-	SegmentKey
+	common.SegmentKey
 }
 
 // StorageManager - manager for file refill. Contains file markup for quick access to data.
@@ -144,18 +145,18 @@ func (sm *StorageManager) CheckSegmentsSent() bool {
 }
 
 // Ack - increment status by destination and shard if segment is next for current value.
-func (sm *StorageManager) Ack(key SegmentKey, dest string) {
+func (sm *StorageManager) Ack(key common.SegmentKey, dest string) {
 	sm.ackStatus.Ack(key, dest)
 }
 
 // Reject - accumulates rejects and serializes and writes to refill while recording statuses.
-func (sm *StorageManager) Reject(segKey SegmentKey, dest string) {
+func (sm *StorageManager) Reject(segKey common.SegmentKey, dest string) {
 	sm.hasRejects.Store(true)
 	sm.ackStatus.Reject(segKey, dest)
 }
 
 // getSnapshotPosition - return position in storage.
-func (sm *StorageManager) getSnapshotPosition(segKey SegmentKey) int64 {
+func (sm *StorageManager) getSnapshotPosition(segKey common.SegmentKey) int64 {
 	mk := MarkupKey{
 		typeFrame:  SnapshotType,
 		SegmentKey: segKey,
@@ -169,7 +170,7 @@ func (sm *StorageManager) getSnapshotPosition(segKey SegmentKey) int64 {
 }
 
 // setSnapshotPosition - set segment position in storage.
-func (sm *StorageManager) setSnapshotPosition(segKey SegmentKey, position int64) {
+func (sm *StorageManager) setSnapshotPosition(segKey common.SegmentKey, position int64) {
 	mk := MarkupKey{
 		typeFrame:  SnapshotType,
 		SegmentKey: segKey,
@@ -182,7 +183,7 @@ func (sm *StorageManager) setSnapshotPosition(segKey SegmentKey, position int64)
 }
 
 // GetSnapshot - return snapshot from storage.
-func (sm *StorageManager) GetSnapshot(ctx context.Context, segKey SegmentKey) (Snapshot, error) {
+func (sm *StorageManager) GetSnapshot(ctx context.Context, segKey common.SegmentKey) (common.Snapshot, error) {
 	// get position
 	pos := sm.getSnapshotPosition(segKey)
 	if pos == posNotFound {
@@ -199,7 +200,7 @@ func (sm *StorageManager) GetSnapshot(ctx context.Context, segKey SegmentKey) (S
 }
 
 // getSegmentPosition - return position in storage.
-func (sm *StorageManager) getSegmentPosition(segKey SegmentKey) int64 {
+func (sm *StorageManager) getSegmentPosition(segKey common.SegmentKey) int64 {
 	mk := MarkupKey{
 		typeFrame:  SegmentType,
 		SegmentKey: segKey,
@@ -213,7 +214,7 @@ func (sm *StorageManager) getSegmentPosition(segKey SegmentKey) int64 {
 }
 
 // setSegmentPosition - set segment position in storage.
-func (sm *StorageManager) setSegmentPosition(segKey SegmentKey, position int64) {
+func (sm *StorageManager) setSegmentPosition(segKey common.SegmentKey, position int64) {
 	mk := MarkupKey{
 		typeFrame:  SegmentType,
 		SegmentKey: segKey,
@@ -226,7 +227,7 @@ func (sm *StorageManager) setSegmentPosition(segKey SegmentKey, position int64) 
 }
 
 // GetSegment - return segment from storage.
-func (sm *StorageManager) GetSegment(ctx context.Context, segKey SegmentKey) (Segment, error) {
+func (sm *StorageManager) GetSegment(ctx context.Context, segKey common.SegmentKey) (common.Segment, error) {
 	// get position
 	pos := sm.getSegmentPosition(segKey)
 	if pos == posNotFound {
@@ -305,7 +306,7 @@ func (sm *StorageManager) restoreSnapshot(h *HeaderFrame, off int64) error {
 	}
 
 	sm.setSnapshotPosition(
-		SegmentKey{
+		common.SegmentKey{
 			ShardID: h.GetShardID(),
 			Segment: h.GetSegmentID(),
 		},
@@ -322,7 +323,7 @@ func (sm *StorageManager) restoreSegment(h *HeaderFrame, off int64) error {
 	}
 
 	sm.setSegmentPosition(
-		SegmentKey{
+		common.SegmentKey{
 			ShardID: h.GetShardID(),
 			Segment: h.GetSegmentID(),
 		},
@@ -445,7 +446,7 @@ func (sm *StorageManager) openNewFile(ctx context.Context) error {
 }
 
 // checkSegment - check for consistency segment.
-func (sm *StorageManager) checkSegment(key SegmentKey) error {
+func (sm *StorageManager) checkSegment(key common.SegmentKey) error {
 	if key.IsFirst() {
 		return nil
 	}
@@ -462,7 +463,7 @@ func (sm *StorageManager) checkSegment(key SegmentKey) error {
 }
 
 // WriteSegment - write Segment in storage.
-func (sm *StorageManager) WriteSegment(ctx context.Context, key SegmentKey, seg Segment) error {
+func (sm *StorageManager) WriteSegment(ctx context.Context, key common.SegmentKey, seg common.Segment) error {
 	if !sm.isOpenFile {
 		if err := sm.openNewFile(ctx); err != nil {
 			return err
@@ -487,7 +488,7 @@ func (sm *StorageManager) WriteSegment(ctx context.Context, key SegmentKey, seg 
 }
 
 // WriteSnapshot - write Snapshot in storage.
-func (sm *StorageManager) WriteSnapshot(ctx context.Context, segKey SegmentKey, snapshot Snapshot) error {
+func (sm *StorageManager) WriteSnapshot(ctx context.Context, segKey common.SegmentKey, snapshot common.Snapshot) error {
 	if !sm.isOpenFile {
 		if err := sm.openNewFile(ctx); err != nil {
 			return err
@@ -500,7 +501,7 @@ func (sm *StorageManager) WriteSnapshot(ctx context.Context, segKey SegmentKey, 
 		return err
 	}
 
-	sm.setSnapshotPosition(SegmentKey{segKey.ShardID, segKey.Segment}, sm.lastWriteOffset)
+	sm.setSnapshotPosition(common.SegmentKey{segKey.ShardID, segKey.Segment}, sm.lastWriteOffset)
 	sm.lastWriteOffset += int64(n)
 
 	return nil
@@ -1639,7 +1640,7 @@ func (as *AckStatus) Shards() int {
 }
 
 // Ack increment status by destination and shard if segment is next for current value
-func (as *AckStatus) Ack(key SegmentKey, dest string) {
+func (as *AckStatus) Ack(key common.SegmentKey, dest string) {
 	id := as.names.StringToID(dest)
 	if id == NotFoundName {
 		panic(fmt.Sprintf(
@@ -1664,7 +1665,7 @@ func (as *AckStatus) Ack(key SegmentKey, dest string) {
 }
 
 // Reject - add rejected segment.
-func (as *AckStatus) Reject(segKey SegmentKey, dest string) {
+func (as *AckStatus) Reject(segKey common.SegmentKey, dest string) {
 	id := as.names.StringToID(dest)
 	if id == NotFoundName {
 		panic(fmt.Sprintf(
@@ -1699,7 +1700,7 @@ func (as *AckStatus) Last(shardID uint16, dest string) uint32 {
 }
 
 // IsAck returns true if segment ack by all destinations
-func (as *AckStatus) IsAck(key SegmentKey) bool {
+func (as *AckStatus) IsAck(key common.SegmentKey) bool {
 	for id := 0; id < as.Destinations(); id++ {
 		if atomic.LoadUint32(&as.status[id*as.Shards()+int(key.ShardID)])+1 <= key.Segment {
 			return false

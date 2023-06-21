@@ -15,6 +15,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/odarix/odarix-core-go/common"
 	"github.com/odarix/odarix-core-go/delivery"
 
 	"github.com/go-faker/faker/v4"
@@ -41,7 +42,7 @@ func (s *ManagerSuite) TestSendWithAck() {
 
 	s.T().Log("Use no-op refill: assumed that it won't be touched")
 	refillCtor := s.constructorForRefill(&ManagerRefillMock{
-		AckFunc:            func(delivery.SegmentKey, string) {},
+		AckFunc:            func(common.SegmentKey, string) {},
 		WriteAckStatusFunc: func(context.Context) error { return nil },
 		ShutdownFunc:       func(context.Context) error { return nil },
 	})
@@ -115,7 +116,7 @@ func (s *ManagerSuite) TestRejectToRefill() {
 
 	s.T().Log("Check that rejected data is in refill")
 	for i := 0; i < 4; i++ {
-		segment, err := refill.Get(baseCtx, delivery.SegmentKey{ShardID: uint16(i), Segment: 1})
+		segment, err := refill.Get(baseCtx, common.SegmentKey{ShardID: uint16(i), Segment: 1})
 		s.NoError(err, "segment should be in refill")
 		parts := strings.SplitN(string(segment.Bytes()), ":", 6)
 		s.Equal("segment", parts[0])
@@ -141,7 +142,7 @@ func (s *ManagerSuite) TestAckRejectRace() {
 	refill := s.inMemoryRefill()
 	refillWriteLock := new(sync.Mutex)
 	writeSegment := refill.WriteSegmentFunc
-	refill.WriteSegmentFunc = func(ctx context.Context, key delivery.SegmentKey, segment delivery.Segment) error {
+	refill.WriteSegmentFunc = func(ctx context.Context, key common.SegmentKey, segment common.Segment) error {
 		refillWriteLock.Lock()
 		defer refillWriteLock.Unlock()
 		return writeSegment(ctx, key, segment)
@@ -200,7 +201,7 @@ func (s *ManagerSuite) TestAckRejectRace() {
 
 	s.T().Log("Check that rejected data is in refill")
 	for i := 0; i < 4; i++ {
-		segment, err := refill.Get(baseCtx, delivery.SegmentKey{ShardID: uint16(i), Segment: 1})
+		segment, err := refill.Get(baseCtx, common.SegmentKey{ShardID: uint16(i), Segment: 1})
 		s.NoError(err, "segment should be in refill")
 		parts := strings.SplitN(string(segment.Bytes()), ":", 6)
 
@@ -215,7 +216,7 @@ func (s *ManagerSuite) TestAckRejectRace() {
 			continue
 		}
 		for j := 0; j < 4; j++ {
-			_, err := manager.Get(baseCtx, delivery.SegmentKey{ShardID: uint16(j), Segment: uint32(i)})
+			_, err := manager.Get(baseCtx, common.SegmentKey{ShardID: uint16(j), Segment: uint32(i)})
 			s.Error(err)
 		}
 	}
@@ -359,7 +360,7 @@ func (s *ManagerSuite) TestNotOpened() {
 
 	s.T().Log("Check that rejected data is in refill")
 	for i := 0; i < 4; i++ {
-		segment, err := refill.Get(baseCtx, delivery.SegmentKey{ShardID: uint16(i), Segment: 0})
+		segment, err := refill.Get(baseCtx, common.SegmentKey{ShardID: uint16(i), Segment: 0})
 		s.NoError(err, "segment should be in refill")
 		parts := strings.SplitN(string(segment.Bytes()), ":", 6)
 		s.Equal("segment", parts[0])
@@ -408,7 +409,7 @@ func (s *ManagerSuite) TestLongDial() {
 
 	s.T().Log("Check that rejected data is in refill")
 	for i := 0; i < 4; i++ {
-		segment, err := refill.Get(baseCtx, delivery.SegmentKey{ShardID: uint16(i), Segment: 0})
+		segment, err := refill.Get(baseCtx, common.SegmentKey{ShardID: uint16(i), Segment: 0})
 		if s.NoError(err, "segment should be in refill") {
 			parts := strings.SplitN(string(segment.Bytes()), ":", 6)
 			s.Equal("segment", parts[0])
@@ -436,10 +437,10 @@ func (*ManagerSuite) transportWithReject(dialer delivery.Dialer, switcher *atomi
 					reject = fn
 				},
 				OnReadErrorFunc: func(fn func(error)) {},
-				SendRestoreFunc: func(ctx context.Context, snapshot delivery.Snapshot, segments []delivery.Segment) error {
+				SendRestoreFunc: func(ctx context.Context, snapshot common.Snapshot, segments []common.Segment) error {
 					return transport.SendRestore(ctx, snapshot, segments)
 				},
-				SendSegmentFunc: func(ctx context.Context, segment delivery.Segment) error {
+				SendSegmentFunc: func(ctx context.Context, segment common.Segment) error {
 					if !switcher.Load() {
 						return transport.SendSegment(ctx, segment)
 					}
@@ -474,14 +475,14 @@ func (*ManagerSuite) transportWithError(dialer delivery.Dialer, switcher *atomic
 				OnAckFunc:       transport.OnAck,
 				OnRejectFunc:    transport.OnReject,
 				OnReadErrorFunc: func(fn func(error)) {},
-				SendRestoreFunc: func(ctx context.Context, snapshot delivery.Snapshot, segments []delivery.Segment) error {
+				SendRestoreFunc: func(ctx context.Context, snapshot common.Snapshot, segments []common.Segment) error {
 					if switcher.Load() {
 						time.Sleep(delay)
 						return assert.AnError
 					}
 					return transport.SendRestore(ctx, snapshot, segments)
 				},
-				SendSegmentFunc: func(ctx context.Context, segment delivery.Segment) error {
+				SendSegmentFunc: func(ctx context.Context, segment common.Segment) error {
 					if switcher.Load() {
 						time.Sleep(delay)
 						return assert.AnError
@@ -509,10 +510,10 @@ func (*ManagerSuite) transportNewAutoAck(name string, delay time.Duration, dest 
 				},
 				OnRejectFunc:    func(fn func(uint32)) {},
 				OnReadErrorFunc: func(fn func(error)) {},
-				SendRestoreFunc: func(_ context.Context, _ delivery.Snapshot, _ []delivery.Segment) error {
+				SendRestoreFunc: func(_ context.Context, _ common.Snapshot, _ []common.Segment) error {
 					return nil
 				},
-				SendSegmentFunc: func(_ context.Context, segment delivery.Segment) error {
+				SendSegmentFunc: func(_ context.Context, segment common.Segment) error {
 					parts := strings.SplitN(string(segment.Bytes()), ":", 6)
 					shardID, err := strconv.ParseUint(parts[2], 10, 16)
 					if err != nil {
@@ -554,12 +555,12 @@ func (*ManagerSuite) transportNewAutoAck(name string, delay time.Duration, dest 
 func (*ManagerSuite) inMemoryRefill() *ManagerRefillMock {
 	m := new(sync.Mutex)
 	data := make(map[uint16]map[uint32]interface{})
-	rejects := make(map[delivery.SegmentKey]bool)
+	rejects := make(map[common.SegmentKey]bool)
 	lastSegments := make(map[uint16]uint32)
 	errNotFound := errors.New("not found")
 
 	return &ManagerRefillMock{
-		GetFunc: func(_ context.Context, key delivery.SegmentKey) (delivery.Segment, error) {
+		GetFunc: func(_ context.Context, key common.SegmentKey) (common.Segment, error) {
 			m.Lock()
 			defer m.Unlock()
 
@@ -567,21 +568,21 @@ func (*ManagerSuite) inMemoryRefill() *ManagerRefillMock {
 			if !ok {
 				return nil, errNotFound
 			}
-			if segment, ok := blob.(delivery.Segment); ok {
+			if segment, ok := blob.(common.Segment); ok {
 				if !strings.Contains(string(segment.Bytes()), "snapshot:") {
 					return segment, nil
 				}
 			}
 			return nil, errNotFound
 		},
-		AckFunc: func(_ delivery.SegmentKey, _ string) {},
-		RejectFunc: func(key delivery.SegmentKey, _ string) {
+		AckFunc: func(_ common.SegmentKey, _ string) {},
+		RejectFunc: func(key common.SegmentKey, _ string) {
 			m.Lock()
 			defer m.Unlock()
 
 			rejects[key] = true
 		},
-		RestoreFunc: func(_ context.Context, key delivery.SegmentKey) (delivery.Snapshot, []delivery.Segment, error) {
+		RestoreFunc: func(_ context.Context, key common.SegmentKey) (common.Snapshot, []common.Segment, error) {
 			m.Lock()
 			defer m.Unlock()
 
@@ -599,18 +600,18 @@ func (*ManagerSuite) inMemoryRefill() *ManagerRefillMock {
 			if len(blobs) == 0 {
 				return nil, nil, errNotFound
 			}
-			var snapshot delivery.Snapshot
-			if s, ok := blobs[len(blobs)-1].(delivery.Snapshot); ok {
+			var snapshot common.Snapshot
+			if s, ok := blobs[len(blobs)-1].(common.Snapshot); ok {
 				snapshot = s
 				blobs = blobs[:len(blobs)-1]
 			}
-			segments := make([]delivery.Segment, 0, len(blobs))
+			segments := make([]common.Segment, 0, len(blobs))
 			for i := len(blobs) - 1; i >= 0; i-- {
-				segments = append(segments, blobs[i].(delivery.Segment))
+				segments = append(segments, blobs[i].(common.Segment))
 			}
 			return snapshot, segments, nil
 		},
-		WriteSegmentFunc: func(_ context.Context, key delivery.SegmentKey, segment delivery.Segment) error {
+		WriteSegmentFunc: func(_ context.Context, key common.SegmentKey, segment common.Segment) error {
 			m.Lock()
 			defer m.Unlock()
 
@@ -632,7 +633,7 @@ func (*ManagerSuite) inMemoryRefill() *ManagerRefillMock {
 			}
 			return nil
 		},
-		WriteSnapshotFunc: func(_ context.Context, key delivery.SegmentKey, snapshot delivery.Snapshot) error {
+		WriteSnapshotFunc: func(_ context.Context, key common.SegmentKey, snapshot common.Snapshot) error {
 			m.Lock()
 			defer m.Unlock()
 
@@ -659,18 +660,18 @@ func (*ManagerSuite) inMemoryRefill() *ManagerRefillMock {
 
 func (*ManagerSuite) corruptedRefill() *ManagerRefillMock {
 	return &ManagerRefillMock{
-		GetFunc: func(_ context.Context, key delivery.SegmentKey) (delivery.Segment, error) {
+		GetFunc: func(_ context.Context, key common.SegmentKey) (common.Segment, error) {
 			return nil, assert.AnError
 		},
-		AckFunc:    func(_ delivery.SegmentKey, _ string) {},
-		RejectFunc: func(_ delivery.SegmentKey, _ string) {},
-		RestoreFunc: func(_ context.Context, _ delivery.SegmentKey) (delivery.Snapshot, []delivery.Segment, error) {
+		AckFunc:    func(_ common.SegmentKey, _ string) {},
+		RejectFunc: func(_ common.SegmentKey, _ string) {},
+		RestoreFunc: func(_ context.Context, _ common.SegmentKey) (common.Snapshot, []common.Segment, error) {
 			return nil, nil, assert.AnError
 		},
-		WriteSegmentFunc: func(_ context.Context, _ delivery.SegmentKey, _ delivery.Segment) error {
+		WriteSegmentFunc: func(_ context.Context, _ common.SegmentKey, _ common.Segment) error {
 			return assert.AnError
 		},
-		WriteSnapshotFunc: func(_ context.Context, _ delivery.SegmentKey, _ delivery.Snapshot) error {
+		WriteSnapshotFunc: func(_ context.Context, _ common.SegmentKey, _ common.Snapshot) error {
 			return assert.AnError
 		},
 		WriteAckStatusFunc: func(_ context.Context) error {
@@ -723,9 +724,9 @@ func (*ManagerSuite) simpleEncoder() delivery.ManagerEncoderCtor {
 		return &ManagerEncoderMock{
 			LastEncodedSegmentFunc: func() uint32 { return nextSegmentID - 1 },
 			EncodeFunc: func(
-				_ context.Context, data delivery.ShardedData,
-			) (delivery.SegmentKey, delivery.Segment, delivery.Redundant, error) {
-				key := delivery.SegmentKey{
+				_ context.Context, data common.ShardedData,
+			) (common.SegmentKey, common.Segment, common.Redundant, error) {
+				key := common.SegmentKey{
 					ShardID: shardID,
 					Segment: nextSegmentID,
 				}
@@ -743,7 +744,7 @@ func (*ManagerSuite) simpleEncoder() delivery.ManagerEncoderCtor {
 				nextSegmentID++
 				return key, segment, redundant, nil
 			},
-			SnapshotFunc: func(_ context.Context, redundants []delivery.Redundant) (delivery.Snapshot, error) {
+			SnapshotFunc: func(_ context.Context, redundants []common.Redundant) (common.Snapshot, error) {
 				var lastRedundant uint32
 				firstSegment := nextSegmentID
 				for _, redundant := range redundants {

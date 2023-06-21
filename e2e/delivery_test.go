@@ -13,7 +13,7 @@ import (
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/odarix/odarix-core-go/delivery"
+	"github.com/odarix/odarix-core-go/common"
 	"github.com/odarix/odarix-core-go/server"
 	"github.com/odarix/odarix-core-go/transport"
 )
@@ -91,7 +91,7 @@ func (s *ManagerKeeperSuite) TestRefillSenderHappyPath() {
 		wr := s.makeData(5000, int64(i))
 		data, errLoop := wr.Marshal()
 		s.Require().NoError(errLoop)
-		h := delivery.NewHashdex(data)
+		h := common.NewHashdex(data)
 
 		delivered, errLoop := managerKeeper.Send(baseCtx, h)
 		h.Destroy()
@@ -177,7 +177,7 @@ func (s *ManagerKeeperSuite) TestWithRotate() {
 		wr := s.makeData(5000, int64(i))
 		data, errLoop := wr.Marshal()
 		s.Require().NoError(errLoop)
-		h := delivery.NewHashdex(data)
+		h := common.NewHashdex(data)
 
 		delivered, errLoop := managerKeeper.Send(baseCtx, h)
 		h.Destroy()
@@ -343,7 +343,7 @@ func (s *ManagerKeeperSuite) TestWithReject() {
 		wr := s.makeData(5000, int64(i))
 		data, errLoop := wr.Marshal()
 		s.Require().NoError(errLoop)
-		h := delivery.NewHashdex(data)
+		h := common.NewHashdex(data)
 		_, errLoop = managerKeeper.Send(baseCtx, h)
 		h.Destroy()
 		s.Require().NoError(errLoop)

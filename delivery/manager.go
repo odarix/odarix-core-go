@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jonboulle/clockwork"
+	"github.com/odarix/odarix-core-go/common"
 	"go.uber.org/multierr"
 	"golang.org/x/sync/errgroup"
 )
@@ -46,8 +47,8 @@ type (
 	// ManagerEncoder - interface for encoder manager.
 	ManagerEncoder interface {
 		LastEncodedSegment() uint32
-		Encode(context.Context, ShardedData) (SegmentKey, Segment, Redundant, error)
-		Snapshot(context.Context, []Redundant) (Snapshot, error)
+		Encode(context.Context, common.ShardedData) (common.SegmentKey, common.Segment, common.Redundant, error)
+		Snapshot(context.Context, []common.Redundant) (common.Snapshot, error)
 		Destroy()
 	}
 
@@ -65,12 +66,12 @@ type (
 		Shards() int
 		Destinations() int
 		LastSegment(uint16, string) uint32
-		Get(context.Context, SegmentKey) (Segment, error)
-		Ack(SegmentKey, string)
-		Reject(SegmentKey, string)
-		Restore(context.Context, SegmentKey) (Snapshot, []Segment, error)
-		WriteSegment(context.Context, SegmentKey, Segment) error
-		WriteSnapshot(context.Context, SegmentKey, Snapshot) error
+		Get(context.Context, common.SegmentKey) (common.Segment, error)
+		Ack(common.SegmentKey, string)
+		Reject(common.SegmentKey, string)
+		Restore(context.Context, common.SegmentKey) (common.Snapshot, []common.Segment, error)
+		WriteSegment(context.Context, common.SegmentKey, common.Segment) error
+		WriteSnapshot(context.Context, common.SegmentKey, common.Snapshot) error
 		WriteAckStatus(context.Context) error
 		IntermediateRename() error
 		Shutdown(context.Context) error
@@ -165,7 +166,7 @@ func NewManager(
 }
 
 // Send - send data to encoders.
-func (mgr *Manager) Send(ctx context.Context, data ShardedData) (ack bool, err error) {
+func (mgr *Manager) Send(ctx context.Context, data common.ShardedData) (ack bool, err error) {
 	result := NewSendPromise(len(mgr.encoders))
 	expiredAt := mgr.clock.Now().Add(mgr.refillInterval)
 	group, gCtx := errgroup.WithContext(ctx)
@@ -204,7 +205,7 @@ func (mgr *Manager) Open(ctx context.Context) {
 }
 
 // Get - get segment for key.
-func (mgr *Manager) Get(ctx context.Context, key SegmentKey) (Segment, error) {
+func (mgr *Manager) Get(ctx context.Context, key common.SegmentKey) (common.Segment, error) {
 	segment, err := mgr.exchange.Get(ctx, key)
 	if errors.Is(err, ErrSegmentGone) {
 		return mgr.refill.Get(ctx, key)
@@ -213,13 +214,13 @@ func (mgr *Manager) Get(ctx context.Context, key SegmentKey) (Segment, error) {
 }
 
 // Ack - mark ack segment for key and destanition.
-func (mgr *Manager) Ack(key SegmentKey, dest string) {
+func (mgr *Manager) Ack(key common.SegmentKey, dest string) {
 	mgr.refill.Ack(key, dest)
 	mgr.exchange.Ack(key)
 }
 
 // Reject - mark reject segment for key and destanition and send to refill.
-func (mgr *Manager) Reject(key SegmentKey, dest string) {
+func (mgr *Manager) Reject(key common.SegmentKey, dest string) {
 	mgr.refill.Reject(key, dest)
 	if mgr.exchange.Reject(key) {
 		select {
@@ -230,7 +231,7 @@ func (mgr *Manager) Reject(key SegmentKey, dest string) {
 }
 
 // Restore - get data for restore state from refill.
-func (mgr *Manager) Restore(ctx context.Context, key SegmentKey) (Snapshot, []Segment) {
+func (mgr *Manager) Restore(ctx context.Context, key common.SegmentKey) (common.Snapshot, []common.Segment) {
 	snapshot, segments, err := mgr.refill.Restore(ctx, key)
 	if err == nil {
 		return snapshot, segments
@@ -311,13 +312,13 @@ func (mgr *Manager) refillLoop(ctx context.Context) {
 func (mgr *Manager) collectSegmentsToRefill(ctx context.Context) bool {
 	rejected, empty := mgr.exchange.RejectedOrExpired(mgr.clock.Now())
 	if len(rejected) > 0 {
-		less := func(a, b SegmentKey) bool {
+		less := func(a, b common.SegmentKey) bool {
 			return a.ShardID < b.ShardID || (a.ShardID == b.ShardID && a.Segment < b.Segment)
 		}
 		sort.Slice(rejected, func(i, j int) bool { return less(rejected[i], rejected[j]) })
 	}
 
-	removeRestOfShard := func(keys []SegmentKey, i int) []SegmentKey {
+	removeRestOfShard := func(keys []common.SegmentKey, i int) []common.SegmentKey {
 		j := i + 1
 		for j < len(keys) && keys[j].ShardID == keys[i].ShardID {
 			j++
@@ -339,7 +340,7 @@ func (mgr *Manager) collectSegmentsToRefill(ctx context.Context) bool {
 	return !empty
 }
 
-func (mgr *Manager) writeSegmentToRefill(ctx context.Context, key SegmentKey) error {
+func (mgr *Manager) writeSegmentToRefill(ctx context.Context, key common.SegmentKey) error {
 	segment, err := mgr.exchange.Get(ctx, key)
 	switch {
 	case errors.Is(err, ErrSegmentGone):
@@ -362,7 +363,7 @@ func (mgr *Manager) writeSegmentToRefill(ctx context.Context, key SegmentKey) er
 	return mgr.refill.WriteSegment(ctx, key, segment)
 }
 
-func (mgr *Manager) snapshot(ctx context.Context, key SegmentKey) (Snapshot, error) {
+func (mgr *Manager) snapshot(ctx context.Context, key common.SegmentKey) (common.Snapshot, error) {
 	mgr.encodersLock.Lock()
 	defer mgr.encodersLock.Unlock()
 
@@ -372,9 +373,9 @@ func (mgr *Manager) snapshot(ctx context.Context, key SegmentKey) (Snapshot, err
 		panic("invalid segment key: more last segment +1")
 	}
 
-	redundants := make([]Redundant, 0, lastSegment-key.Segment+1)
+	redundants := make([]common.Redundant, 0, lastSegment-key.Segment+1)
 	for segment := key.Segment; segment <= lastSegment; segment++ {
-		key = SegmentKey{ShardID: key.ShardID, Segment: segment}
+		key = common.SegmentKey{ShardID: key.ShardID, Segment: segment}
 		redundant, err := mgr.exchange.Redundant(ctx, key)
 		if err != nil {
 			return nil, err

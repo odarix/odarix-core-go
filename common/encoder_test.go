@@ -1,4 +1,4 @@
-package delivery_test
+package common_test
 
 import (
 	"context"
@@ -8,18 +8,18 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/odarix/odarix-core-go/delivery"
+	"github.com/odarix/odarix-core-go/common"
 )
 
 type EncoderSuite struct {
 	suite.Suite
 
-	enc         *delivery.Encoder
+	enc         *common.Encoder
 	ctx         context.Context
 	shardID     uint16
 	encodeCount int
-	bufSeg      []delivery.Segment
-	bufRed      []delivery.Redundant
+	bufSeg      []common.Segment
+	bufRed      []common.Redundant
 	expSnapshot []byte
 	expSegment  [][]byte
 }
@@ -31,10 +31,10 @@ func TestEncoderSuite(t *testing.T) {
 func (es *EncoderSuite) SetupTest() {
 	es.shardID = 0
 	es.ctx = context.Background()
-	es.enc = delivery.NewEncoder(es.shardID, 1)
+	es.enc = common.NewEncoder(es.shardID, 1)
 	es.encodeCount = 100
-	es.bufSeg = make([]delivery.Segment, 0, es.encodeCount)
-	es.bufRed = make([]delivery.Redundant, 0, es.encodeCount)
+	es.bufSeg = make([]common.Segment, 0, es.encodeCount)
+	es.bufRed = make([]common.Redundant, 0, es.encodeCount)
 	es.expSnapshot = make([]byte, 0, es.encodeCount)
 	es.expSegment = make([][]byte, 0, es.encodeCount)
 }
@@ -80,7 +80,7 @@ func (es *EncoderSuite) TestEncode() {
 	es.T().Log("encode data and accumulate segment and redundant")
 	for i := 0; i < es.encodeCount; i++ {
 		data := es.makeData()
-		h := delivery.NewHashdex(data)
+		h := common.NewHashdex(data)
 
 		segKey, gos, gor, err := es.enc.Encode(es.ctx, h)
 		es.NoError(err)
@@ -110,7 +110,7 @@ func (es *EncoderSuite) TestEncodeError() {
 	ctx, cancel := context.WithCancel(es.ctx)
 	cancel()
 
-	h := delivery.NewHashdex(es.makeData())
+	h := common.NewHashdex(es.makeData())
 	defer h.Destroy()
 
 	_, _, _, err := es.enc.Encode(ctx, h)
@@ -126,7 +126,7 @@ func (es *EncoderSuite) TestSnapshotError() {
 
 func BenchmarkEncoder(b *testing.B) {
 	ctx := context.Background()
-	enc := delivery.NewEncoder(0, 1)
+	enc := common.NewEncoder(0, 1)
 
 	defer enc.Destroy()
 
@@ -161,7 +161,7 @@ func BenchmarkEncoder(b *testing.B) {
 	require.NoError(b, err)
 
 	for i := 0; i < b.N; i++ {
-		h := delivery.NewHashdex(data)
+		h := common.NewHashdex(data)
 		_, gos, gor, _ := enc.Encode(ctx, h)
 		h.Destroy()
 		gos.Destroy()

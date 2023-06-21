@@ -7,6 +7,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/odarix/odarix-core-go/common"
 )
 
 var (
@@ -21,8 +23,8 @@ type Exchange struct {
 	locked       uint32
 	destinations int
 	// rwmutex      *sync.RWMutex
-	// records      map[SegmentKey]*exchangeRecord
-	records      *sync.Map // map[SegmentKey]*exchangeRecord
+	// records      map[common.SegmentKey]*exchangeRecord
+	records      *sync.Map // map[common.SegmentKey]*exchangeRecord
 	lastSegments []uint32
 }
 
@@ -38,7 +40,7 @@ func NewExchange(shards, destinations int) *Exchange {
 		locked:       0,
 		destinations: destinations,
 		// rwmutex:      new(sync.RWMutex),
-		// records:      make(map[SegmentKey]*exchangeRecord),
+		// records:      make(map[common.SegmentKey]*exchangeRecord),
 		records:      new(sync.Map),
 		lastSegments: lastSegments,
 	}
@@ -59,7 +61,7 @@ func (ex *Exchange) deleteRecord(key any) {
 //
 // If exchange locked (after Shutdown), and there is not putted segment,
 // it returns ErrPromiseCanceled.
-func (ex *Exchange) Get(ctx context.Context, key SegmentKey) (Segment, error) {
+func (ex *Exchange) Get(ctx context.Context, key common.SegmentKey) (common.Segment, error) {
 	lastSegment := atomic.LoadUint32(&ex.lastSegments[key.ShardID])
 	record, ok := ex.records.Load(key)
 	if ok {
@@ -81,9 +83,9 @@ func (ex *Exchange) Get(ctx context.Context, key SegmentKey) (Segment, error) {
 //
 // Result of delivery acks will be stored in sendPromise when record will be delete from exchange.
 func (ex *Exchange) Put(
-	key SegmentKey,
-	segment Segment,
-	redundant Redundant,
+	key common.SegmentKey,
+	segment common.Segment,
+	redundant common.Redundant,
 	sendPromise *SendPromise,
 	expiredAt time.Time,
 ) {
@@ -99,7 +101,7 @@ func (ex *Exchange) Put(
 }
 
 // Ack segment by key
-func (ex *Exchange) Ack(key SegmentKey) {
+func (ex *Exchange) Ack(key common.SegmentKey) {
 	record, ok := ex.records.Load(key)
 	if !ok {
 		return
@@ -116,14 +118,14 @@ func (ex *Exchange) Ack(key SegmentKey) {
 // We should preserve segments after rejected segment until it will be written in refill
 // because we probably will need to make a snapshot for it (require all redundants after).
 // If some segment not safe for delete it will be deleted later, on remove rejected ancestor.
-func (ex *Exchange) isSafeForDelete(key SegmentKey) bool {
-	ancestorKey := SegmentKey{ShardID: key.ShardID, Segment: key.Segment - 1}
+func (ex *Exchange) isSafeForDelete(key common.SegmentKey) bool {
+	ancestorKey := common.SegmentKey{ShardID: key.ShardID, Segment: key.Segment - 1}
 	_, ancestorInExchange := ex.records.Load(ancestorKey)
 	return !ancestorInExchange
 }
 
 // Reject segment by key
-func (ex *Exchange) Reject(key SegmentKey) bool {
+func (ex *Exchange) Reject(key common.SegmentKey) bool {
 	record, ok := ex.records.Load(key)
 	if ok {
 		record.(*exchangeRecord).Reject()
@@ -133,13 +135,13 @@ func (ex *Exchange) Reject(key SegmentKey) bool {
 }
 
 // RejectedOrExpired returns slice of keys which was rejected
-func (ex *Exchange) RejectedOrExpired(now time.Time) (keys []SegmentKey, empty bool) {
+func (ex *Exchange) RejectedOrExpired(now time.Time) (keys []common.SegmentKey, empty bool) {
 	empty = true
 	ex.records.Range(func(key, value any) bool {
 		empty = false
 		record := value.(*exchangeRecord)
 		if record.Rejected() || record.Expired(now) {
-			keys = append(keys, key.(SegmentKey))
+			keys = append(keys, key.(common.SegmentKey))
 		}
 		return true
 	})
@@ -147,7 +149,7 @@ func (ex *Exchange) RejectedOrExpired(now time.Time) (keys []SegmentKey, empty b
 }
 
 // Remove keys from exchange because them writted in refill
-func (ex *Exchange) Remove(keys []SegmentKey) {
+func (ex *Exchange) Remove(keys []common.SegmentKey) {
 	if len(keys) == 0 {
 		return
 	}
@@ -163,7 +165,7 @@ func (ex *Exchange) Remove(keys []SegmentKey) {
 // It is possible situation when follow segments already delivered
 // but still in exchange because have rejected ancestor.
 // We should delete it here. (See Exchange.Ack method.)
-func (ex *Exchange) removeWithAckFollowers(key SegmentKey) {
+func (ex *Exchange) removeWithAckFollowers(key common.SegmentKey) {
 	ex.deleteRecord(key)
 	for {
 		key.Segment++
@@ -176,7 +178,7 @@ func (ex *Exchange) removeWithAckFollowers(key SegmentKey) {
 }
 
 // Redundant returns redundant by key
-func (ex *Exchange) Redundant(ctx context.Context, key SegmentKey) (Redundant, error) {
+func (ex *Exchange) Redundant(ctx context.Context, key common.SegmentKey) (common.Redundant, error) {
 	record, ok := ex.records.Load(key)
 	if ok {
 		return record.(*exchangeRecord).Redundant(ctx)
@@ -221,8 +223,8 @@ func newExchangeRecord() *exchangeRecord {
 }
 
 func (record *exchangeRecord) Resolve(
-	segment Segment,
-	redundant Redundant,
+	segment common.Segment,
+	redundant common.Redundant,
 	destinations int,
 	sendPromise *SendPromise,
 	expiredAt time.Time,
@@ -255,8 +257,8 @@ func (record *exchangeRecord) Expired(now time.Time) bool {
 }
 
 type segmentPromise struct {
-	segment   Segment
-	redundant Redundant
+	segment   common.Segment
+	redundant common.Redundant
 	err       error
 	resolve   chan struct{}
 }
@@ -267,7 +269,7 @@ func newSegmentPromise() *segmentPromise {
 	}
 }
 
-func (promise *segmentPromise) Segment(ctx context.Context) (Segment, error) {
+func (promise *segmentPromise) Segment(ctx context.Context) (common.Segment, error) {
 	select {
 	case <-ctx.Done():
 		return nil, context.Cause(ctx)
@@ -285,7 +287,7 @@ func (promise *segmentPromise) Destroy() {
 	}
 }
 
-func (promise *segmentPromise) Redundant(ctx context.Context) (Redundant, error) {
+func (promise *segmentPromise) Redundant(ctx context.Context) (common.Redundant, error) {
 	select {
 	case <-ctx.Done():
 		return nil, context.Cause(ctx)
@@ -294,7 +296,7 @@ func (promise *segmentPromise) Redundant(ctx context.Context) (Redundant, error)
 	}
 }
 
-func (promise *segmentPromise) Resolve(segment Segment, redundant Redundant) {
+func (promise *segmentPromise) Resolve(segment common.Segment, redundant common.Redundant) {
 	promise.segment = segment
 	promise.redundant = redundant
 	close(promise.resolve)

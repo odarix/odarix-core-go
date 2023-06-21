@@ -14,6 +14,7 @@ import (
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/odarix/odarix-core-go/common"
 	"github.com/odarix/odarix-core-go/delivery"
 	"github.com/odarix/odarix-core-go/server"
 	"github.com/odarix/odarix-core-go/transport"
@@ -120,7 +121,7 @@ func (s *MainSuite) createManager(
 		shardID uint16,
 		shardsNumberPower uint8,
 	) (delivery.ManagerEncoder, error) {
-		return delivery.NewEncoder(shardID, 1<<shardsNumberPower), nil
+		return common.NewEncoder(shardID, 1<<shardsNumberPower), nil
 	}
 
 	rcfg := &delivery.FileStorageConfig{
@@ -254,7 +255,7 @@ func (s *MainSuite) createManagerKeeper(
 		shardID uint16,
 		shardsNumberPower uint8,
 	) (delivery.ManagerEncoder, error) {
-		return delivery.NewEncoder(shardID, 1<<shardsNumberPower), nil
+		return common.NewEncoder(shardID, 1<<shardsNumberPower), nil
 	}
 
 	rcfg := &delivery.FileStorageConfig{

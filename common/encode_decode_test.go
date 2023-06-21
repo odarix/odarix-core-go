@@ -1,4 +1,4 @@
-package e2e_test
+package common_test
 
 import (
 	"context"
@@ -8,16 +8,15 @@ import (
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/odarix/odarix-core-go/delivery"
-	"github.com/odarix/odarix-core-go/server"
+	"github.com/odarix/odarix-core-go/common"
 )
 
 type EncoderDecoderSuite struct {
 	suite.Suite
 
 	ctx context.Context
-	enc *delivery.Encoder
-	dec *server.Decoder
+	enc *common.Encoder
+	dec *common.Decoder
 }
 
 func TestEncoderDecoderSuite(t *testing.T) {
@@ -26,8 +25,8 @@ func TestEncoderDecoderSuite(t *testing.T) {
 
 func (eds *EncoderDecoderSuite) SetupTest() {
 	eds.ctx = context.Background()
-	eds.enc = delivery.NewEncoder(0, 1)
-	eds.dec = server.NewDecoder()
+	eds.enc = common.NewEncoder(0, 1)
+	eds.dec = common.NewDecoder()
 }
 
 func (eds *EncoderDecoderSuite) TearDownTest() {
@@ -108,7 +107,7 @@ func (eds *EncoderDecoderSuite) TestEncodeDecode() {
 		eds.Require().NoError(err)
 
 		eds.T().Log("sharding protobuf")
-		h := delivery.NewHashdex(data)
+		h := common.NewHashdex(data)
 
 		eds.T().Log("encoding protobuf")
 		_, gos, gor, err := eds.enc.Encode(eds.ctx, h)
@@ -140,7 +139,7 @@ func (eds *EncoderDecoderSuite) TestEncodeDecode() {
 }
 
 func (eds *EncoderDecoderSuite) TestEncodeDecodeSnapshot() {
-	rts := make([]delivery.Redundant, 5)
+	rts := make([]common.Redundant, 5)
 	segmentsBuffer := make([][]byte, 5)
 
 	for i := 0; i < 10; i++ {
@@ -150,7 +149,7 @@ func (eds *EncoderDecoderSuite) TestEncodeDecodeSnapshot() {
 		eds.Require().NoError(err)
 
 		eds.T().Log("sharding protobuf")
-		h := delivery.NewHashdex(data)
+		h := common.NewHashdex(data)
 
 		eds.T().Log("encoding protobuf")
 		_, gos, rt, err := eds.enc.Encode(eds.ctx, h)
@@ -195,7 +194,7 @@ func (eds *EncoderDecoderSuite) TestEncodeDecodeSnapshot() {
 	}
 
 	eds.T().Log("init new decoder")
-	resDec := server.NewDecoder()
+	resDec := common.NewDecoder()
 
 	eds.T().Log("restore new decoder")
 	err = resDec.Snapshot(eds.ctx, gsnapshot.Bytes())
@@ -230,7 +229,7 @@ func (eds *EncoderDecoderSuite) TestEncodeDecodeSnapshot() {
 }
 
 func (eds *EncoderDecoderSuite) TestEncodeDecodeSnapshotWithDrySegment() {
-	rts := make([]delivery.Redundant, 5)
+	rts := make([]common.Redundant, 5)
 	segmentsDry := make([][]byte, 5)
 
 	for i := 0; i < 10; i++ {
@@ -240,7 +239,7 @@ func (eds *EncoderDecoderSuite) TestEncodeDecodeSnapshotWithDrySegment() {
 		eds.Require().NoError(err)
 
 		eds.T().Log("sharding protobuf")
-		h := delivery.NewHashdex(data)
+		h := common.NewHashdex(data)
 
 		eds.T().Log("encoding protobuf")
 		_, gos, rt, err := eds.enc.Encode(eds.ctx, h)
@@ -285,7 +284,7 @@ func (eds *EncoderDecoderSuite) TestEncodeDecodeSnapshotWithDrySegment() {
 	}
 
 	eds.T().Log("init new decoder")
-	resDec := server.NewDecoder()
+	resDec := common.NewDecoder()
 
 	eds.T().Log("restore new decoder")
 	err = resDec.Snapshot(eds.ctx, gsnapshot.Bytes())
@@ -304,7 +303,7 @@ func (eds *EncoderDecoderSuite) TestEncodeDecodeSnapshotWithDrySegment() {
 	eds.Require().NoError(err)
 
 	eds.T().Log("after restore sharding protobuf")
-	h := delivery.NewHashdex(data)
+	h := common.NewHashdex(data)
 
 	eds.T().Log("after restore encoding protobuf")
 	_, gos, rt, err := eds.enc.Encode(eds.ctx, h)
@@ -348,7 +347,7 @@ func (eds *EncoderDecoderSuite) EncodeDecodeBench(i int64) {
 	expectedWr := eds.makeData(100, i)
 	data, err := expectedWr.Marshal()
 	eds.Require().NoError(err)
-	h := delivery.NewHashdex(data)
+	h := common.NewHashdex(data)
 	_, gos, gor, err := eds.enc.Encode(eds.ctx, h)
 	h.Destroy()
 	gor.Destroy()

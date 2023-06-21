@@ -5,59 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"sync/atomic"
-	"unsafe"
+
+	"github.com/odarix/odarix-core-go/common"
 )
 
 // ErrorHandler useful for logging errors caused in delivery box
 type ErrorHandler func(msg string, err error)
-
-// Data - data to be sent.
-type Data interface{}
-
-// ShardedData - array of structures (*LabelSet, timestamp, value, LSHash)
-type ShardedData interface{}
-
-// Segment - encoded data segment
-type Segment interface {
-	Bytes() []byte
-	Destroy()
-}
-
-// Redundant - information to create a Snapshot
-type Redundant interface {
-	PointerData() unsafe.Pointer
-	Destroy()
-}
-
-// Snapshot - snapshot of encoder/decoder
-type Snapshot interface {
-	Bytes() []byte
-	Destroy()
-}
-
-// SegmentKey - key to store segment in Exchange and Refill
-type SegmentKey struct {
-	ShardID uint16
-	Segment uint32
-}
-
-// String implements fmt.Stringer interface
-func (key SegmentKey) String() string {
-	return fmt.Sprintf("%d:%d", key.ShardID, key.Segment)
-}
-
-// IsFirst returns true if it is a first segment in shard
-func (key SegmentKey) IsFirst() bool {
-	return key.Segment == 0
-}
-
-// Prev returns key to previous segment in same sahrd
-func (key SegmentKey) Prev() SegmentKey {
-	return SegmentKey{
-		ShardID: key.ShardID,
-		Segment: key.Segment - 1,
-	}
-}
 
 // SendPromise is a status aggregator
 //
@@ -121,11 +74,11 @@ func IsPermanent(err error) bool {
 
 // ErrSegmentNotFoundInRefill - error segment not found in refill.
 type ErrSegmentNotFoundInRefill struct {
-	key SegmentKey
+	key common.SegmentKey
 }
 
 // SegmentNotFoundInRefill create ErrSegmentNotFoundInRefill error
-func SegmentNotFoundInRefill(key SegmentKey) ErrSegmentNotFoundInRefill {
+func SegmentNotFoundInRefill(key common.SegmentKey) ErrSegmentNotFoundInRefill {
 	return ErrSegmentNotFoundInRefill{key}
 }
 
