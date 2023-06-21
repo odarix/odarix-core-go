@@ -14,8 +14,6 @@ var (
 	ErrPromiseCanceled = errors.New("promise is canceled")
 	// ErrSegmentGone - error for segment gone from exchange
 	ErrSegmentGone = errors.New("segment gone from exchange")
-	// ErrSegmentNotFound - error for segment was not putted in exchange
-	ErrSegmentNotFound = errors.New("segment was not putted in exchange")
 )
 
 // Exchange holds and coordinate segment-redundants flow

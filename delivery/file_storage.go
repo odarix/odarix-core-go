@@ -10,10 +10,10 @@ import (
 )
 
 const (
-	// refillExtension - file for refill extension.
-	refillExtension = ".refill"
-	// refillTmpExtension - file for temporary refill extension.
-	refillTmpExtension = ".tmprefill"
+	// refillFileExtension - file for refill extension.
+	refillFileExtension = ".refill"
+	// refillIntermediateFileExtension - file for temporary refill extension.
+	refillIntermediateFileExtension = ".tmprefill"
 )
 
 // FileStorageConfig - config for FileStorage.
@@ -33,7 +33,7 @@ type FileStorage struct {
 func NewFileStorage(cfg *FileStorageConfig) (*FileStorage, error) {
 	return &FileStorage{
 		dir:      cfg.Dir,
-		fileName: cfg.FileName + refillExtension,
+		fileName: cfg.FileName + refillFileExtension,
 	}, nil
 }
 
@@ -125,34 +125,34 @@ func (fs *FileStorage) GetPath() string {
 	return filepath.Join(fs.dir, fs.fileName)
 }
 
-// TemporarilyRename - rename the current file to blockID with temporary
-// extension for further conversion to refill.
-func (fs *FileStorage) TemporarilyRename(name string) error {
-	if ok, err := fs.FileExist(); !ok {
-		return err
-	}
-
-	if err := os.Rename(fs.GetPath(), filepath.Join(fs.dir, name+refillTmpExtension)); err != nil {
-		return err
-	}
-
-	fs.fileName = name + refillTmpExtension
-
-	return nil
+// Rename file
+func (fs *FileStorage) Rename(name string) error {
+	return fs.rename(name + refillFileExtension)
 }
 
-// StatefulRename - change extension the current file for further conversion to refill.
-func (fs *FileStorage) StatefulRename() error {
+// IntermediateRename renames file with temporary extension
+func (fs *FileStorage) IntermediateRename(name string) error {
+	return fs.rename(name + refillIntermediateFileExtension)
+}
+
+// GetIntermediateName returns true with name if file has temporary extension
+func (fs *FileStorage) GetIntermediateName() (string, bool) {
+	if strings.HasSuffix(fs.fileName, refillIntermediateFileExtension) {
+		return strings.TrimSuffix(fs.fileName, refillIntermediateFileExtension), true
+	}
+	return "", false
+}
+
+func (fs *FileStorage) rename(name string) error {
 	if ok, err := fs.FileExist(); !ok {
 		return err
 	}
 
-	newName := strings.TrimSuffix(fs.GetPath(), refillTmpExtension) + refillExtension
-	if err := os.Rename(fs.GetPath(), filepath.Clean(newName)); err != nil {
+	if err := os.Rename(fs.GetPath(), filepath.Join(fs.dir, name)); err != nil {
 		return err
 	}
 
-	fs.fileName = newName
+	fs.fileName = name
 
 	return nil
 }

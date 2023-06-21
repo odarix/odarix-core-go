@@ -21,8 +21,8 @@ type ManagerCtor func(
 	clock clockwork.Clock,
 ) (*Manager, error)
 
-// MangerRefillSender - interface for refill Send manger.
-type MangerRefillSender interface {
+// ManagerRefillSender - interface for refill Send manger.
+type ManagerRefillSender interface {
 	Run(context.Context)
 	Shutdown(ctx context.Context) error
 }
@@ -33,7 +33,7 @@ type MangerRefillSenderCtor func(
 	[]Dialer,
 	ErrorHandler,
 	clockwork.Clock,
-) (MangerRefillSender, error)
+) (ManagerRefillSender, error)
 
 // ManagerKeeperConfig - config for ManagerKeeper.
 type ManagerKeeperConfig struct {
@@ -49,7 +49,7 @@ type ManagerKeeper struct {
 	managerCtor        ManagerCtor
 	managerEncoderCtor ManagerEncoderCtor
 	managerRefillCtor  ManagerRefillCtor
-	mangerRefillSender MangerRefillSender
+	mangerRefillSender ManagerRefillSender
 	clock              clockwork.Clock
 	rwm                *sync.RWMutex
 	dialers            []Dialer
@@ -158,9 +158,7 @@ func (dk *ManagerKeeper) rotateLoop(ctx context.Context) {
 				dk.errorHandler("fail shutdown manager", err)
 			}
 			cancel()
-			dk.rwm.RLock()
 			dk.manager.Open(dk.ctx)
-			dk.rwm.RUnlock()
 		case <-dk.stop:
 			return
 		case <-ctx.Done():

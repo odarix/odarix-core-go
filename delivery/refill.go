@@ -175,24 +175,30 @@ func (rl *Refill) WriteAckStatus(ctx context.Context) error {
 	return rl.sm.DeleteCurrentFile()
 }
 
-// TemporarilyRename - rename the current file to blockID with temporary extension for further conversion to refill.
-func (rl *Refill) TemporarilyRename() error {
+// IntermediateRename - rename the current file to blockID with temporary extension for further conversion to refill.
+//
+// Use Rotate nor IntermediateRename + Shutdown. Not both.
+func (rl *Refill) IntermediateRename() error {
 	rl.mx.Lock()
 	defer rl.mx.Unlock()
 
-	return rl.sm.TemporarilyRename(
-		fmt.Sprintf(
-			"%013d_%s",
-			time.Now().UnixMilli(),
-			rl.sm.BlockID().String(),
-		),
-	)
+	return rl.sm.IntermediateRename(rl.makeCompleteFileName())
 }
 
 // Shutdown - finalize and close refill.
+//
+// Use Rotate nor IntermediateRename + Shutdown. Not both.
 func (rl *Refill) Shutdown(_ context.Context) error {
 	rl.mx.Lock()
 	defer rl.mx.Unlock()
+	name, ok := rl.sm.GetIntermediateName()
+	if !ok {
+		name = rl.makeCompleteFileName()
+	}
 
-	return multierr.Append(rl.sm.Close(), rl.sm.StatefulRename())
+	return multierr.Append(rl.sm.Rename(name), rl.sm.Close())
+}
+
+func (rl *Refill) makeCompleteFileName() string {
+	return fmt.Sprintf("%013d_%s", time.Now().UnixMilli(), rl.sm.BlockID().String())
 }

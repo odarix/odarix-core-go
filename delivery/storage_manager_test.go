@@ -439,14 +439,14 @@ func (s *StorageManagerSuite) TestRename() {
 	s.NoError(err)
 	s.True(ok)
 
-	s.NoError(s.sm.TemporarilyRename(s.etalonNewFileName))
+	s.NoError(s.sm.IntermediateRename(s.etalonNewFileName))
 
 	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.etalonNewFileName+".tmprefill"))
 	s.NoError(err)
 
 	s.NoError(s.sm.Close())
 
-	s.NoError(s.sm.StatefulRename())
+	s.NoError(s.sm.Rename(s.etalonNewFileName))
 
 	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.etalonNewFileName+".refill"))
 	s.NoError(err)

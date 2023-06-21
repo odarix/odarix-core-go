@@ -3,6 +3,7 @@ package delivery
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"unsafe"
 )
@@ -38,6 +39,11 @@ type Snapshot interface {
 type SegmentKey struct {
 	ShardID uint16
 	Segment uint32
+}
+
+// String implements fmt.Stringer interface
+func (key SegmentKey) String() string {
+	return fmt.Sprintf("%d:%d", key.ShardID, key.Segment)
 }
 
 // IsFirst returns true if it is a first segment in shard
@@ -113,27 +119,23 @@ func IsPermanent(err error) bool {
 	return false
 }
 
-// ErrSegmentNotFoundRefill - error segment not found in refill.
-type ErrSegmentNotFoundRefill struct{}
+// ErrSegmentNotFoundInRefill - error segment not found in refill.
+type ErrSegmentNotFoundInRefill struct {
+	key SegmentKey
+}
+
+// SegmentNotFoundInRefill create ErrSegmentNotFoundInRefill error
+func SegmentNotFoundInRefill(key SegmentKey) ErrSegmentNotFoundInRefill {
+	return ErrSegmentNotFoundInRefill{key}
+}
 
 // Error - implements error.
-func (ErrSegmentNotFoundRefill) Error() string {
-	return "segment not found"
-}
-
-// Unwrap - implements errors.Unwrap.
-func (e ErrSegmentNotFoundRefill) Unwrap() error {
-	return e
-}
-
-// Is - implements errors.Is.
-func (ErrSegmentNotFoundRefill) Is(target error) bool {
-	_, ok := target.(ErrSegmentNotFoundRefill)
-	return ok
+func (err ErrSegmentNotFoundInRefill) Error() string {
+	return fmt.Sprintf("segment %s not found", err.key)
 }
 
 // Permanent - sign of a permanent error.
-func (ErrSegmentNotFoundRefill) Permanent() bool {
+func (ErrSegmentNotFoundInRefill) Permanent() bool {
 	return true
 }
 
@@ -143,17 +145,6 @@ type ErrServiceDataNotRestored struct{}
 // Error - implements error.
 func (ErrServiceDataNotRestored) Error() string {
 	return "service data not recovered"
-}
-
-// Unwrap - implements errors.Unwrap.
-func (e ErrServiceDataNotRestored) Unwrap() error {
-	return e
-}
-
-// Is - implements errors.Is.
-func (ErrServiceDataNotRestored) Is(target error) bool {
-	_, ok := target.(ErrServiceDataNotRestored)
-	return ok
 }
 
 // Permanent - sign of a permanent error.

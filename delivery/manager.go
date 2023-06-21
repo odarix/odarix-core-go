@@ -72,7 +72,7 @@ type (
 		WriteSegment(context.Context, SegmentKey, Segment) error
 		WriteSnapshot(context.Context, SegmentKey, Snapshot) error
 		WriteAckStatus(context.Context) error
-		TemporarilyRename() error
+		IntermediateRename() error
 		Shutdown(context.Context) error
 	}
 
@@ -117,12 +117,8 @@ func NewManager(
 		return nil, fmt.Errorf("create refill: %w", err)
 	}
 	if !refill.IsContinuable() {
-		if err = refill.TemporarilyRename(); err != nil {
-			return nil, fmt.Errorf("rename refill: %w", err)
-		}
-
 		if err = refill.Shutdown(ctx); err != nil {
-			return nil, fmt.Errorf("shutdown refill: %w", err)
+			return nil, fmt.Errorf("rename refill: %w", err)
 		}
 
 		refill, err = refillCtor(ctx, blockID, destinations, shardsNumberPower)
@@ -256,7 +252,7 @@ func (mgr *Manager) Restore(ctx context.Context, key SegmentKey) (Snapshot, []Se
 
 // Close - rename refill file for close file and shutdown manager.
 func (mgr *Manager) Close() error {
-	return mgr.refill.TemporarilyRename()
+	return mgr.refill.IntermediateRename()
 }
 
 // Shutdown - safe shutdown manager with clearing queue and shutdown senders.

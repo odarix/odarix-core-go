@@ -206,7 +206,7 @@ func (s *RefillSenderSuite) makeRefill(destinationsNames []string) {
 	_, err = os.Stat(filepath.Join(fcfg.Dir, fcfg.FileName+".refill"))
 	s.Require().NoError(err, "file not exist")
 
-	s.Require().NoError(mr.TemporarilyRename())
+	s.Require().NoError(mr.IntermediateRename())
 
 	s.Require().NoError(mr.Shutdown(s.baseCtx))
 }

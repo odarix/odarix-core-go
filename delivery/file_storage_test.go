@@ -132,7 +132,7 @@ func (s *FileManagerSuite) TestRename() {
 	s.NoError(err)
 	s.True(ok)
 
-	err = s.fm.TemporarilyRename(s.etalonNewFileName)
+	err = s.fm.IntermediateRename(s.etalonNewFileName)
 	s.NoError(err)
 
 	_, err = os.Stat(filepath.Join(s.cfg.Dir, "current.refill"))
@@ -148,7 +148,7 @@ func (s *FileManagerSuite) TestRename() {
 	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.etalonNewFileName+".tmprefill"))
 	s.NoError(err)
 
-	err = s.fm.StatefulRename()
+	err = s.fm.Rename(s.etalonNewFileName)
 	s.NoError(err)
 
 	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.etalonNewFileName+".refill"))

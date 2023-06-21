@@ -230,7 +230,7 @@ func (sm *StorageManager) GetSegment(ctx context.Context, segKey SegmentKey) (Se
 	// get position
 	pos := sm.getSegmentPosition(segKey)
 	if pos == posNotFound {
-		return nil, ErrSegmentNotFoundRefill{}
+		return nil, SegmentNotFoundInRefill(segKey)
 	}
 
 	// read frame
@@ -554,14 +554,19 @@ func (sm *StorageManager) FileExist() (bool, error) {
 	return sm.storage.FileExist()
 }
 
-// TemporarilyRename - rename the current file to blockID with temporary extension for further conversion to refill.
-func (sm *StorageManager) TemporarilyRename(name string) error {
-	return sm.storage.TemporarilyRename(name)
+// Rename file
+func (sm *StorageManager) Rename(name string) error {
+	return sm.storage.Rename(name)
 }
 
-// StatefulRename - change extension the current file for further conversion to refill.
-func (sm *StorageManager) StatefulRename() error {
-	return sm.storage.StatefulRename()
+// IntermediateRename - rename the current file to blockID with temporary extension for further conversion to refill.
+func (sm *StorageManager) IntermediateRename(name string) error {
+	return sm.storage.IntermediateRename(name)
+}
+
+// GetIntermediateName returns true with file name if file was intermediate renamed
+func (sm *StorageManager) GetIntermediateName() (string, bool) {
+	return sm.storage.GetIntermediateName()
 }
 
 // DeleteCurrentFile - close and delete current file..

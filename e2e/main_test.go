@@ -245,7 +245,7 @@ func (s *MainSuite) createManagerKeeper(
 		dialers []delivery.Dialer,
 		errorHandler delivery.ErrorHandler,
 		clock clockwork.Clock,
-	) (delivery.MangerRefillSender, error) {
+	) (delivery.ManagerRefillSender, error) {
 		return delivery.NewRefillSendManager(rsmCfg, dialers, errorHandler, clock)
 	}
 

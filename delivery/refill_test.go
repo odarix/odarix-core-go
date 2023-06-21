@@ -226,7 +226,7 @@ func (s *RefillSuite) TestRestoreError() {
 
 	actualSnap, actSegments, err := s.mr.Restore(s.ctx, segKey)
 	s.Error(err)
-	s.ErrorIs(err, delivery.ErrSegmentNotFoundRefill{})
+	s.ErrorAs(err, &delivery.ErrSegmentNotFoundInRefill{})
 	s.Equal(0, len(actSegments))
 	s.Nil(actualSnap)
 
@@ -248,7 +248,7 @@ func (s *RefillSuite) TestRestoreError_2() {
 
 	actualSnap, actSegments, err := s.mr.Restore(s.ctx, segKey)
 	s.Error(err)
-	s.ErrorIs(err, delivery.ErrSegmentNotFoundRefill{})
+	s.ErrorAs(err, &delivery.ErrSegmentNotFoundInRefill{})
 	s.Equal(0, len(actSegments))
 	s.Nil(actualSnap)
 
@@ -406,7 +406,7 @@ func (s *RefillSuite) TestRename() {
 	)
 	s.NoError(err)
 
-	s.NoError(s.mr.TemporarilyRename())
+	s.NoError(s.mr.IntermediateRename())
 	s.NoError(s.mr.Shutdown(s.ctx))
 
 	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.cfg.FileName+".refill"))

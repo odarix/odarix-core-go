@@ -778,6 +778,9 @@ var _ delivery.ManagerRefill = &ManagerRefillMock{}
 //			GetFunc: func(contextMoqParam context.Context, segmentKey delivery.SegmentKey) (delivery.Segment, error) {
 //				panic("mock out the Get method")
 //			},
+//			IntermediateRenameFunc: func() error {
+//				panic("mock out the IntermediateRename method")
+//			},
 //			IsContinuableFunc: func() bool {
 //				panic("mock out the IsContinuable method")
 //			},
@@ -795,9 +798,6 @@ var _ delivery.ManagerRefill = &ManagerRefillMock{}
 //			},
 //			ShutdownFunc: func(contextMoqParam context.Context) error {
 //				panic("mock out the Shutdown method")
-//			},
-//			TemporarilyRenameFunc: func() error {
-//				panic("mock out the TemporarilyRename method")
 //			},
 //			WriteAckStatusFunc: func(contextMoqParam context.Context) error {
 //				panic("mock out the WriteAckStatus method")
@@ -827,6 +827,9 @@ type ManagerRefillMock struct {
 	// GetFunc mocks the Get method.
 	GetFunc func(contextMoqParam context.Context, segmentKey delivery.SegmentKey) (delivery.Segment, error)
 
+	// IntermediateRenameFunc mocks the IntermediateRename method.
+	IntermediateRenameFunc func() error
+
 	// IsContinuableFunc mocks the IsContinuable method.
 	IsContinuableFunc func() bool
 
@@ -844,9 +847,6 @@ type ManagerRefillMock struct {
 
 	// ShutdownFunc mocks the Shutdown method.
 	ShutdownFunc func(contextMoqParam context.Context) error
-
-	// TemporarilyRenameFunc mocks the TemporarilyRename method.
-	TemporarilyRenameFunc func() error
 
 	// WriteAckStatusFunc mocks the WriteAckStatus method.
 	WriteAckStatusFunc func(contextMoqParam context.Context) error
@@ -878,6 +878,9 @@ type ManagerRefillMock struct {
 			ContextMoqParam context.Context
 			// SegmentKey is the segmentKey argument value.
 			SegmentKey delivery.SegmentKey
+		}
+		// IntermediateRename holds details about calls to the IntermediateRename method.
+		IntermediateRename []struct {
 		}
 		// IsContinuable holds details about calls to the IsContinuable method.
 		IsContinuable []struct {
@@ -911,9 +914,6 @@ type ManagerRefillMock struct {
 			// ContextMoqParam is the contextMoqParam argument value.
 			ContextMoqParam context.Context
 		}
-		// TemporarilyRename holds details about calls to the TemporarilyRename method.
-		TemporarilyRename []struct {
-		}
 		// WriteAckStatus holds details about calls to the WriteAckStatus method.
 		WriteAckStatus []struct {
 			// ContextMoqParam is the contextMoqParam argument value.
@@ -938,20 +938,20 @@ type ManagerRefillMock struct {
 			Snapshot delivery.Snapshot
 		}
 	}
-	lockAck               sync.RWMutex
-	lockBlockID           sync.RWMutex
-	lockDestinations      sync.RWMutex
-	lockGet               sync.RWMutex
-	lockIsContinuable     sync.RWMutex
-	lockLastSegment       sync.RWMutex
-	lockReject            sync.RWMutex
-	lockRestore           sync.RWMutex
-	lockShards            sync.RWMutex
-	lockShutdown          sync.RWMutex
-	lockTemporarilyRename sync.RWMutex
-	lockWriteAckStatus    sync.RWMutex
-	lockWriteSegment      sync.RWMutex
-	lockWriteSnapshot     sync.RWMutex
+	lockAck                sync.RWMutex
+	lockBlockID            sync.RWMutex
+	lockDestinations       sync.RWMutex
+	lockGet                sync.RWMutex
+	lockIntermediateRename sync.RWMutex
+	lockIsContinuable      sync.RWMutex
+	lockLastSegment        sync.RWMutex
+	lockReject             sync.RWMutex
+	lockRestore            sync.RWMutex
+	lockShards             sync.RWMutex
+	lockShutdown           sync.RWMutex
+	lockWriteAckStatus     sync.RWMutex
+	lockWriteSegment       sync.RWMutex
+	lockWriteSnapshot      sync.RWMutex
 }
 
 // Ack calls AckFunc.
@@ -1077,6 +1077,33 @@ func (mock *ManagerRefillMock) GetCalls() []struct {
 	mock.lockGet.RLock()
 	calls = mock.calls.Get
 	mock.lockGet.RUnlock()
+	return calls
+}
+
+// IntermediateRename calls IntermediateRenameFunc.
+func (mock *ManagerRefillMock) IntermediateRename() error {
+	if mock.IntermediateRenameFunc == nil {
+		panic("ManagerRefillMock.IntermediateRenameFunc: method is nil but ManagerRefill.IntermediateRename was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockIntermediateRename.Lock()
+	mock.calls.IntermediateRename = append(mock.calls.IntermediateRename, callInfo)
+	mock.lockIntermediateRename.Unlock()
+	return mock.IntermediateRenameFunc()
+}
+
+// IntermediateRenameCalls gets all the calls that were made to IntermediateRename.
+// Check the length with:
+//
+//	len(mockedManagerRefill.IntermediateRenameCalls())
+func (mock *ManagerRefillMock) IntermediateRenameCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockIntermediateRename.RLock()
+	calls = mock.calls.IntermediateRename
+	mock.lockIntermediateRename.RUnlock()
 	return calls
 }
 
@@ -1274,33 +1301,6 @@ func (mock *ManagerRefillMock) ShutdownCalls() []struct {
 	return calls
 }
 
-// TemporarilyRename calls TemporarilyRenameFunc.
-func (mock *ManagerRefillMock) TemporarilyRename() error {
-	if mock.TemporarilyRenameFunc == nil {
-		panic("ManagerRefillMock.TemporarilyRenameFunc: method is nil but ManagerRefill.TemporarilyRename was just called")
-	}
-	callInfo := struct {
-	}{}
-	mock.lockTemporarilyRename.Lock()
-	mock.calls.TemporarilyRename = append(mock.calls.TemporarilyRename, callInfo)
-	mock.lockTemporarilyRename.Unlock()
-	return mock.TemporarilyRenameFunc()
-}
-
-// TemporarilyRenameCalls gets all the calls that were made to TemporarilyRename.
-// Check the length with:
-//
-//	len(mockedManagerRefill.TemporarilyRenameCalls())
-func (mock *ManagerRefillMock) TemporarilyRenameCalls() []struct {
-} {
-	var calls []struct {
-	}
-	mock.lockTemporarilyRename.RLock()
-	calls = mock.calls.TemporarilyRename
-	mock.lockTemporarilyRename.RUnlock()
-	return calls
-}
-
 // WriteAckStatus calls WriteAckStatusFunc.
 func (mock *ManagerRefillMock) WriteAckStatus(contextMoqParam context.Context) error {
 	if mock.WriteAckStatusFunc == nil {
@@ -1410,115 +1410,5 @@ func (mock *ManagerRefillMock) WriteSnapshotCalls() []struct {
 	mock.lockWriteSnapshot.RLock()
 	calls = mock.calls.WriteSnapshot
 	mock.lockWriteSnapshot.RUnlock()
-	return calls
-}
-
-// Ensure, that MangerRefillSenderMock does implement delivery.MangerRefillSender.
-// If this is not the case, regenerate this file with moq.
-var _ delivery.MangerRefillSender = &MangerRefillSenderMock{}
-
-// MangerRefillSenderMock is a mock implementation of delivery.MangerRefillSender.
-//
-//	func TestSomethingThatUsesMangerRefillSender(t *testing.T) {
-//
-//		// make and configure a mocked delivery.MangerRefillSender
-//		mockedMangerRefillSender := &MangerRefillSenderMock{
-//			RunFunc: func(contextMoqParam context.Context)  {
-//				panic("mock out the Run method")
-//			},
-//			ShutdownFunc: func(ctx context.Context) error {
-//				panic("mock out the Shutdown method")
-//			},
-//		}
-//
-//		// use mockedMangerRefillSender in code that requires delivery.MangerRefillSender
-//		// and then make assertions.
-//
-//	}
-type MangerRefillSenderMock struct {
-	// RunFunc mocks the Run method.
-	RunFunc func(contextMoqParam context.Context)
-
-	// ShutdownFunc mocks the Shutdown method.
-	ShutdownFunc func(ctx context.Context) error
-
-	// calls tracks calls to the methods.
-	calls struct {
-		// Run holds details about calls to the Run method.
-		Run []struct {
-			// ContextMoqParam is the contextMoqParam argument value.
-			ContextMoqParam context.Context
-		}
-		// Shutdown holds details about calls to the Shutdown method.
-		Shutdown []struct {
-			// Ctx is the ctx argument value.
-			Ctx context.Context
-		}
-	}
-	lockRun      sync.RWMutex
-	lockShutdown sync.RWMutex
-}
-
-// Run calls RunFunc.
-func (mock *MangerRefillSenderMock) Run(contextMoqParam context.Context) {
-	if mock.RunFunc == nil {
-		panic("MangerRefillSenderMock.RunFunc: method is nil but MangerRefillSender.Run was just called")
-	}
-	callInfo := struct {
-		ContextMoqParam context.Context
-	}{
-		ContextMoqParam: contextMoqParam,
-	}
-	mock.lockRun.Lock()
-	mock.calls.Run = append(mock.calls.Run, callInfo)
-	mock.lockRun.Unlock()
-	mock.RunFunc(contextMoqParam)
-}
-
-// RunCalls gets all the calls that were made to Run.
-// Check the length with:
-//
-//	len(mockedMangerRefillSender.RunCalls())
-func (mock *MangerRefillSenderMock) RunCalls() []struct {
-	ContextMoqParam context.Context
-} {
-	var calls []struct {
-		ContextMoqParam context.Context
-	}
-	mock.lockRun.RLock()
-	calls = mock.calls.Run
-	mock.lockRun.RUnlock()
-	return calls
-}
-
-// Shutdown calls ShutdownFunc.
-func (mock *MangerRefillSenderMock) Shutdown(ctx context.Context) error {
-	if mock.ShutdownFunc == nil {
-		panic("MangerRefillSenderMock.ShutdownFunc: method is nil but MangerRefillSender.Shutdown was just called")
-	}
-	callInfo := struct {
-		Ctx context.Context
-	}{
-		Ctx: ctx,
-	}
-	mock.lockShutdown.Lock()
-	mock.calls.Shutdown = append(mock.calls.Shutdown, callInfo)
-	mock.lockShutdown.Unlock()
-	return mock.ShutdownFunc(ctx)
-}
-
-// ShutdownCalls gets all the calls that were made to Shutdown.
-// Check the length with:
-//
-//	len(mockedMangerRefillSender.ShutdownCalls())
-func (mock *MangerRefillSenderMock) ShutdownCalls() []struct {
-	Ctx context.Context
-} {
-	var calls []struct {
-		Ctx context.Context
-	}
-	mock.lockShutdown.RLock()
-	calls = mock.calls.Shutdown
-	mock.lockShutdown.RUnlock()
 	return calls
 }

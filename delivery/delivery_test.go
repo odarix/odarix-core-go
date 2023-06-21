@@ -1,5 +1,7 @@
 package delivery_test
 
+//go:generate moq -out delivery_moq_test.go -pkg delivery_test -rm . ManagerRefillSender
+
 import (
 	"context"
 	"errors"
@@ -178,8 +180,8 @@ func (*ManagerKeeperSuite) constructorForRefill(refill *ManagerRefillMock) deliv
 	}
 }
 
-func (*ManagerKeeperSuite) constructorForRefillSender(mrs *MangerRefillSenderMock) delivery.MangerRefillSenderCtor {
-	return func(cfg *delivery.RefillSendManagerConfig, dialers []delivery.Dialer, errorHandler delivery.ErrorHandler, clock clockwork.Clock) (delivery.MangerRefillSender, error) {
+func (*ManagerKeeperSuite) constructorForRefillSender(mrs *ManagerRefillSenderMock) delivery.MangerRefillSenderCtor {
+	return func(cfg *delivery.RefillSendManagerConfig, dialers []delivery.Dialer, errorHandler delivery.ErrorHandler, clock clockwork.Clock) (delivery.ManagerRefillSender, error) {
 		if mrs.RunFunc == nil {
 			mrs.RunFunc = func(ctx context.Context) {
 				<-ctx.Done()
@@ -369,9 +371,9 @@ func (*ManagerKeeperSuite) inMemoryRefill() *ManagerRefillMock {
 		WriteAckStatusFunc: func(_ context.Context) error {
 			return nil
 		},
-		IsContinuableFunc:     func() bool { return false },
-		TemporarilyRenameFunc: func() error { return nil },
-		ShutdownFunc:          context.Cause,
+		IsContinuableFunc:      func() bool { return false },
+		IntermediateRenameFunc: func() error { return nil },
+		ShutdownFunc:           context.Cause,
 	}
 }
 
@@ -388,13 +390,13 @@ func (s *ManagerKeeperSuite) TestSendHappyPath() {
 
 	s.T().Log("use no-op refill: assumed that it won't be touched")
 	refillCtor := s.constructorForRefill(&ManagerRefillMock{
-		AckFunc:               func(delivery.SegmentKey, string) {},
-		WriteAckStatusFunc:    func(context.Context) error { return nil },
-		TemporarilyRenameFunc: func() error { return nil },
-		ShutdownFunc:          func(context.Context) error { return nil },
+		AckFunc:                func(delivery.SegmentKey, string) {},
+		WriteAckStatusFunc:     func(context.Context) error { return nil },
+		IntermediateRenameFunc: func() error { return nil },
+		ShutdownFunc:           func(context.Context) error { return nil },
 	})
 
-	mangerRefillSenderCtor := s.constructorForRefillSender(&MangerRefillSenderMock{})
+	mangerRefillSenderCtor := s.constructorForRefillSender(&ManagerRefillSenderMock{})
 
 	cfg := &delivery.ManagerKeeperConfig{
 		RotateInterval: 5 * time.Second,
@@ -451,13 +453,13 @@ func (s *ManagerKeeperSuite) TestSendWithRotate() {
 
 	s.T().Log("use no-op refill: assumed that it won't be touched")
 	refillCtor := s.constructorForRefill(&ManagerRefillMock{
-		AckFunc:               func(delivery.SegmentKey, string) {},
-		WriteAckStatusFunc:    func(context.Context) error { return nil },
-		TemporarilyRenameFunc: func() error { return nil },
-		ShutdownFunc:          func(context.Context) error { return nil },
+		AckFunc:                func(delivery.SegmentKey, string) {},
+		WriteAckStatusFunc:     func(context.Context) error { return nil },
+		IntermediateRenameFunc: func() error { return nil },
+		ShutdownFunc:           func(context.Context) error { return nil },
 	})
 
-	mangerRefillSenderCtor := s.constructorForRefillSender(&MangerRefillSenderMock{})
+	mangerRefillSenderCtor := s.constructorForRefillSender(&ManagerRefillSenderMock{})
 
 	cfg := &delivery.ManagerKeeperConfig{
 		RotateInterval: 2 * time.Second,
@@ -533,7 +535,7 @@ func (s *ManagerKeeperSuite) TestSendWithReject() {
 	s.T().Log("Use full-implemented refill in memory")
 	refillCtor := s.constructorForRefill(s.inMemoryRefill())
 
-	mangerRefillSenderCtor := s.constructorForRefillSender(&MangerRefillSenderMock{})
+	mangerRefillSenderCtor := s.constructorForRefillSender(&ManagerRefillSenderMock{})
 
 	cfg := &delivery.ManagerKeeperConfig{
 		RotateInterval: 2 * time.Second,
