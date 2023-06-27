@@ -473,7 +473,7 @@ func (s *StorageManagerSuite) TestRestore() {
 	s.NoError(err)
 
 	expectAckStatus := s.sm.GetAckStatus()
-	expectAckStatus.Ack(common.SegmentKey{0, 0}, "www.collector.com")
+	expectAckStatus.Ack(common.SegmentKey{ShardID: 0, Segment: 0}, "www.collector.com")
 	err = s.sm.WriteAckStatus(context.Background())
 	s.NoError(err)
 
@@ -824,7 +824,7 @@ func (ass *AckStatusSuite) TestAckStatus() {
 	ass.T().Log("check last ack")
 	ass.EqualValues(math.MaxUint32, as.Last(0, ass.etalonsNames[0]))
 
-	segKey := common.SegmentKey{0, 0}
+	segKey := common.SegmentKey{ShardID: 0, Segment: 0}
 	ass.T().Logf("ack key(%v) for name(%s)", segKey, ass.etalonsNames[0])
 	as.Ack(segKey, ass.etalonsNames[0])
 	ass.False(as.IsAck(segKey))

@@ -26,7 +26,10 @@ var (
 
 // Manager - general circuit manager.
 type Manager struct {
-	dialers        map[string]Dialer
+	dialers map[string]Dialer
+	// refillInterval must not exceed the shutdown timeout,
+	// or the shutdown time must be greater than refillInterval.
+	// Otherwise, the data will be lost (not included in the refill file).
 	refillInterval time.Duration
 	errorHandler   ErrorHandler
 	clock          clockwork.Clock
@@ -257,13 +260,20 @@ func (mgr *Manager) Close() error {
 }
 
 // Shutdown - safe shutdown manager with clearing queue and shutdown senders.
+//
+// refillInterval must not exceed the shutdown timeout,
+// or the shutdown time must be greater than refillInterval.
+// Otherwise, the data will be lost (not included in the refill file).
 func (mgr *Manager) Shutdown(ctx context.Context) error {
 	mgr.exchange.Shutdown(ctx)
 	mgr.cancelRefill(ErrShutdown)
 	<-mgr.refillDone
-	// TODO: very dangerous solution, can send the CPU into space
+	// very dangerous solution, can send the CPU into space
 	//revive:disable-next-line:empty-block work performed in condition
-	for mgr.collectSegmentsToRefill(ctx) {
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for ctx.Err() == nil && mgr.collectSegmentsToRefill(ctx) {
+		<-tick.C
 	}
 	wg := new(sync.WaitGroup)
 	wg.Add(len(mgr.senders))
@@ -280,6 +290,9 @@ func (mgr *Manager) Shutdown(ctx context.Context) error {
 		}(sender)
 	}
 	wg.Wait()
+
+	// delete all segments because they are not required and reject all state
+	mgr.exchange.RemoveAll()
 
 	mgr.encodersLock.Lock()
 	for i := range mgr.encoders {

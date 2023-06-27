@@ -127,12 +127,12 @@ func (fs *FileStorage) GetPath() string {
 
 // Rename file
 func (fs *FileStorage) Rename(name string) error {
-	return fs.rename(name + refillFileExtension)
+	return fs.renameFile(name + refillFileExtension)
 }
 
 // IntermediateRename renames file with temporary extension
 func (fs *FileStorage) IntermediateRename(name string) error {
-	return fs.rename(name + refillIntermediateFileExtension)
+	return fs.renameFile(name + refillIntermediateFileExtension)
 }
 
 // GetIntermediateName returns true with name if file has temporary extension
@@ -143,7 +143,7 @@ func (fs *FileStorage) GetIntermediateName() (string, bool) {
 	return "", false
 }
 
-func (fs *FileStorage) rename(name string) error {
+func (fs *FileStorage) renameFile(name string) error {
 	if ok, err := fs.FileExist(); !ok {
 		return err
 	}
@@ -167,12 +167,12 @@ func (fs *FileStorage) DeleteCurrentFile() error {
 }
 
 // Truncate - changes the size of the file.
-func (fs *FileStorage) Truncate() error {
-	if err := fs.fileDescriptor.Truncate(0); err != nil {
+func (fs *FileStorage) Truncate(size int64) error {
+	if err := fs.fileDescriptor.Truncate(size); err != nil {
 		return err
 	}
 
-	if _, err := fs.fileDescriptor.Seek(0, 0); err != nil {
+	if _, err := fs.fileDescriptor.Seek(size, 0); err != nil {
 		return err
 	}
 

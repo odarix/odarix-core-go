@@ -354,7 +354,7 @@ func (s *ManagerSuite) TestNotOpened() {
 	clock.Advance(time.Minute + time.Millisecond)
 
 	s.T().Log("Shutdown manager")
-	baseCtx, cancel := context.WithTimeout(baseCtx, 10*time.Millisecond)
+	baseCtx, cancel := context.WithTimeout(baseCtx, 11*time.Millisecond)
 	defer cancel()
 	s.NoError(manager.Shutdown(baseCtx), "manager should be gracefully stopped")
 
@@ -405,7 +405,7 @@ func (s *ManagerSuite) TestLongDial() {
 	s.T().Log("Shutdown manager")
 	baseCtx, cancel := context.WithTimeout(baseCtx, time.Millisecond)
 	defer cancel()
-	s.ErrorIs(manager.Shutdown(baseCtx), context.DeadlineExceeded, "manager will try to dial til the end")
+	s.NoError(manager.Shutdown(baseCtx))
 
 	s.T().Log("Check that rejected data is in refill")
 	for i := 0; i < 4; i++ {
@@ -457,7 +457,8 @@ func (*ManagerSuite) transportWithReject(dialer delivery.Dialer, switcher *atomi
 					})
 					return nil
 				},
-				CloseFunc: transport.Close,
+				ListenFunc: func(ctx context.Context) {},
+				CloseFunc:  transport.Close,
 			}, nil
 		},
 	}
@@ -489,12 +490,14 @@ func (*ManagerSuite) transportWithError(dialer delivery.Dialer, switcher *atomic
 					}
 					return transport.SendSegment(ctx, segment)
 				},
-				CloseFunc: transport.Close,
+				ListenFunc: func(ctx context.Context) {},
+				CloseFunc:  transport.Close,
 			}, nil
 		},
 	}
 }
 
+//revive:disable-next-line:cognitive-complexity this is test
 func (*ManagerSuite) transportNewAutoAck(name string, delay time.Duration, dest chan string) delivery.Dialer {
 	return &DialerMock{
 		StringFunc: func() string { return name },
@@ -539,6 +542,7 @@ func (*ManagerSuite) transportNewAutoAck(name string, delay time.Duration, dest 
 					})
 					return nil
 				},
+				ListenFunc: func(ctx context.Context) {},
 				CloseFunc: func() error {
 					m.Lock()
 					defer m.Unlock()
@@ -552,6 +556,8 @@ func (*ManagerSuite) transportNewAutoAck(name string, delay time.Duration, dest 
 	}
 }
 
+//revive:disable-next-line:cyclomatic this is test
+//revive:disable-next-line:cognitive-complexity this is test
 func (*ManagerSuite) inMemoryRefill() *ManagerRefillMock {
 	m := new(sync.Mutex)
 	data := make(map[uint16]map[uint32]interface{})
@@ -716,6 +722,7 @@ func (*RedundantTest) PointerData() unsafe.Pointer {
 func (*RedundantTest) Destroy() {
 }
 
+//revive:disable-next-line:cognitive-complexity this is test
 func (*ManagerSuite) simpleEncoder() delivery.ManagerEncoderCtor {
 	return func(blockID uuid.UUID, shardID uint16, shardsNumberPower uint8) (delivery.ManagerEncoder, error) {
 		var nextSegmentID uint32

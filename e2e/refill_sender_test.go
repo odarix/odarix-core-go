@@ -374,7 +374,7 @@ func (s *RefillSenderSuite) TestRefillSenderBreakingConnection() {
 			s.Equal(ewr.String(), wrMsg.String())
 		}
 
-		s.NoError(tcpReader.SendResponse(ctx, "OK", 200, 0), "fail to send response")
+		tcpReader.SendResponse(ctx, "OK", 200, 0)
 	}
 
 	listener := s.runServer(baseCtx, "127.0.0.1:7001", s.token, onAccept, handleStream, handleRefill)

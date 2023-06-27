@@ -285,7 +285,7 @@ func (s *RefillSuite) TestAckStatus() {
 	s.Error(err, "File not deleted")
 
 	s.T().Log("write segment, ack status and check file exist")
-	err = s.mr.WriteSegment(s.ctx, common.SegmentKey{0, 0}, s.etalonsData)
+	err = s.mr.WriteSegment(s.ctx, common.SegmentKey{ShardID: 0, Segment: 0}, s.etalonsData)
 	s.NoError(err)
 	err = s.mr.WriteAckStatus(s.ctx)
 	s.NoError(err)
@@ -294,8 +294,8 @@ func (s *RefillSuite) TestAckStatus() {
 
 	s.T().Log("ack segments for all name and check file deleted")
 	for _, name := range s.etalonsNames {
-		s.mr.Ack(common.SegmentKey{0, 0}, name)
-		s.mr.Ack(common.SegmentKey{0, 1}, name)
+		s.mr.Ack(common.SegmentKey{ShardID: 0, Segment: 0}, name)
+		s.mr.Ack(common.SegmentKey{ShardID: 0, Segment: 1}, name)
 	}
 	err = s.mr.WriteAckStatus(s.ctx)
 	s.NoError(err)
@@ -314,7 +314,7 @@ func (s *RefillSuite) TestAckStatusWithReject() {
 	s.Error(err, "File not deleted")
 
 	s.T().Log("write segment, ack status and check file exist")
-	err = s.mr.WriteSegment(s.ctx, common.SegmentKey{0, 0}, s.etalonsData)
+	err = s.mr.WriteSegment(s.ctx, common.SegmentKey{ShardID: 0, Segment: 0}, s.etalonsData)
 	s.NoError(err)
 	err = s.mr.WriteAckStatus(s.ctx)
 	s.NoError(err)
@@ -323,10 +323,10 @@ func (s *RefillSuite) TestAckStatusWithReject() {
 
 	s.T().Log("ack segments for all name and 1 reject and check file not deleted")
 	for _, name := range s.etalonsNames {
-		s.mr.Ack(common.SegmentKey{0, 0}, name)
-		s.mr.Ack(common.SegmentKey{0, 1}, name)
+		s.mr.Ack(common.SegmentKey{ShardID: 0, Segment: 0}, name)
+		s.mr.Ack(common.SegmentKey{ShardID: 0, Segment: 1}, name)
 	}
-	s.mr.Reject(common.SegmentKey{0, 3}, s.etalonsNames[0])
+	s.mr.Reject(common.SegmentKey{ShardID: 0, Segment: 3}, s.etalonsNames[0])
 	err = s.mr.WriteAckStatus(s.ctx)
 	s.NoError(err)
 	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.cfg.FileName+".refill"))
@@ -365,9 +365,9 @@ func (s *RefillSuite) TestAckStatusWithSnapshot() {
 
 	s.T().Log("acked status for 0 shard for all name")
 	for _, name := range s.etalonsNames {
-		s.mr.Ack(common.SegmentKey{0, 0}, name)
-		s.mr.Ack(common.SegmentKey{0, 1}, name)
-		s.mr.Ack(common.SegmentKey{0, 2}, name)
+		s.mr.Ack(common.SegmentKey{ShardID: 0, Segment: 0}, name)
+		s.mr.Ack(common.SegmentKey{ShardID: 0, Segment: 1}, name)
+		s.mr.Ack(common.SegmentKey{ShardID: 0, Segment: 2}, name)
 	}
 
 	s.T().Log("write ack status")

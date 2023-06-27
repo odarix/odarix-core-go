@@ -2,6 +2,7 @@ package delivery
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -32,6 +33,7 @@ type Transport interface {
 	SendRefill(context.Context, []PreparedData) error
 	SendSnapshot(context.Context, common.Snapshot) error
 	SendDrySegment(context.Context, common.Segment) error
+	Listen(ctx context.Context)
 	OnAck(func(uint32))
 	OnReject(func(uint32))
 	OnReadError(fn func(err error))
@@ -110,10 +112,11 @@ func (dialer *TCPDialer) Dial(ctx context.Context) (Transport, error) {
 	if err != nil {
 		return nil, err
 	}
-	ctx, tr.cancel = context.WithCancel(ctx)
-	go tr.incomeStream(ctx)
 	return tr, nil
 }
+
+// ErrCallbackNotSet - error for callback not set.
+var ErrCallbackNotSet = errors.New("callback not set")
 
 // TCPTransport - transport implementation.
 type TCPTransport struct {
@@ -274,6 +277,25 @@ func (tt *TCPTransport) SendDrySegment(ctx context.Context, seg common.Segment) 
 	}
 
 	return nil
+}
+
+// Listen - start listening for an incoming connection.
+// Will return an error if no callbacks are set.
+func (tt *TCPTransport) Listen(ctx context.Context) {
+	if tt.onAckFunc == nil {
+		panic("callback not set: onAckFunc")
+	}
+
+	if tt.onRejectFunc == nil {
+		panic("callback not set: onRejectFunc")
+	}
+
+	if tt.onReadErrorFunc == nil {
+		panic("callback not set: onReadErrorFunc")
+	}
+
+	ctx, tt.cancel = context.WithCancel(ctx)
+	go tt.incomeStream(ctx)
 }
 
 // incomeStream - listener for income message.

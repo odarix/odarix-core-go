@@ -119,6 +119,7 @@ func (*RefillSenderSuite) createDialerHappyPath(name string) delivery.Dialer {
 					}
 					return nil
 				},
+				ListenFunc: func(ctx context.Context) {},
 				CloseFunc: func() error {
 					ack = func(u uint32) {}
 					return nil
@@ -181,24 +182,24 @@ func (s *RefillSenderSuite) makeRefill(destinationsNames []string) {
 
 	// ack 0,1 segment, 2 - reject for all destinations
 	for _, name := range destinationsNames {
-		mr.Ack(common.SegmentKey{0, 0}, name)
-		mr.Ack(common.SegmentKey{0, 1}, name)
-		mr.Reject(common.SegmentKey{0, 2}, name)
+		mr.Ack(common.SegmentKey{ShardID: 0, Segment: 0}, name)
+		mr.Ack(common.SegmentKey{ShardID: 0, Segment: 1}, name)
+		mr.Reject(common.SegmentKey{ShardID: 0, Segment: 2}, name)
 	}
 
 	// ack 3 segment for all except 1 destination
 	for _, name := range destinationsNames[1:] {
-		mr.Ack(common.SegmentKey{0, 3}, name)
+		mr.Ack(common.SegmentKey{ShardID: 0, Segment: 3}, name)
 	}
 
 	// 4 - reject for all destinations
 	for _, name := range destinationsNames[1:] {
-		mr.Reject(common.SegmentKey{0, 4}, name)
+		mr.Reject(common.SegmentKey{ShardID: 0, Segment: 4}, name)
 	}
 
 	// ack 5 segment for all except 1,2 destination
 	for _, name := range destinationsNames[2:] {
-		mr.Ack(common.SegmentKey{0, 5}, name)
+		mr.Ack(common.SegmentKey{ShardID: 0, Segment: 5}, name)
 	}
 
 	err = mr.WriteAckStatus(s.baseCtx)
@@ -374,6 +375,7 @@ func (*RefillSenderSuite) createDialerReject(name string) delivery.Dialer {
 					}
 					return nil
 				},
+				ListenFunc: func(ctx context.Context) {},
 				CloseFunc: func() error {
 					ack = func(u uint32) {}
 					reject = func(u uint32) {}

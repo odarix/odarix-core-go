@@ -162,6 +162,17 @@ func (ex *Exchange) Remove(keys []common.SegmentKey) {
 	}
 }
 
+// RemoveAll - remove all keys from exchange.
+func (ex *Exchange) RemoveAll() {
+	ex.records.Range(
+		func(key, value any) bool {
+			value.(*exchangeRecord).sendPromise.Abort()
+			ex.deleteRecord(key)
+			return true
+		},
+	)
+}
+
 // It is possible situation when follow segments already delivered
 // but still in exchange because have rejected ancestor.
 // We should delete it here. (See Exchange.Ack method.)

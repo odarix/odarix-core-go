@@ -180,7 +180,6 @@ func (dk *ManagerKeeper) Send(ctx context.Context, data common.ShardedData) (boo
 		return false, ErrShutdown
 	default:
 	}
-
 	return dk.manager.Send(ctx, data)
 }
 
@@ -189,17 +188,17 @@ func (dk *ManagerKeeper) Shutdown(ctx context.Context) error {
 	close(dk.stop)
 	<-dk.done
 
-	dk.rwm.Lock()
+	dk.rwm.RLock()
 	if err := dk.manager.Close(); err != nil {
-		dk.rwm.Unlock()
+		dk.rwm.RUnlock()
 		return err
 	}
 
 	if err := dk.manager.Shutdown(ctx); err != nil {
-		dk.rwm.Unlock()
+		dk.rwm.RUnlock()
 		return err
 	}
-	dk.rwm.Unlock()
+	dk.rwm.RUnlock()
 
 	return dk.mangerRefillSender.Shutdown(ctx)
 }

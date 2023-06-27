@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"sync/atomic"
 
@@ -64,25 +65,25 @@ func (sender *Sender) String() string {
 
 // Shutdown await while write receive ErrPromiseCanceled and then ack on last sent
 func (sender *Sender) Shutdown(ctx context.Context) error {
+	sender.cancelCause(ErrShutdown)
+
 	select {
 	case <-ctx.Done():
-		sender.cancelCause(context.Cause(ctx))
 		return context.Cause(ctx)
 	case <-sender.done:
 		return nil
 	}
 }
 
+//revive:disable-next-line:cognitive-complexity function is not complicated
 func (sender *Sender) mainLoop(ctx context.Context) {
 	writeDone := new(atomic.Bool)
 	errRead := errors.New("read error")
-
 	for ctx.Err() == nil {
 		transport, closeTransport, err := sender.dial(ctx)
 		if err != nil {
 			continue
 		}
-
 		lastSent := sender.lastDelivered
 		onResponse := func(id uint32) {
 			if !atomic.CompareAndSwapUint32(&sender.lastDelivered, id-1, id) {
@@ -101,14 +102,14 @@ func (sender *Sender) mainLoop(ctx context.Context) {
 			sender.source.Reject(common.SegmentKey{ShardID: sender.shardID, Segment: id}, sender.String())
 			onResponse(id)
 		})
-
 		writeCtx, cancel := context.WithCancelCause(ctx)
 		transport.OnReadError(func(err error) {
-			// TODO EOF not errorHandler
-			sender.errorHandler(fmt.Sprintf("%s: fail to read response", sender), err)
+			if !errors.Is(err, io.EOF) {
+				sender.errorHandler(fmt.Sprintf("%s: fail to read response", sender), err)
+			}
 			cancel(errRead)
 		})
-
+		transport.Listen(ctx)
 		lastSent, err = sender.writeLoop(writeCtx, transport, lastSent)
 		if err != nil {
 			if !errors.Is(err, errRead) {
@@ -117,7 +118,6 @@ func (sender *Sender) mainLoop(ctx context.Context) {
 			closeTransport()
 			continue
 		}
-
 		// transport will be closed by reader otherwise
 		if lastSent == atomic.LoadUint32(&sender.lastDelivered) {
 			closeTransport()
@@ -126,12 +126,15 @@ func (sender *Sender) mainLoop(ctx context.Context) {
 		writeDone.Store(true)
 		return
 	}
+	close(sender.done)
 }
 
 func (sender *Sender) dial(ctx context.Context) (transport Transport, closeFn func(), err error) {
 	transport, err = sender.dialer.Dial(ctx)
 	if err != nil {
-		sender.errorHandler(fmt.Sprintf("%s: fail to dial", sender), err)
+		if !errors.Is(err, ErrShutdown) && !errors.Is(err, context.Canceled) {
+			sender.errorHandler(fmt.Sprintf("%s: fail to dial", sender), err)
+		}
 		return nil, nil, err
 	}
 

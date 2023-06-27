@@ -188,7 +188,6 @@ func (rsm *RefillSendManager) scanFolder() ([]fs.FileInfo, error) {
 
 			refillFiles = append(refillFiles, fileInfo)
 		}
-
 	}
 
 	return refillFiles, nil
@@ -220,7 +219,7 @@ func (rsm *RefillSendManager) fileProcessing(ctx context.Context, fileName strin
 		wg.Add(1)
 		go func(dr Dialer, id int, data []uint32) {
 			defer wg.Done()
-			if err = rsm.send(ctx, dr, reader, uint16(id), data); err != nil {
+			if err := rsm.send(ctx, dr, reader, uint16(id), data); err != nil {
 				if !IsPermanent(err) {
 					withError.Store(true)
 				}
@@ -404,6 +403,8 @@ func (rs *RefillSender) dial(ctx context.Context) (err error) {
 		rs.safeError(err)
 	})
 
+	rs.transport.Listen(ctx)
+
 	return nil
 }
 
@@ -436,7 +437,7 @@ func (rs *RefillSender) collectedData() ([]PreparedData, error) {
 	for _, segment := range rs.dataToSend {
 		if lastSendSegment+1 != segment {
 			if err := rs.source.Restore(
-				common.SegmentKey{rs.shardID, segment},
+				common.SegmentKey{ShardID: rs.shardID, Segment: segment},
 				lastSendSegment,
 				&pData,
 			); err != nil {
@@ -444,7 +445,7 @@ func (rs *RefillSender) collectedData() ([]PreparedData, error) {
 			}
 		}
 
-		key := common.SegmentKey{rs.shardID, segment}
+		key := common.SegmentKey{ShardID: rs.shardID, Segment: segment}
 		mval := rs.source.SegmentPosition(key)
 		if mval == nil {
 			return nil, SegmentNotFoundInRefill(key)
@@ -667,7 +668,7 @@ func (rr *RefillReader) distributeNotAck(sm *SendMap) {
 			// we need to check if at least some segments have been recorded
 			if n := rr.maxWriteSegments[shardID]; n != math.MaxUint32 {
 				for sid := rr.ackStatus.Last(shardID, dname) + 1; sid <= n; sid++ {
-					sm.Append(dname, uint16(shardID), sid)
+					sm.Append(dname, shardID, sid)
 				}
 			}
 		}
@@ -689,7 +690,7 @@ func (rr *RefillReader) readMarkup(ctx context.Context) error {
 	var off int64
 	for {
 		h, err := ReadHeader(ctx, rr.storage, off)
-		if errors.Is(err, io.EOF) {
+		if errors.Is(err, io.EOF) || errors.Is(err, ErrUnknownFrameType) {
 			break
 		}
 		if err != nil {
@@ -1027,7 +1028,7 @@ func (rr *RefillReader) Restore(key common.SegmentKey, lastSendSegment uint32, p
 	rr.mx.RLock()
 	defer rr.mx.RUnlock()
 
-	for ; key.Segment > lastSendSegment; key.Segment-- {
+	for ; key.Segment > lastSendSegment+1; key.Segment-- {
 		if mval := rr.getSnapshotPosition(key); mval != nil {
 			*pData = append(*pData, PreparedData{
 				MsgType:   transport.MsgSnapshot,
@@ -1036,15 +1037,15 @@ func (rr *RefillReader) Restore(key common.SegmentKey, lastSendSegment uint32, p
 			})
 			return nil
 		}
-		if mval := rr.getSegmentPosition(key); mval != nil {
-			*pData = append(*pData, PreparedData{
-				MsgType:   transport.MsgDryPut,
-				SegmentID: key.Segment,
-				Value:     mval,
-			})
-		} else {
+		mval := rr.getSegmentPosition(key)
+		if mval == nil {
 			return SegmentNotFoundInRefill(key)
 		}
+		*pData = append(*pData, PreparedData{
+			MsgType:   transport.MsgDryPut,
+			SegmentID: key.Segment,
+			Value:     mval,
+		})
 	}
 
 	return nil

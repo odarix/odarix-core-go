@@ -71,11 +71,15 @@ func NewStorageManager(
 	ok, err := sm.restore()
 	if err != nil {
 		switch err {
-		case ErrUnknownFrameType, ErrServiceDataNotRestored{}:
-			// TODO errhandler
-			if err = sm.storage.Truncate(); err != nil {
+		case ErrServiceDataNotRestored{}:
+			if err = sm.storage.Truncate(0); err != nil {
 				return nil, err
 			}
+		case ErrUnknownFrameType:
+			if err = sm.storage.Truncate(sm.lastWriteOffset); err != nil {
+				return nil, err
+			}
+			ok = true
 		default:
 			return nil, err
 		}
@@ -250,7 +254,7 @@ func (sm *StorageManager) GetAckStatus() *AckStatus {
 
 // restoreFromBody - restore from body frame.
 func (sm *StorageManager) restoreFromBody(h *HeaderFrame, off int64) error {
-	// TODO restore bad frame, or bad file(not have title, DestinationsNames)
+	// TODO restore bad frame
 	switch h.GetType() {
 	case TitleType:
 		return sm.restoreTitle(off)
@@ -384,6 +388,7 @@ func (sm *StorageManager) restore() (bool, error) {
 
 		// move cursor position
 		off += int64(h.GetSize())
+		sm.lastWriteOffset = off
 	}
 
 	// check for nil file
@@ -501,7 +506,7 @@ func (sm *StorageManager) WriteSnapshot(ctx context.Context, segKey common.Segme
 		return err
 	}
 
-	sm.setSnapshotPosition(common.SegmentKey{segKey.ShardID, segKey.Segment}, sm.lastWriteOffset)
+	sm.setSnapshotPosition(common.SegmentKey{ShardID: segKey.ShardID, Segment: segKey.Segment}, sm.lastWriteOffset)
 	sm.lastWriteOffset += int64(n)
 
 	return nil

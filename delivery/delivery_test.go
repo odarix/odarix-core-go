@@ -75,6 +75,7 @@ func (*ManagerKeeperSuite) transportNewAutoAck(name string, delay time.Duration,
 					})
 					return nil
 				},
+				ListenFunc: func(ctx context.Context) {},
 				CloseFunc: func() error {
 					m.Lock()
 					defer m.Unlock()
@@ -146,6 +147,7 @@ func (*ManagerKeeperSuite) transportWithReject(name string, delay time.Duration,
 					})
 					return nil
 				},
+				ListenFunc: func(ctx context.Context) {},
 				CloseFunc: func() error {
 					m.Lock()
 					defer m.Unlock()
@@ -391,7 +393,7 @@ func (s *ManagerKeeperSuite) TestSendHappyPath() {
 
 	s.T().Log("use no-op refill: assumed that it won't be touched")
 	refillCtor := s.constructorForRefill(&ManagerRefillMock{
-		AckFunc:               func(common.SegmentKey, string) {},
+		AckFunc:                func(common.SegmentKey, string) {},
 		WriteAckStatusFunc:     func(context.Context) error { return nil },
 		IntermediateRenameFunc: func() error { return nil },
 		ShutdownFunc:           func(context.Context) error { return nil },

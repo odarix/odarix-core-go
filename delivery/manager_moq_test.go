@@ -127,6 +127,9 @@ var _ delivery.Transport = &TransportMock{}
 //			CloseFunc: func() error {
 //				panic("mock out the Close method")
 //			},
+//			ListenFunc: func(ctx context.Context)  {
+//				panic("mock out the Listen method")
+//			},
 //			OnAckFunc: func(fn func(uint32))  {
 //				panic("mock out the OnAck method")
 //			},
@@ -161,6 +164,9 @@ type TransportMock struct {
 	// CloseFunc mocks the Close method.
 	CloseFunc func() error
 
+	// ListenFunc mocks the Listen method.
+	ListenFunc func(ctx context.Context)
+
 	// OnAckFunc mocks the OnAck method.
 	OnAckFunc func(fn func(uint32))
 
@@ -189,6 +195,11 @@ type TransportMock struct {
 	calls struct {
 		// Close holds details about calls to the Close method.
 		Close []struct {
+		}
+		// Listen holds details about calls to the Listen method.
+		Listen []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
 		}
 		// OnAck holds details about calls to the OnAck method.
 		OnAck []struct {
@@ -244,6 +255,7 @@ type TransportMock struct {
 		}
 	}
 	lockClose          sync.RWMutex
+	lockListen         sync.RWMutex
 	lockOnAck          sync.RWMutex
 	lockOnReadError    sync.RWMutex
 	lockOnReject       sync.RWMutex
@@ -278,6 +290,38 @@ func (mock *TransportMock) CloseCalls() []struct {
 	mock.lockClose.RLock()
 	calls = mock.calls.Close
 	mock.lockClose.RUnlock()
+	return calls
+}
+
+// Listen calls ListenFunc.
+func (mock *TransportMock) Listen(ctx context.Context) {
+	if mock.ListenFunc == nil {
+		panic("TransportMock.ListenFunc: method is nil but Transport.Listen was just called")
+	}
+	callInfo := struct {
+		Ctx context.Context
+	}{
+		Ctx: ctx,
+	}
+	mock.lockListen.Lock()
+	mock.calls.Listen = append(mock.calls.Listen, callInfo)
+	mock.lockListen.Unlock()
+	mock.ListenFunc(ctx)
+}
+
+// ListenCalls gets all the calls that were made to Listen.
+// Check the length with:
+//
+//	len(mockedTransport.ListenCalls())
+func (mock *TransportMock) ListenCalls() []struct {
+	Ctx context.Context
+} {
+	var calls []struct {
+		Ctx context.Context
+	}
+	mock.lockListen.RLock()
+	calls = mock.calls.Listen
+	mock.lockListen.RUnlock()
 	return calls
 }
 

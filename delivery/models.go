@@ -9,6 +9,11 @@ import (
 	"github.com/odarix/odarix-core-go/common"
 )
 
+var (
+	// ErrAborted - error for promise is aborted
+	ErrAborted = errors.New("promise is aborted")
+)
+
 // ErrorHandler useful for logging errors caused in delivery box
 type ErrorHandler func(msg string, err error)
 
@@ -18,17 +23,19 @@ type ErrorHandler func(msg string, err error)
 // produced from this data (segment per shard).
 // Promise resolved when all statuses has been changed.
 type SendPromise struct {
+	done    chan struct{}
 	counter int32
 	refills int32
-	done    chan struct{}
+	aborts  int32
 }
 
 // NewSendPromise is a constructor
 func NewSendPromise(shardsNumber int) *SendPromise {
 	return &SendPromise{
+		done:    make(chan struct{}),
 		counter: int32(shardsNumber),
 		refills: 0,
-		done:    make(chan struct{}),
+		aborts:  0,
 	}
 }
 
@@ -48,6 +55,15 @@ func (promise *SendPromise) Refill() {
 	}
 }
 
+// Abort - marks that one of shards has been aborted.
+func (promise *SendPromise) Abort() {
+	atomic.AddInt32(&promise.aborts, 1)
+	counter := atomic.SwapInt32(&promise.counter, 0)
+	if counter > 0 {
+		close(promise.done)
+	}
+}
+
 // Await concurrently waits until all shard statuses changed to not initial state
 // and returns true if all segments in ack-state or false otherwise
 //
@@ -57,6 +73,9 @@ func (promise *SendPromise) Await(ctx context.Context) (ack bool, err error) {
 	case <-ctx.Done():
 		return false, context.Cause(ctx)
 	case <-promise.done:
+		if atomic.LoadInt32(&promise.aborts) != 0 {
+			return false, ErrAborted
+		}
 		return promise.refills == 0, nil
 	}
 }
