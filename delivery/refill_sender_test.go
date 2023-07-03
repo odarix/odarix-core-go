@@ -98,21 +98,21 @@ func (*RefillSenderSuite) createDialerHappyPath(name string) delivery.Dialer {
 					numberOfMessage = uint32(len(preparedDatas))
 					return nil
 				},
-				SendSegmentFunc: func(_ context.Context, _ common.Segment) error {
+				SendSegmentFunc: func(_ context.Context, _ delivery.Segment) error {
 					numberOfMessage--
 					if numberOfMessage == 0 {
 						ack(0)
 					}
 					return nil
 				},
-				SendDrySegmentFunc: func(_ context.Context, _ common.Segment) error {
+				SendDrySegmentFunc: func(_ context.Context, _ delivery.Segment) error {
 					numberOfMessage--
 					if numberOfMessage == 0 {
 						ack(0)
 					}
 					return nil
 				},
-				SendSnapshotFunc: func(_ context.Context, _ common.Snapshot) error {
+				SendSnapshotFunc: func(_ context.Context, _ delivery.Snapshot) error {
 					numberOfMessage--
 					if numberOfMessage == 0 {
 						ack(0)
@@ -339,7 +339,7 @@ func (*RefillSenderSuite) createDialerReject(name string) delivery.Dialer {
 					numberOfMessage = uint32(len(preparedDatas))
 					return nil
 				},
-				SendSegmentFunc: func(_ context.Context, _ common.Segment) error {
+				SendSegmentFunc: func(_ context.Context, _ delivery.Segment) error {
 					numberOfMessage--
 					if numberOfMessage == 0 {
 						if switcher {
@@ -351,7 +351,7 @@ func (*RefillSenderSuite) createDialerReject(name string) delivery.Dialer {
 					}
 					return nil
 				},
-				SendDrySegmentFunc: func(_ context.Context, _ common.Segment) error {
+				SendDrySegmentFunc: func(_ context.Context, _ delivery.Segment) error {
 					numberOfMessage--
 					if numberOfMessage == 0 {
 						if switcher {
@@ -363,7 +363,7 @@ func (*RefillSenderSuite) createDialerReject(name string) delivery.Dialer {
 					}
 					return nil
 				},
-				SendSnapshotFunc: func(_ context.Context, _ common.Snapshot) error {
+				SendSnapshotFunc: func(_ context.Context, _ delivery.Snapshot) error {
 					numberOfMessage--
 					if numberOfMessage == 0 {
 						if switcher {

@@ -89,7 +89,7 @@ func (rl *Refill) LastSegment(shardID uint16, dest string) uint32 {
 }
 
 // Get - get segment from file.
-func (rl *Refill) Get(ctx context.Context, key common.SegmentKey) (common.Segment, error) {
+func (rl *Refill) Get(ctx context.Context, key common.SegmentKey) (Segment, error) {
 	rl.mx.RLock()
 	defer rl.mx.RUnlock()
 
@@ -107,11 +107,11 @@ func (rl *Refill) Reject(segKey common.SegmentKey, dest string) {
 }
 
 // Restore - return snapshot and segments.
-func (rl *Refill) Restore(ctx context.Context, key common.SegmentKey) (common.Snapshot, []common.Segment, error) {
+func (rl *Refill) Restore(ctx context.Context, key common.SegmentKey) (Snapshot, []Segment, error) {
 	rl.mx.RLock()
 	defer rl.mx.RUnlock()
 
-	segments := make([]common.Segment, 0)
+	segments := make([]Segment, 0)
 
 	snapshot, err := rl.sm.GetSnapshot(ctx, key)
 	if err == nil {
@@ -145,7 +145,7 @@ func (rl *Refill) Restore(ctx context.Context, key common.SegmentKey) (common.Sn
 }
 
 // WriteSegment - write Segment in file.
-func (rl *Refill) WriteSegment(ctx context.Context, key common.SegmentKey, seg common.Segment) error {
+func (rl *Refill) WriteSegment(ctx context.Context, key common.SegmentKey, seg Segment) error {
 	rl.mx.Lock()
 	defer rl.mx.Unlock()
 
@@ -153,7 +153,7 @@ func (rl *Refill) WriteSegment(ctx context.Context, key common.SegmentKey, seg c
 }
 
 // WriteSnapshot - write Snapshot in file.
-func (rl *Refill) WriteSnapshot(ctx context.Context, segKey common.SegmentKey, snapshot common.Snapshot) error {
+func (rl *Refill) WriteSnapshot(ctx context.Context, segKey common.SegmentKey, snapshot Snapshot) error {
 	rl.mx.Lock()
 	defer rl.mx.Unlock()
 

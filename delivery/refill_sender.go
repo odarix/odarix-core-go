@@ -968,7 +968,7 @@ func (rr *RefillReader) getSnapshotPosition(segKey common.SegmentKey) *MarkupVal
 }
 
 // Segment - return segment from storage.
-func (rr *RefillReader) Segment(ctx context.Context, mval *MarkupValue) (common.Segment, error) {
+func (rr *RefillReader) Segment(ctx context.Context, mval *MarkupValue) (*BinaryBody, error) {
 	rr.mx.RLock()
 	defer rr.mx.RUnlock()
 
@@ -990,7 +990,7 @@ func (rr *RefillReader) SegmentPosition(segKey common.SegmentKey) *MarkupValue {
 }
 
 // GetSegment - return segment from storage.
-func (rr *RefillReader) GetSegment(ctx context.Context, segKey common.SegmentKey) (common.Segment, error) {
+func (rr *RefillReader) GetSegment(ctx context.Context, segKey common.SegmentKey) (*BinaryBody, error) {
 	rr.mx.RLock()
 	defer rr.mx.RUnlock()
 

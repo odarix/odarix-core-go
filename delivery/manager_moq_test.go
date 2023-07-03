@@ -139,19 +139,19 @@ var _ delivery.Transport = &TransportMock{}
 //			OnRejectFunc: func(fn func(uint32))  {
 //				panic("mock out the OnReject method")
 //			},
-//			SendDrySegmentFunc: func(contextMoqParam context.Context, segment common.Segment) error {
+//			SendDrySegmentFunc: func(contextMoqParam context.Context, segment delivery.Segment) error {
 //				panic("mock out the SendDrySegment method")
 //			},
 //			SendRefillFunc: func(contextMoqParam context.Context, preparedDatas []delivery.PreparedData) error {
 //				panic("mock out the SendRefill method")
 //			},
-//			SendRestoreFunc: func(contextMoqParam context.Context, snapshot common.Snapshot, segments []common.Segment) error {
+//			SendRestoreFunc: func(contextMoqParam context.Context, snapshot delivery.Snapshot, segments []delivery.Segment) error {
 //				panic("mock out the SendRestore method")
 //			},
-//			SendSegmentFunc: func(contextMoqParam context.Context, segment common.Segment) error {
+//			SendSegmentFunc: func(contextMoqParam context.Context, segment delivery.Segment) error {
 //				panic("mock out the SendSegment method")
 //			},
-//			SendSnapshotFunc: func(contextMoqParam context.Context, snapshot common.Snapshot) error {
+//			SendSnapshotFunc: func(contextMoqParam context.Context, snapshot delivery.Snapshot) error {
 //				panic("mock out the SendSnapshot method")
 //			},
 //		}
@@ -177,19 +177,19 @@ type TransportMock struct {
 	OnRejectFunc func(fn func(uint32))
 
 	// SendDrySegmentFunc mocks the SendDrySegment method.
-	SendDrySegmentFunc func(contextMoqParam context.Context, segment common.Segment) error
+	SendDrySegmentFunc func(contextMoqParam context.Context, segment delivery.Segment) error
 
 	// SendRefillFunc mocks the SendRefill method.
 	SendRefillFunc func(contextMoqParam context.Context, preparedDatas []delivery.PreparedData) error
 
 	// SendRestoreFunc mocks the SendRestore method.
-	SendRestoreFunc func(contextMoqParam context.Context, snapshot common.Snapshot, segments []common.Segment) error
+	SendRestoreFunc func(contextMoqParam context.Context, snapshot delivery.Snapshot, segments []delivery.Segment) error
 
 	// SendSegmentFunc mocks the SendSegment method.
-	SendSegmentFunc func(contextMoqParam context.Context, segment common.Segment) error
+	SendSegmentFunc func(contextMoqParam context.Context, segment delivery.Segment) error
 
 	// SendSnapshotFunc mocks the SendSnapshot method.
-	SendSnapshotFunc func(contextMoqParam context.Context, snapshot common.Snapshot) error
+	SendSnapshotFunc func(contextMoqParam context.Context, snapshot delivery.Snapshot) error
 
 	// calls tracks calls to the methods.
 	calls struct {
@@ -221,7 +221,7 @@ type TransportMock struct {
 			// ContextMoqParam is the contextMoqParam argument value.
 			ContextMoqParam context.Context
 			// Segment is the segment argument value.
-			Segment common.Segment
+			Segment delivery.Segment
 		}
 		// SendRefill holds details about calls to the SendRefill method.
 		SendRefill []struct {
@@ -235,23 +235,23 @@ type TransportMock struct {
 			// ContextMoqParam is the contextMoqParam argument value.
 			ContextMoqParam context.Context
 			// Snapshot is the snapshot argument value.
-			Snapshot common.Snapshot
+			Snapshot delivery.Snapshot
 			// Segments is the segments argument value.
-			Segments []common.Segment
+			Segments []delivery.Segment
 		}
 		// SendSegment holds details about calls to the SendSegment method.
 		SendSegment []struct {
 			// ContextMoqParam is the contextMoqParam argument value.
 			ContextMoqParam context.Context
 			// Segment is the segment argument value.
-			Segment common.Segment
+			Segment delivery.Segment
 		}
 		// SendSnapshot holds details about calls to the SendSnapshot method.
 		SendSnapshot []struct {
 			// ContextMoqParam is the contextMoqParam argument value.
 			ContextMoqParam context.Context
 			// Snapshot is the snapshot argument value.
-			Snapshot common.Snapshot
+			Snapshot delivery.Snapshot
 		}
 	}
 	lockClose          sync.RWMutex
@@ -422,13 +422,13 @@ func (mock *TransportMock) OnRejectCalls() []struct {
 }
 
 // SendDrySegment calls SendDrySegmentFunc.
-func (mock *TransportMock) SendDrySegment(contextMoqParam context.Context, segment common.Segment) error {
+func (mock *TransportMock) SendDrySegment(contextMoqParam context.Context, segment delivery.Segment) error {
 	if mock.SendDrySegmentFunc == nil {
 		panic("TransportMock.SendDrySegmentFunc: method is nil but Transport.SendDrySegment was just called")
 	}
 	callInfo := struct {
 		ContextMoqParam context.Context
-		Segment         common.Segment
+		Segment         delivery.Segment
 	}{
 		ContextMoqParam: contextMoqParam,
 		Segment:         segment,
@@ -445,11 +445,11 @@ func (mock *TransportMock) SendDrySegment(contextMoqParam context.Context, segme
 //	len(mockedTransport.SendDrySegmentCalls())
 func (mock *TransportMock) SendDrySegmentCalls() []struct {
 	ContextMoqParam context.Context
-	Segment         common.Segment
+	Segment         delivery.Segment
 } {
 	var calls []struct {
 		ContextMoqParam context.Context
-		Segment         common.Segment
+		Segment         delivery.Segment
 	}
 	mock.lockSendDrySegment.RLock()
 	calls = mock.calls.SendDrySegment
@@ -494,14 +494,14 @@ func (mock *TransportMock) SendRefillCalls() []struct {
 }
 
 // SendRestore calls SendRestoreFunc.
-func (mock *TransportMock) SendRestore(contextMoqParam context.Context, snapshot common.Snapshot, segments []common.Segment) error {
+func (mock *TransportMock) SendRestore(contextMoqParam context.Context, snapshot delivery.Snapshot, segments []delivery.Segment) error {
 	if mock.SendRestoreFunc == nil {
 		panic("TransportMock.SendRestoreFunc: method is nil but Transport.SendRestore was just called")
 	}
 	callInfo := struct {
 		ContextMoqParam context.Context
-		Snapshot        common.Snapshot
-		Segments        []common.Segment
+		Snapshot        delivery.Snapshot
+		Segments        []delivery.Segment
 	}{
 		ContextMoqParam: contextMoqParam,
 		Snapshot:        snapshot,
@@ -519,13 +519,13 @@ func (mock *TransportMock) SendRestore(contextMoqParam context.Context, snapshot
 //	len(mockedTransport.SendRestoreCalls())
 func (mock *TransportMock) SendRestoreCalls() []struct {
 	ContextMoqParam context.Context
-	Snapshot        common.Snapshot
-	Segments        []common.Segment
+	Snapshot        delivery.Snapshot
+	Segments        []delivery.Segment
 } {
 	var calls []struct {
 		ContextMoqParam context.Context
-		Snapshot        common.Snapshot
-		Segments        []common.Segment
+		Snapshot        delivery.Snapshot
+		Segments        []delivery.Segment
 	}
 	mock.lockSendRestore.RLock()
 	calls = mock.calls.SendRestore
@@ -534,13 +534,13 @@ func (mock *TransportMock) SendRestoreCalls() []struct {
 }
 
 // SendSegment calls SendSegmentFunc.
-func (mock *TransportMock) SendSegment(contextMoqParam context.Context, segment common.Segment) error {
+func (mock *TransportMock) SendSegment(contextMoqParam context.Context, segment delivery.Segment) error {
 	if mock.SendSegmentFunc == nil {
 		panic("TransportMock.SendSegmentFunc: method is nil but Transport.SendSegment was just called")
 	}
 	callInfo := struct {
 		ContextMoqParam context.Context
-		Segment         common.Segment
+		Segment         delivery.Segment
 	}{
 		ContextMoqParam: contextMoqParam,
 		Segment:         segment,
@@ -557,11 +557,11 @@ func (mock *TransportMock) SendSegment(contextMoqParam context.Context, segment 
 //	len(mockedTransport.SendSegmentCalls())
 func (mock *TransportMock) SendSegmentCalls() []struct {
 	ContextMoqParam context.Context
-	Segment         common.Segment
+	Segment         delivery.Segment
 } {
 	var calls []struct {
 		ContextMoqParam context.Context
-		Segment         common.Segment
+		Segment         delivery.Segment
 	}
 	mock.lockSendSegment.RLock()
 	calls = mock.calls.SendSegment
@@ -570,13 +570,13 @@ func (mock *TransportMock) SendSegmentCalls() []struct {
 }
 
 // SendSnapshot calls SendSnapshotFunc.
-func (mock *TransportMock) SendSnapshot(contextMoqParam context.Context, snapshot common.Snapshot) error {
+func (mock *TransportMock) SendSnapshot(contextMoqParam context.Context, snapshot delivery.Snapshot) error {
 	if mock.SendSnapshotFunc == nil {
 		panic("TransportMock.SendSnapshotFunc: method is nil but Transport.SendSnapshot was just called")
 	}
 	callInfo := struct {
 		ContextMoqParam context.Context
-		Snapshot        common.Snapshot
+		Snapshot        delivery.Snapshot
 	}{
 		ContextMoqParam: contextMoqParam,
 		Snapshot:        snapshot,
@@ -593,11 +593,11 @@ func (mock *TransportMock) SendSnapshot(contextMoqParam context.Context, snapsho
 //	len(mockedTransport.SendSnapshotCalls())
 func (mock *TransportMock) SendSnapshotCalls() []struct {
 	ContextMoqParam context.Context
-	Snapshot        common.Snapshot
+	Snapshot        delivery.Snapshot
 } {
 	var calls []struct {
 		ContextMoqParam context.Context
-		Snapshot        common.Snapshot
+		Snapshot        delivery.Snapshot
 	}
 	mock.lockSendSnapshot.RLock()
 	calls = mock.calls.SendSnapshot
@@ -820,7 +820,7 @@ var _ delivery.ManagerRefill = &ManagerRefillMock{}
 //			DestinationsFunc: func() int {
 //				panic("mock out the Destinations method")
 //			},
-//			GetFunc: func(contextMoqParam context.Context, segmentKey common.SegmentKey) (common.Segment, error) {
+//			GetFunc: func(contextMoqParam context.Context, segmentKey common.SegmentKey) (delivery.Segment, error) {
 //				panic("mock out the Get method")
 //			},
 //			IntermediateRenameFunc: func() error {
@@ -835,7 +835,7 @@ var _ delivery.ManagerRefill = &ManagerRefillMock{}
 //			RejectFunc: func(segmentKey common.SegmentKey, s string)  {
 //				panic("mock out the Reject method")
 //			},
-//			RestoreFunc: func(contextMoqParam context.Context, segmentKey common.SegmentKey) (common.Snapshot, []common.Segment, error) {
+//			RestoreFunc: func(contextMoqParam context.Context, segmentKey common.SegmentKey) (delivery.Snapshot, []delivery.Segment, error) {
 //				panic("mock out the Restore method")
 //			},
 //			ShardsFunc: func() int {
@@ -847,10 +847,10 @@ var _ delivery.ManagerRefill = &ManagerRefillMock{}
 //			WriteAckStatusFunc: func(contextMoqParam context.Context) error {
 //				panic("mock out the WriteAckStatus method")
 //			},
-//			WriteSegmentFunc: func(contextMoqParam context.Context, segmentKey common.SegmentKey, segment common.Segment) error {
+//			WriteSegmentFunc: func(contextMoqParam context.Context, segmentKey common.SegmentKey, segment delivery.Segment) error {
 //				panic("mock out the WriteSegment method")
 //			},
-//			WriteSnapshotFunc: func(contextMoqParam context.Context, segmentKey common.SegmentKey, snapshot common.Snapshot) error {
+//			WriteSnapshotFunc: func(contextMoqParam context.Context, segmentKey common.SegmentKey, snapshot delivery.Snapshot) error {
 //				panic("mock out the WriteSnapshot method")
 //			},
 //		}
@@ -870,7 +870,7 @@ type ManagerRefillMock struct {
 	DestinationsFunc func() int
 
 	// GetFunc mocks the Get method.
-	GetFunc func(contextMoqParam context.Context, segmentKey common.SegmentKey) (common.Segment, error)
+	GetFunc func(contextMoqParam context.Context, segmentKey common.SegmentKey) (delivery.Segment, error)
 
 	// IntermediateRenameFunc mocks the IntermediateRename method.
 	IntermediateRenameFunc func() error
@@ -885,7 +885,7 @@ type ManagerRefillMock struct {
 	RejectFunc func(segmentKey common.SegmentKey, s string)
 
 	// RestoreFunc mocks the Restore method.
-	RestoreFunc func(contextMoqParam context.Context, segmentKey common.SegmentKey) (common.Snapshot, []common.Segment, error)
+	RestoreFunc func(contextMoqParam context.Context, segmentKey common.SegmentKey) (delivery.Snapshot, []delivery.Segment, error)
 
 	// ShardsFunc mocks the Shards method.
 	ShardsFunc func() int
@@ -897,10 +897,10 @@ type ManagerRefillMock struct {
 	WriteAckStatusFunc func(contextMoqParam context.Context) error
 
 	// WriteSegmentFunc mocks the WriteSegment method.
-	WriteSegmentFunc func(contextMoqParam context.Context, segmentKey common.SegmentKey, segment common.Segment) error
+	WriteSegmentFunc func(contextMoqParam context.Context, segmentKey common.SegmentKey, segment delivery.Segment) error
 
 	// WriteSnapshotFunc mocks the WriteSnapshot method.
-	WriteSnapshotFunc func(contextMoqParam context.Context, segmentKey common.SegmentKey, snapshot common.Snapshot) error
+	WriteSnapshotFunc func(contextMoqParam context.Context, segmentKey common.SegmentKey, snapshot delivery.Snapshot) error
 
 	// calls tracks calls to the methods.
 	calls struct {
@@ -971,7 +971,7 @@ type ManagerRefillMock struct {
 			// SegmentKey is the segmentKey argument value.
 			SegmentKey common.SegmentKey
 			// Segment is the segment argument value.
-			Segment common.Segment
+			Segment delivery.Segment
 		}
 		// WriteSnapshot holds details about calls to the WriteSnapshot method.
 		WriteSnapshot []struct {
@@ -980,7 +980,7 @@ type ManagerRefillMock struct {
 			// SegmentKey is the segmentKey argument value.
 			SegmentKey common.SegmentKey
 			// Snapshot is the snapshot argument value.
-			Snapshot common.Snapshot
+			Snapshot delivery.Snapshot
 		}
 	}
 	lockAck                sync.RWMutex
@@ -1090,7 +1090,7 @@ func (mock *ManagerRefillMock) DestinationsCalls() []struct {
 }
 
 // Get calls GetFunc.
-func (mock *ManagerRefillMock) Get(contextMoqParam context.Context, segmentKey common.SegmentKey) (common.Segment, error) {
+func (mock *ManagerRefillMock) Get(contextMoqParam context.Context, segmentKey common.SegmentKey) (delivery.Segment, error) {
 	if mock.GetFunc == nil {
 		panic("ManagerRefillMock.GetFunc: method is nil but ManagerRefill.Get was just called")
 	}
@@ -1252,7 +1252,7 @@ func (mock *ManagerRefillMock) RejectCalls() []struct {
 }
 
 // Restore calls RestoreFunc.
-func (mock *ManagerRefillMock) Restore(contextMoqParam context.Context, segmentKey common.SegmentKey) (common.Snapshot, []common.Segment, error) {
+func (mock *ManagerRefillMock) Restore(contextMoqParam context.Context, segmentKey common.SegmentKey) (delivery.Snapshot, []delivery.Segment, error) {
 	if mock.RestoreFunc == nil {
 		panic("ManagerRefillMock.RestoreFunc: method is nil but ManagerRefill.Restore was just called")
 	}
@@ -1379,14 +1379,14 @@ func (mock *ManagerRefillMock) WriteAckStatusCalls() []struct {
 }
 
 // WriteSegment calls WriteSegmentFunc.
-func (mock *ManagerRefillMock) WriteSegment(contextMoqParam context.Context, segmentKey common.SegmentKey, segment common.Segment) error {
+func (mock *ManagerRefillMock) WriteSegment(contextMoqParam context.Context, segmentKey common.SegmentKey, segment delivery.Segment) error {
 	if mock.WriteSegmentFunc == nil {
 		panic("ManagerRefillMock.WriteSegmentFunc: method is nil but ManagerRefill.WriteSegment was just called")
 	}
 	callInfo := struct {
 		ContextMoqParam context.Context
 		SegmentKey      common.SegmentKey
-		Segment         common.Segment
+		Segment         delivery.Segment
 	}{
 		ContextMoqParam: contextMoqParam,
 		SegmentKey:      segmentKey,
@@ -1405,12 +1405,12 @@ func (mock *ManagerRefillMock) WriteSegment(contextMoqParam context.Context, seg
 func (mock *ManagerRefillMock) WriteSegmentCalls() []struct {
 	ContextMoqParam context.Context
 	SegmentKey      common.SegmentKey
-	Segment         common.Segment
+	Segment         delivery.Segment
 } {
 	var calls []struct {
 		ContextMoqParam context.Context
 		SegmentKey      common.SegmentKey
-		Segment         common.Segment
+		Segment         delivery.Segment
 	}
 	mock.lockWriteSegment.RLock()
 	calls = mock.calls.WriteSegment
@@ -1419,14 +1419,14 @@ func (mock *ManagerRefillMock) WriteSegmentCalls() []struct {
 }
 
 // WriteSnapshot calls WriteSnapshotFunc.
-func (mock *ManagerRefillMock) WriteSnapshot(contextMoqParam context.Context, segmentKey common.SegmentKey, snapshot common.Snapshot) error {
+func (mock *ManagerRefillMock) WriteSnapshot(contextMoqParam context.Context, segmentKey common.SegmentKey, snapshot delivery.Snapshot) error {
 	if mock.WriteSnapshotFunc == nil {
 		panic("ManagerRefillMock.WriteSnapshotFunc: method is nil but ManagerRefill.WriteSnapshot was just called")
 	}
 	callInfo := struct {
 		ContextMoqParam context.Context
 		SegmentKey      common.SegmentKey
-		Snapshot        common.Snapshot
+		Snapshot        delivery.Snapshot
 	}{
 		ContextMoqParam: contextMoqParam,
 		SegmentKey:      segmentKey,
@@ -1445,12 +1445,12 @@ func (mock *ManagerRefillMock) WriteSnapshot(contextMoqParam context.Context, se
 func (mock *ManagerRefillMock) WriteSnapshotCalls() []struct {
 	ContextMoqParam context.Context
 	SegmentKey      common.SegmentKey
-	Snapshot        common.Snapshot
+	Snapshot        delivery.Snapshot
 } {
 	var calls []struct {
 		ContextMoqParam context.Context
 		SegmentKey      common.SegmentKey
-		Snapshot        common.Snapshot
+		Snapshot        delivery.Snapshot
 	}
 	mock.lockWriteSnapshot.RLock()
 	calls = mock.calls.WriteSnapshot

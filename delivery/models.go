@@ -14,6 +14,18 @@ var (
 	ErrAborted = errors.New("promise is aborted")
 )
 
+// Segment is an universal interface for blob segment data
+type Segment interface {
+	Bytes() []byte
+	Destroy()
+}
+
+// Snapshot is an universal interface for blob snapshot data
+type Snapshot interface {
+	Bytes() []byte
+	Destroy()
+}
+
 // ErrorHandler useful for logging errors caused in delivery box
 type ErrorHandler func(msg string, err error)
 

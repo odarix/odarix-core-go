@@ -69,12 +69,12 @@ type (
 		Shards() int
 		Destinations() int
 		LastSegment(uint16, string) uint32
-		Get(context.Context, common.SegmentKey) (common.Segment, error)
+		Get(context.Context, common.SegmentKey) (Segment, error)
 		Ack(common.SegmentKey, string)
 		Reject(common.SegmentKey, string)
-		Restore(context.Context, common.SegmentKey) (common.Snapshot, []common.Segment, error)
-		WriteSegment(context.Context, common.SegmentKey, common.Segment) error
-		WriteSnapshot(context.Context, common.SegmentKey, common.Snapshot) error
+		Restore(context.Context, common.SegmentKey) (Snapshot, []Segment, error)
+		WriteSegment(context.Context, common.SegmentKey, Segment) error
+		WriteSnapshot(context.Context, common.SegmentKey, Snapshot) error
 		WriteAckStatus(context.Context) error
 		IntermediateRename() error
 		Shutdown(context.Context) error
@@ -208,7 +208,7 @@ func (mgr *Manager) Open(ctx context.Context) {
 }
 
 // Get - get segment for key.
-func (mgr *Manager) Get(ctx context.Context, key common.SegmentKey) (common.Segment, error) {
+func (mgr *Manager) Get(ctx context.Context, key common.SegmentKey) (Segment, error) {
 	segment, err := mgr.exchange.Get(ctx, key)
 	if errors.Is(err, ErrSegmentGone) {
 		return mgr.refill.Get(ctx, key)
@@ -234,7 +234,7 @@ func (mgr *Manager) Reject(key common.SegmentKey, dest string) {
 }
 
 // Restore - get data for restore state from refill.
-func (mgr *Manager) Restore(ctx context.Context, key common.SegmentKey) (common.Snapshot, []common.Segment) {
+func (mgr *Manager) Restore(ctx context.Context, key common.SegmentKey) (Snapshot, []Segment) {
 	snapshot, segments, err := mgr.refill.Restore(ctx, key)
 	if err == nil {
 		return snapshot, segments

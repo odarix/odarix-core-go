@@ -231,7 +231,7 @@ func (sm *StorageManager) setSegmentPosition(segKey common.SegmentKey, position 
 }
 
 // GetSegment - return segment from storage.
-func (sm *StorageManager) GetSegment(ctx context.Context, segKey common.SegmentKey) (common.Segment, error) {
+func (sm *StorageManager) GetSegment(ctx context.Context, segKey common.SegmentKey) (Segment, error) {
 	// get position
 	pos := sm.getSegmentPosition(segKey)
 	if pos == posNotFound {
@@ -468,7 +468,7 @@ func (sm *StorageManager) checkSegment(key common.SegmentKey) error {
 }
 
 // WriteSegment - write Segment in storage.
-func (sm *StorageManager) WriteSegment(ctx context.Context, key common.SegmentKey, seg common.Segment) error {
+func (sm *StorageManager) WriteSegment(ctx context.Context, key common.SegmentKey, seg Segment) error {
 	if !sm.isOpenFile {
 		if err := sm.openNewFile(ctx); err != nil {
 			return err
@@ -493,7 +493,7 @@ func (sm *StorageManager) WriteSegment(ctx context.Context, key common.SegmentKe
 }
 
 // WriteSnapshot - write Snapshot in storage.
-func (sm *StorageManager) WriteSnapshot(ctx context.Context, segKey common.SegmentKey, snapshot common.Snapshot) error {
+func (sm *StorageManager) WriteSnapshot(ctx context.Context, segKey common.SegmentKey, snapshot Snapshot) error {
 	if !sm.isOpenFile {
 		if err := sm.openNewFile(ctx); err != nil {
 			return err

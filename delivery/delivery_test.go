@@ -46,10 +46,10 @@ func (*ManagerKeeperSuite) transportNewAutoAck(name string, delay time.Duration,
 				},
 				OnRejectFunc:    func(fn func(uint32)) {},
 				OnReadErrorFunc: func(fn func(error)) {},
-				SendRestoreFunc: func(_ context.Context, _ common.Snapshot, _ []common.Segment) error {
+				SendRestoreFunc: func(_ context.Context, _ delivery.Snapshot, _ []delivery.Segment) error {
 					return nil
 				},
-				SendSegmentFunc: func(_ context.Context, segment common.Segment) error {
+				SendSegmentFunc: func(_ context.Context, segment delivery.Segment) error {
 					parts := strings.SplitN(string(segment.Bytes()), ":", 6)
 					shardID, err := strconv.ParseUint(parts[2], 10, 16)
 					if err != nil {
@@ -118,10 +118,10 @@ func (*ManagerKeeperSuite) transportWithReject(name string, delay time.Duration,
 					reject = fn
 				},
 				OnReadErrorFunc: func(fn func(err error)) {},
-				SendRestoreFunc: func(_ context.Context, _ common.Snapshot, _ []common.Segment) error {
+				SendRestoreFunc: func(_ context.Context, _ delivery.Snapshot, _ []delivery.Segment) error {
 					return nil
 				},
-				SendSegmentFunc: func(_ context.Context, segment common.Segment) error {
+				SendSegmentFunc: func(_ context.Context, segment delivery.Segment) error {
 					parts := strings.SplitN(string(segment.Bytes()), ":", 6)
 					shardID, err := strconv.ParseUint(parts[2], 10, 16)
 					if err != nil {
@@ -280,7 +280,7 @@ func (*ManagerKeeperSuite) inMemoryRefill() *ManagerRefillMock {
 	errNotFound := errors.New("not found")
 
 	return &ManagerRefillMock{
-		GetFunc: func(_ context.Context, key common.SegmentKey) (common.Segment, error) {
+		GetFunc: func(_ context.Context, key common.SegmentKey) (delivery.Segment, error) {
 			m.Lock()
 			defer m.Unlock()
 
@@ -302,7 +302,7 @@ func (*ManagerKeeperSuite) inMemoryRefill() *ManagerRefillMock {
 
 			rejects[key] = true
 		},
-		RestoreFunc: func(_ context.Context, key common.SegmentKey) (common.Snapshot, []common.Segment, error) {
+		RestoreFunc: func(_ context.Context, key common.SegmentKey) (delivery.Snapshot, []delivery.Segment, error) {
 			m.Lock()
 			defer m.Unlock()
 
@@ -320,18 +320,18 @@ func (*ManagerKeeperSuite) inMemoryRefill() *ManagerRefillMock {
 			if len(blobs) == 0 {
 				return nil, nil, errNotFound
 			}
-			var snapshot common.Snapshot
-			if s, ok := blobs[len(blobs)-1].(common.Snapshot); ok {
+			var snapshot delivery.Snapshot
+			if s, ok := blobs[len(blobs)-1].(delivery.Snapshot); ok {
 				snapshot = s
 				blobs = blobs[:len(blobs)-1]
 			}
-			segments := make([]common.Segment, 0, len(blobs))
+			segments := make([]delivery.Segment, 0, len(blobs))
 			for i := len(blobs) - 1; i >= 0; i-- {
 				segments = append(segments, blobs[i].(common.Segment))
 			}
 			return snapshot, segments, nil
 		},
-		WriteSegmentFunc: func(_ context.Context, key common.SegmentKey, segment common.Segment) error {
+		WriteSegmentFunc: func(_ context.Context, key common.SegmentKey, segment delivery.Segment) error {
 			m.Lock()
 			defer m.Unlock()
 
@@ -353,7 +353,7 @@ func (*ManagerKeeperSuite) inMemoryRefill() *ManagerRefillMock {
 			}
 			return nil
 		},
-		WriteSnapshotFunc: func(_ context.Context, key common.SegmentKey, snapshot common.Snapshot) error {
+		WriteSnapshotFunc: func(_ context.Context, key common.SegmentKey, snapshot delivery.Snapshot) error {
 			m.Lock()
 			defer m.Unlock()
 

@@ -15,10 +15,10 @@ import (
 
 // Source is a manager
 type Source interface {
-	Get(ctx context.Context, key common.SegmentKey) (common.Segment, error)
+	Get(ctx context.Context, key common.SegmentKey) (Segment, error)
 	Ack(key common.SegmentKey, dest string)
 	Reject(key common.SegmentKey, dest string)
-	Restore(ctx context.Context, key common.SegmentKey) (common.Snapshot, []common.Segment)
+	Restore(ctx context.Context, key common.SegmentKey) (Snapshot, []Segment)
 }
 
 // Sender is a transport adapter for manager
@@ -185,7 +185,7 @@ func (sender *Sender) writeLoop(ctx context.Context, transport Transport, from u
 // - get ErrPromiseCanceled (returns (nil, nil))
 //
 // So, it's correct to check that segment is nil, it is equivalent permanent state.
-func (sender *Sender) getSegment(ctx context.Context, id uint32) (common.Segment, error) {
+func (sender *Sender) getSegment(ctx context.Context, id uint32) (Segment, error) {
 	key := common.SegmentKey{
 		ShardID: sender.shardID,
 		Segment: id,
@@ -193,7 +193,7 @@ func (sender *Sender) getSegment(ctx context.Context, id uint32) (common.Segment
 	eb := backoff.NewExponentialBackOff()
 	eb.MaxElapsedTime = 0 // retry until context cancel
 	bo := backoff.WithContext(eb, ctx)
-	segment, err := backoff.RetryWithData(func() (common.Segment, error) {
+	segment, err := backoff.RetryWithData(func() (Segment, error) {
 		segment, err := sender.source.Get(ctx, key)
 		if errors.Is(err, ErrPromiseCanceled) {
 			return nil, nil
