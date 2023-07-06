@@ -92,7 +92,6 @@ func (s *BlockManagerSuite) TestDeliveryManagerHappyPath() {
 		h := common.NewHashdex(data)
 
 		delivered, errLoop := manager.Send(baseCtx, h)
-		h.Destroy()
 		s.Require().NoError(errLoop)
 		s.Require().True(delivered)
 	}
@@ -191,7 +190,6 @@ func (s *BlockManagerSuite) TestDeliveryManagerBreakingConnection() {
 		s.Require().NoError(errLoop)
 		h := common.NewHashdex(data)
 		delivered, errLoop := manager.Send(baseCtx, h)
-		h.Destroy()
 		s.Require().NoError(errLoop)
 		s.Require().True(delivered)
 	}
@@ -203,7 +201,6 @@ func (s *BlockManagerSuite) TestDeliveryManagerBreakingConnection() {
 		s.Require().NoError(errLoop)
 		h := common.NewHashdex(data)
 		delivered, errLoop := manager.Send(baseCtx, h)
-		h.Destroy()
 		s.Require().NoError(errLoop)
 		s.Require().True(delivered)
 	}
@@ -215,7 +212,6 @@ func (s *BlockManagerSuite) TestDeliveryManagerBreakingConnection() {
 		s.Require().NoError(errLoop)
 		h := common.NewHashdex(data)
 		delivered, errLoop := manager.Send(baseCtx, h)
-		h.Destroy()
 		s.Require().NoError(errLoop)
 		s.Require().True(delivered)
 	}
@@ -289,7 +285,6 @@ func (s *BlockManagerSuite) TestDeliveryManagerReject() {
 		s.Require().NoError(errLoop)
 		h := common.NewHashdex(data)
 		delivered, errLoop := manager.Send(baseCtx, h)
-		h.Destroy()
 		s.Require().NoError(errLoop)
 		if i == int(rejectSegment) {
 			s.Require().False(delivered)

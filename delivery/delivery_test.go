@@ -225,7 +225,7 @@ func (*ManagerKeeperSuite) simpleEncoder() delivery.ManagerEncoderCtor {
 				segment := &dataTest{
 					data: []byte(fmt.Sprintf(
 						"segment:%s:%d:%d:%d:%+v",
-						blockID, shardID, shards, nextSegmentID, data,
+						blockID, shardID, shards, nextSegmentID, data.(*shardedDataTest).data,
 					)),
 				}
 				redundant := &RedundantTest{
@@ -430,13 +430,14 @@ func (s *ManagerKeeperSuite) TestSendHappyPath() {
 	s.T().Log("send and check a few parts of data")
 	var delivered bool
 	for i := 0; i < 10; i++ {
-		data := faker.Paragraph()
+		expectedData := faker.Paragraph()
+		data := newShardedDataTest(expectedData)
 		sendCtx, sendCancel := context.WithTimeout(baseCtx, 100*time.Millisecond)
 		delivered, err = managerKeeper.Send(sendCtx, data)
 		s.NoError(err, "data should be delivered in 100 ms")
 		s.True(delivered, "data should be delivered in 100 ms")
 		sendCancel()
-		s.Equal(data, <-destination, "data should be delivered 1 times(1 shard)")
+		s.Equal(expectedData, <-destination, "data should be delivered 1 times(1 shard)")
 	}
 
 	s.T().Log("shutdown manager")
@@ -509,14 +510,15 @@ func (s *ManagerKeeperSuite) TestSendWithRotate() {
 	s.T().Log("send and check a few parts of data")
 	var delivered bool
 	for i := 0; i < 15; i++ {
-		data := faker.Paragraph()
+		expectedData := faker.Paragraph()
+		data := newShardedDataTest(expectedData)
 		sendCtx, sendCancel := context.WithTimeout(baseCtx, 100*time.Millisecond)
 		delivered, err = managerKeeper.Send(sendCtx, data)
 		s.NoError(err, "data should be delivered in 100 ms")
 		check := s.True(delivered, "data should be delivered in 100 ms")
 		sendCancel()
 		if check {
-			s.Equal(data, <-destination, "data should be delivered 1 times(1 shard)")
+			s.Equal(expectedData, <-destination, "data should be delivered 1 times(1 shard)")
 		}
 	}
 
@@ -584,12 +586,13 @@ func (s *ManagerKeeperSuite) TestSendWithReject() {
 
 	s.T().Log("send and check a few parts of data")
 	for i := 0; i < 15; i++ {
-		data := faker.Paragraph()
+		expectedData := faker.Paragraph()
+		data := newShardedDataTest(expectedData)
 		sendCtx, sendCancel := context.WithTimeout(baseCtx, 100*time.Millisecond)
 		_, err = managerKeeper.Send(sendCtx, data)
 		s.NoError(err, "data should be delivered in 100 ms")
 		sendCancel()
-		s.Equal(data, <-destination, "data should be delivered 1 times(1 shard)")
+		s.Equal(expectedData, <-destination, "data should be delivered 1 times(1 shard)")
 	}
 
 	s.T().Log("shutdown manager")

@@ -151,7 +151,9 @@ func (sender *Sender) dial(ctx context.Context) (transport Transport, closeFn fu
 			Segment: sender.lastDelivered + 1,
 		})
 
-		if err := transport.SendRestore(ctx, snapshot, segments); err != nil {
+		err := transport.SendRestore(ctx, snapshot, segments)
+		snapshot.Destroy()
+		if err != nil {
 			if ctx.Err() == nil {
 				sender.errorHandler(fmt.Sprintf("%s: fail to send restore", sender), err)
 			}

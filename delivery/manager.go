@@ -187,6 +187,7 @@ func (mgr *Manager) Send(ctx context.Context, data common.ShardedData) (ack bool
 	}
 	err = group.Wait()
 	mgr.encodersLock.Unlock()
+	data.Destroy()
 	if err != nil {
 		// TODO: is encoder recoverable?
 		return false, err
@@ -370,7 +371,9 @@ func (mgr *Manager) writeSegmentToRefill(ctx context.Context, key common.Segment
 	if err != nil {
 		return err
 	}
-	if err = mgr.refill.WriteSnapshot(ctx, key, snapshot); err != nil {
+	err = mgr.refill.WriteSnapshot(ctx, key, snapshot)
+	snapshot.Destroy()
+	if err != nil {
 		return err
 	}
 	return mgr.refill.WriteSegment(ctx, key, segment)

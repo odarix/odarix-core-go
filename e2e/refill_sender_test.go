@@ -175,7 +175,6 @@ func (s *RefillSenderSuite) TestRefillSenderHappyPath() {
 		h := common.NewHashdex(data)
 
 		delivered, errLoop := manager.Send(baseCtx, h)
-		h.Destroy()
 		s.Require().NoError(errLoop)
 		if i%2 == 0 {
 			s.Require().False(delivered)
@@ -396,7 +395,6 @@ func (s *RefillSenderSuite) TestRefillSenderBreakingConnection() {
 		h := common.NewHashdex(data)
 
 		delivered, errLoop := manager.Send(baseCtx, h)
-		h.Destroy()
 		s.Require().NoError(errLoop)
 		if i%2 == 0 {
 			s.Require().False(delivered)

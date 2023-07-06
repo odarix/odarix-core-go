@@ -94,7 +94,6 @@ func (s *ManagerKeeperSuite) TestRefillSenderHappyPath() {
 		h := common.NewHashdex(data)
 
 		delivered, errLoop := managerKeeper.Send(baseCtx, h)
-		h.Destroy()
 		s.Require().NoError(errLoop)
 		s.Require().True(delivered)
 
@@ -180,7 +179,6 @@ func (s *ManagerKeeperSuite) TestWithRotate() {
 		h := common.NewHashdex(data)
 
 		delivered, errLoop := managerKeeper.Send(baseCtx, h)
-		h.Destroy()
 		s.Require().NoError(errLoop)
 		s.Require().True(delivered)
 
@@ -345,7 +343,6 @@ func (s *ManagerKeeperSuite) TestWithReject() {
 		s.Require().NoError(errLoop)
 		h := common.NewHashdex(data)
 		_, errLoop = managerKeeper.Send(baseCtx, h)
-		h.Destroy()
 		s.Require().NoError(errLoop)
 
 		wrMsg := <-retCh

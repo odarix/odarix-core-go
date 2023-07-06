@@ -49,20 +49,30 @@ func (s *ManagerSuite) TestSendWithAck() {
 
 	s.T().Log("Instance and open manager")
 	clock := clockwork.NewFakeClock()
-	manager, err := delivery.NewManager(baseCtx, dialers, s.simpleEncoder(), refillCtor, 2, time.Minute, s.errorHandler, clock)
+	manager, err := delivery.NewManager(
+		baseCtx,
+		dialers,
+		s.simpleEncoder(),
+		refillCtor,
+		2,
+		time.Minute,
+		s.errorHandler,
+		clock,
+	)
 	s.Require().NoError(err)
 	manager.Open(baseCtx)
 
 	s.T().Log("Send and check a few parts of data")
 	for i := 0; i < 10; i++ {
-		data := faker.Paragraph()
+		expectedData := faker.Paragraph()
+		data := newShardedDataTest(expectedData)
 		sendCtx, sendCancel := context.WithTimeout(baseCtx, 100*time.Millisecond)
 		delivered, err := manager.Send(sendCtx, data)
 		s.NoError(err, "data should be delivered in 100 ms")
 		s.True(delivered, "data should be delivered in 100 ms")
 		sendCancel()
 		for j := 0; j < 4; j++ {
-			s.Equal(data, <-destination, "data should be delivered 4 times")
+			s.Equal(expectedData, <-destination, "data should be delivered 4 times")
 		}
 	}
 
@@ -95,14 +105,15 @@ func (s *ManagerSuite) TestRejectToRefill() {
 	manager.Open(baseCtx)
 
 	s.T().Log("Send first part of data without an error to pre-heat manager")
-	data := faker.Paragraph()
+	data := newShardedDataTest(faker.Paragraph())
 	delivered, err := manager.Send(baseCtx, data)
 	s.True(delivered)
 	s.NoError(err)
 
 	s.T().Log("Switch transport to error state and send next part of data")
 	transportSwitcher.Store(true)
-	data = faker.Paragraph()
+	expectedData := faker.Paragraph()
+	data = newShardedDataTest(expectedData)
 	sendCtx, sendCancel := context.WithTimeout(baseCtx, time.Second)
 	delivered, err = manager.Send(sendCtx, data)
 	sendCancel()
@@ -121,7 +132,7 @@ func (s *ManagerSuite) TestRejectToRefill() {
 		parts := strings.SplitN(string(segment.Bytes()), ":", 6)
 		s.Equal("segment", parts[0])
 		s.Equal(strconv.Itoa(i), parts[2])
-		s.Equal(data, parts[5])
+		s.Equal(expectedData, parts[5])
 	}
 }
 
@@ -156,12 +167,13 @@ func (s *ManagerSuite) TestAckRejectRace() {
 	manager.Open(baseCtx)
 
 	s.T().Log("Send first part of data without an error to pre-heat manager")
-	data := faker.Paragraph()
+	expectedData := faker.Paragraph()
+	data := newShardedDataTest(expectedData)
 	delivered, err := manager.Send(baseCtx, data)
 	s.True(delivered)
 	s.NoError(err)
 	for j := 0; j < 4; j++ {
-		s.Equal(data, <-destination, "data should be delivered 4 times")
+		s.Equal(expectedData, <-destination, "data should be delivered 4 times")
 	}
 
 	s.T().Log("Switch transport to reject state")
@@ -171,7 +183,8 @@ func (s *ManagerSuite) TestAckRejectRace() {
 	refillWriteLock.Lock()
 
 	s.T().Log("Send next part of data")
-	rejectedData := faker.Paragraph()
+	equalRejectedData := faker.Paragraph()
+	rejectedData := newShardedDataTest(equalRejectedData)
 	sendCtx, sendCancel := context.WithTimeout(baseCtx, 10*time.Millisecond)
 	delivered, err = manager.Send(sendCtx, rejectedData)
 	sendCancel()
@@ -182,13 +195,14 @@ func (s *ManagerSuite) TestAckRejectRace() {
 	transportSwitcher.Store(false)
 
 	s.T().Log("Send next part of data")
-	data = faker.Paragraph()
+	expectedData = faker.Paragraph()
+	data = newShardedDataTest(expectedData)
 	delivered, err = manager.Send(baseCtx, data)
 	sendCancel()
 	s.True(delivered)
 	s.NoError(err)
 	for j := 0; j < 4; j++ {
-		s.Equal(data, <-destination, "data should be delivered 4 times")
+		s.Equal(expectedData, <-destination, "data should be delivered 4 times")
 	}
 
 	s.T().Log("Unlock refill to prevent writing segment in refill")
@@ -207,7 +221,7 @@ func (s *ManagerSuite) TestAckRejectRace() {
 
 		s.Equal("segment", parts[0])
 		s.Equal(strconv.Itoa(i), parts[2])
-		s.Equal(rejectedData, parts[5])
+		s.Equal(equalRejectedData, parts[5])
 	}
 
 	s.T().Log("Check that exchange is empty")
@@ -247,17 +261,19 @@ func (s *ManagerSuite) TestRestoreFromRefill() {
 	manager.Open(baseCtx)
 
 	s.T().Log("Send first part of data without an error to pre-heat manager")
-	data := faker.Paragraph()
+	expectedData := faker.Paragraph()
+	data := newShardedDataTest(expectedData)
 	delivered, err := manager.Send(baseCtx, data)
 	s.True(delivered)
 	s.NoError(err)
 	for i := 0; i < 4; i++ {
-		s.Equal(data, <-destination, "data should be delivered in all destination shards")
+		s.Equal(expectedData, <-destination, "data should be delivered in all destination shards")
 	}
 
 	s.T().Log("Switch transport to error state and send next part of data")
 	transportSwitcher.Store(true)
-	data = faker.Paragraph()
+	expectedData = faker.Paragraph()
+	data = newShardedDataTest(expectedData)
 	time.AfterFunc(time.Millisecond, func() {
 		clock.Advance(5 * time.Second)
 	})
@@ -268,7 +284,7 @@ func (s *ManagerSuite) TestRestoreFromRefill() {
 	s.T().Log("Switch transport back to auto-ack state")
 	transportSwitcher.Store(false)
 	for i := 0; i < 4; i++ {
-		s.Equal(data, <-destination, "data should be delivered in all destination shards")
+		s.Equal(expectedData, <-destination, "data should be delivered in all destination shards")
 	}
 
 	s.T().Log("Shutdown manager")
@@ -301,12 +317,13 @@ func (s *ManagerSuite) TestRestoreWithNoRefill() {
 	manager.Open(baseCtx)
 
 	s.T().Log("Send first part of data without an error to pre-heat manager")
-	data := faker.Paragraph()
+	expectedData := faker.Paragraph()
+	data := newShardedDataTest(expectedData)
 	delivered, err := manager.Send(baseCtx, data)
 	s.True(delivered)
 	s.NoError(err)
 	for i := 0; i < 4; i++ {
-		s.Equal(data, <-destination, "data should be delivered in all destination shards")
+		s.Equal(expectedData, <-destination, "data should be delivered in all destination shards")
 	}
 
 	s.T().Log("Switch transport to error state and send next part of data")
@@ -315,12 +332,13 @@ func (s *ManagerSuite) TestRestoreWithNoRefill() {
 		s.T().Log("Switch transport back to auto-ack state")
 		transportSwitcher.Store(false)
 	})
-	data = faker.Paragraph()
+	expectedData = faker.Paragraph()
+	data = newShardedDataTest(expectedData)
 	delivered, err = manager.Send(baseCtx, data)
 	s.True(delivered)
 	s.NoError(err)
 	for i := 0; i < 4; i++ {
-		s.Equal(data, <-destination, "data should be delivered in all destination shards")
+		s.Equal(expectedData, <-destination, "data should be delivered in all destination shards")
 	}
 
 	s.T().Log("Shutdown manager")
@@ -345,7 +363,8 @@ func (s *ManagerSuite) TestNotOpened() {
 	s.Require().NoError(err)
 
 	s.T().Log("Send data will fall with timeout")
-	data := faker.Paragraph()
+	expectedData := faker.Paragraph()
+	data := newShardedDataTest(expectedData)
 	sendCtx, sendCancel := context.WithTimeout(baseCtx, time.Millisecond)
 	_, err = manager.Send(sendCtx, data)
 	s.ErrorIs(err, context.DeadlineExceeded)
@@ -365,7 +384,7 @@ func (s *ManagerSuite) TestNotOpened() {
 		parts := strings.SplitN(string(segment.Bytes()), ":", 6)
 		s.Equal("segment", parts[0])
 		s.Equal(strconv.Itoa(i), parts[2])
-		s.Equal(data, parts[5])
+		s.Equal(expectedData, parts[5])
 	}
 }
 
@@ -392,7 +411,8 @@ func (s *ManagerSuite) TestLongDial() {
 	manager.Open(baseCtx)
 
 	s.T().Log("Send data will be rejected")
-	data := faker.Paragraph()
+	expectedData := faker.Paragraph()
+	data := newShardedDataTest(expectedData)
 	sendCtx, sendCancel := context.WithTimeout(baseCtx, 100*time.Millisecond)
 	time.AfterFunc(time.Millisecond, func() {
 		clock.Advance(time.Minute + time.Second)
@@ -414,7 +434,7 @@ func (s *ManagerSuite) TestLongDial() {
 			parts := strings.SplitN(string(segment.Bytes()), ":", 6)
 			s.Equal("segment", parts[0])
 			s.Equal(strconv.Itoa(i), parts[2])
-			s.Equal(data, parts[5])
+			s.Equal(expectedData, parts[5])
 		}
 	}
 }
@@ -740,7 +760,7 @@ func (*ManagerSuite) simpleEncoder() delivery.ManagerEncoderCtor {
 				segment := &dataTest{
 					data: []byte(fmt.Sprintf(
 						"segment:%s:%d:%d:%d:%+v",
-						blockID, shardID, shards, nextSegmentID, data,
+						blockID, shardID, shards, nextSegmentID, data.(*shardedDataTest).data,
 					)),
 				}
 				redundant := &RedundantTest{

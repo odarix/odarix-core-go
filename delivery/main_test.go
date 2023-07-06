@@ -39,3 +39,19 @@ func (dt *dataTest) Latest() int64 {
 func (dt *dataTest) Destroy() {
 	dt.data = nil
 }
+
+// dataTest - test data.
+type shardedDataTest struct {
+	data string
+}
+
+func newShardedDataTest(data string) *shardedDataTest {
+	return &shardedDataTest{
+		data: data,
+	}
+}
+
+// Destroy - clear memory, for implements.
+func (dt *shardedDataTest) Destroy() {
+	dt.data = ""
+}
