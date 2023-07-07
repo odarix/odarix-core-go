@@ -17,6 +17,7 @@ import (
 
 	"github.com/odarix/odarix-core-go/common"
 	"github.com/odarix/odarix-core-go/delivery"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/go-faker/faker/v4"
 	"github.com/google/uuid"
@@ -58,6 +59,7 @@ func (s *ManagerSuite) TestSendWithAck() {
 		time.Minute,
 		s.errorHandler,
 		clock,
+		nil,
 	)
 	s.Require().NoError(err)
 	manager.Open(baseCtx)
@@ -100,7 +102,7 @@ func (s *ManagerSuite) TestRejectToRefill() {
 
 	s.T().Log("Instance and open manager")
 	clock := clockwork.NewFakeClock()
-	manager, err := delivery.NewManager(baseCtx, dialers, s.simpleEncoder(), refillCtor, 2, time.Minute, s.errorHandler, clock)
+	manager, err := delivery.NewManager(baseCtx, dialers, s.simpleEncoder(), refillCtor, 2, time.Minute, s.errorHandler, clock, nil)
 	s.Require().NoError(err)
 	manager.Open(baseCtx)
 
@@ -162,7 +164,7 @@ func (s *ManagerSuite) TestAckRejectRace() {
 
 	s.T().Log("Instance and open manager")
 	clock := clockwork.NewFakeClock()
-	manager, err := delivery.NewManager(baseCtx, dialers, s.simpleEncoder(), refillCtor, 2, time.Minute, s.errorHandler, clock)
+	manager, err := delivery.NewManager(baseCtx, dialers, s.simpleEncoder(), refillCtor, 2, time.Minute, s.errorHandler, clock, nil)
 	s.Require().NoError(err)
 	manager.Open(baseCtx)
 
@@ -246,7 +248,7 @@ func (s *ManagerSuite) TestRestoreFromRefill() {
 
 	s.T().Log("Instance and open manager")
 	clock := clockwork.NewFakeClock()
-	manager, err := delivery.NewManager(baseCtx, dialers, s.simpleEncoder(), refillCtor, 2, 5*time.Second, s.errorHandler, clock)
+	manager, err := delivery.NewManager(baseCtx, dialers, s.simpleEncoder(), refillCtor, 2, 5*time.Second, s.errorHandler, clock, nil)
 	s.Require().NoError(err)
 	manager.Open(baseCtx)
 
@@ -302,7 +304,7 @@ func (s *ManagerSuite) TestRestoreWithNoRefill() {
 
 	s.T().Log("Instance and open manager")
 	clock := clockwork.NewFakeClock()
-	manager, err := delivery.NewManager(baseCtx, dialers, s.simpleEncoder(), refillCtor, 2, time.Minute, s.errorHandler, clock)
+	manager, err := delivery.NewManager(baseCtx, dialers, s.simpleEncoder(), refillCtor, 2, time.Minute, s.errorHandler, clock, nil)
 	s.Require().NoError(err)
 	manager.Open(baseCtx)
 
@@ -349,7 +351,7 @@ func (s *ManagerSuite) TestNotOpened() {
 
 	s.T().Log("Instance manager")
 	clock := clockwork.NewFakeClock()
-	manager, err := delivery.NewManager(baseCtx, dialers, s.simpleEncoder(), refillCtor, 2, time.Minute, s.errorHandler, clock)
+	manager, err := delivery.NewManager(baseCtx, dialers, s.simpleEncoder(), refillCtor, 2, time.Minute, s.errorHandler, clock, nil)
 	s.Require().NoError(err)
 
 	s.T().Log("Send data will fall with timeout")
@@ -396,7 +398,7 @@ func (s *ManagerSuite) TestLongDial() {
 
 	s.T().Log("Instance and open manager")
 	clock := clockwork.NewFakeClock()
-	manager, err := delivery.NewManager(baseCtx, dialers, s.simpleEncoder(), refillCtor, 2, time.Minute, s.errorHandler, clock)
+	manager, err := delivery.NewManager(baseCtx, dialers, s.simpleEncoder(), refillCtor, 2, time.Minute, s.errorHandler, clock, nil)
 	s.Require().NoError(err)
 	manager.Open(baseCtx)
 
@@ -699,7 +701,7 @@ func (*ManagerSuite) corruptedRefill() *ManagerRefillMock {
 }
 
 func (*ManagerSuite) constructorForRefill(refill *ManagerRefillMock) delivery.ManagerRefillCtor {
-	return func(_ context.Context, blockID uuid.UUID, destinations []string, shardsNumberPower uint8) (delivery.ManagerRefill, error) {
+	return func(_ context.Context, blockID uuid.UUID, destinations []string, shardsNumberPower uint8, registerer prometheus.Registerer) (delivery.ManagerRefill, error) {
 		if refill.BlockIDFunc == nil {
 			refill.BlockIDFunc = func() uuid.UUID { return blockID }
 		}

@@ -103,6 +103,7 @@ func (s *RefillSuite) SetupTest() {
 		s.cfg,
 		s.etalonNumberOfShards,
 		s.etalonBlockID,
+		nil,
 		s.etalonsNames...,
 	)
 	s.NoError(err)
@@ -131,6 +132,7 @@ func (s *RefillSuite) TestManagerInitIsContinuable() {
 		s.cfg,
 		2,
 		s.etalonBlockID,
+		nil,
 		s.etalonsNames...,
 	)
 	s.NoError(err)
@@ -140,6 +142,7 @@ func (s *RefillSuite) TestManagerInitIsContinuable() {
 		s.cfg,
 		s.etalonNumberOfShards,
 		s.etalonBlockID,
+		nil,
 		s.etalonsNames[:2]...,
 	)
 	s.NoError(err)

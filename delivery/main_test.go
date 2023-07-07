@@ -16,22 +16,22 @@ func (dt *dataTest) Bytes() []byte {
 	return dt.data
 }
 
-func (dt *dataTest) Samples() uint32 {
+func (*dataTest) Samples() uint32 {
 	return 0
 }
 
 // Series returns count of series in segment
-func (dt *dataTest) Series() uint32 {
+func (*dataTest) Series() uint32 {
 	return 0
 }
 
 // Earliest returns timestamp in ms of earliest sample in segment
-func (dt *dataTest) Earliest() int64 {
+func (*dataTest) Earliest() int64 {
 	return 0
 }
 
 // Latest returns timestamp in ms of latest sample in segment
-func (dt *dataTest) Latest() int64 {
+func (*dataTest) Latest() int64 {
 	return 0
 }
 

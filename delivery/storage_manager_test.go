@@ -318,6 +318,7 @@ func (s *StorageManagerSuite) SetupTest() {
 		s.cfg,
 		s.etalonShardsNumberPower,
 		s.etalonBlockID,
+		nil,
 		s.etalonsNames...,
 	)
 	s.NoError(err)
@@ -488,7 +489,7 @@ func (s *StorageManagerSuite) TestRestore() {
 	s.NoError(err)
 	var shardsNumberPower uint8 = 1
 
-	s.sm, err = delivery.NewStorageManager(s.cfg, shardsNumberPower, newBlockID, s.etalonsNames...)
+	s.sm, err = delivery.NewStorageManager(s.cfg, shardsNumberPower, newBlockID, nil, s.etalonsNames...)
 	s.NoError(err)
 	s.Equal(s.etalonBlockID.String(), s.sm.BlockID().String())
 

@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/odarix/odarix-core-go/common"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/multierr"
 )
 
@@ -37,6 +38,7 @@ func NewRefill(
 	cfg *FileStorageConfig,
 	shardsNumberPower uint8,
 	blockID uuid.UUID,
+	registerer prometheus.Registerer,
 	names ...string,
 ) (*Refill, error) {
 	var err error
@@ -44,7 +46,7 @@ func NewRefill(
 		mx: new(sync.RWMutex),
 	}
 
-	rm.sm, err = NewStorageManager(cfg, shardsNumberPower, blockID, names...)
+	rm.sm, err = NewStorageManager(cfg, shardsNumberPower, blockID, registerer, names...)
 	switch err {
 	case nil:
 		rm.isContinuable = true

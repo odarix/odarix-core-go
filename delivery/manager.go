@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"sync"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jonboulle/clockwork"
 	"github.com/odarix/odarix-core-go/common"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/multierr"
 	"golang.org/x/sync/errgroup"
 )
@@ -44,6 +46,17 @@ type Manager struct {
 	cancelRefill context.CancelCauseFunc
 	refillDone   chan struct{}
 	senders      []*Sender
+	// stat
+	registerer       prometheus.Registerer
+	encodeDuration   prometheus.Histogram
+	promiseDuration  prometheus.Histogram
+	segmentSize      prometheus.Histogram
+	snapshotSize     prometheus.Histogram
+	lagDuration      *prometheus.HistogramVec
+	segmentSeries    prometheus.Histogram
+	segmentSamples   prometheus.Histogram
+	rejects          prometheus.Counter
+	shutdownDuration prometheus.Histogram
 }
 
 type (
@@ -86,12 +99,14 @@ type (
 		blockID uuid.UUID,
 		destinations []string,
 		shardsNumberPower uint8,
+		registerer prometheus.Registerer,
 	) (ManagerRefill, error)
 )
 
 // NewManager - init new Manager.
 //
 //revive:disable-next-line:function-length long but readable
+//revive:disable-next-line:cyclomatic  but readable
 func NewManager(
 	ctx context.Context,
 	dialers []Dialer,
@@ -101,6 +116,7 @@ func NewManager(
 	refillInterval time.Duration,
 	errorHandler ErrorHandler,
 	clock clockwork.Clock,
+	registerer prometheus.Registerer,
 ) (*Manager, error) {
 	if len(dialers) == 0 {
 		return nil, ErrDestinationsRequired
@@ -116,7 +132,7 @@ func NewManager(
 	if err != nil {
 		return nil, fmt.Errorf("generate block id: %w", err)
 	}
-	refill, err := refillCtor(ctx, blockID, destinations, shardsNumberPower)
+	refill, err := refillCtor(ctx, blockID, destinations, shardsNumberPower, registerer)
 	if err != nil {
 		return nil, fmt.Errorf("create refill: %w", err)
 	}
@@ -125,13 +141,13 @@ func NewManager(
 			return nil, fmt.Errorf("rename refill: %w", err)
 		}
 
-		refill, err = refillCtor(ctx, blockID, destinations, shardsNumberPower)
+		refill, err = refillCtor(ctx, blockID, destinations, shardsNumberPower, registerer)
 		if err != nil {
 			return nil, fmt.Errorf("create refill: %w", err)
 		}
 	}
 	blockID = refill.BlockID()
-	exchange := NewExchange(refill.Shards(), refill.Destinations())
+	exchange := NewExchange(refill.Shards(), refill.Destinations(), registerer)
 
 	encoders := make([]ManagerEncoder, refill.Shards())
 	for i := range encoders {
@@ -145,6 +161,7 @@ func NewManager(
 		errorHandler = func(string, error) {}
 	}
 
+	factory := NewConflictRegisterer(registerer)
 	mgr := &Manager{
 		dialers:        dialersMap,
 		refillInterval: refillInterval,
@@ -159,6 +176,70 @@ func NewManager(
 		refill:       refill,
 		refillSignal: make(chan struct{}, 1),
 		refillDone:   make(chan struct{}),
+		registerer:   registerer,
+		encodeDuration: factory.NewHistogram(
+			prometheus.HistogramOpts{
+				Name:    "odarix_core_delivery_manager_encode_duration_milliseconds",
+				Help:    "Duration of encode data(ms).",
+				Buckets: prometheus.ExponentialBucketsRange(0.9, 20, 10),
+			},
+		),
+		promiseDuration: factory.NewHistogram(
+			prometheus.HistogramOpts{
+				Name:    "odarix_core_delivery_manager_promise_duration_seconds",
+				Help:    "Duration of promise await.",
+				Buckets: prometheus.ExponentialBucketsRange(0.1, 20, 10),
+			},
+		),
+		segmentSize: factory.NewHistogram(
+			prometheus.HistogramOpts{
+				Name:    "odarix_core_delivery_manager_segment_bytes",
+				Help:    "Size of encoded segment.",
+				Buckets: prometheus.ExponentialBucketsRange(1024, 1<<20, 10),
+			},
+		),
+		snapshotSize: factory.NewHistogram(
+			prometheus.HistogramOpts{
+				Name:    "odarix_core_delivery_manager_snapshot_bytes",
+				Help:    "Size of encoded snapshot.",
+				Buckets: prometheus.ExponentialBucketsRange(1<<20, 120<<20, 10),
+			},
+		),
+		lagDuration: factory.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "odarix_core_delivery_manager_lag_duration_seconds",
+				Help:    "Lag of duration.",
+				Buckets: prometheus.ExponentialBucketsRange(60, 7200, 10),
+			},
+			[]string{"type"},
+		),
+		segmentSeries: factory.NewHistogram(
+			prometheus.HistogramOpts{
+				Name:    "odarix_core_delivery_manager_segment_series",
+				Help:    "Number of timeseries.",
+				Buckets: prometheus.ExponentialBucketsRange(500, 5000, 10),
+			},
+		),
+		segmentSamples: factory.NewHistogram(
+			prometheus.HistogramOpts{
+				Name:    "odarix_core_delivery_manager_segment_samples",
+				Help:    "Number of samples.",
+				Buckets: prometheus.ExponentialBucketsRange(500, 5000, 10),
+			},
+		),
+		rejects: factory.NewCounter(
+			prometheus.CounterOpts{
+				Name: "odarix_core_delivery_manager_rejects",
+				Help: "Number of rejects.",
+			},
+		),
+		shutdownDuration: factory.NewHistogram(
+			prometheus.HistogramOpts{
+				Name:    "odarix_core_delivery_manager_shutdown_duration_seconds",
+				Help:    "Duration of shutdown manager(s).",
+				Buckets: prometheus.ExponentialBucketsRange(0.1, 20, 10),
+			},
+		),
 	}
 
 	refillCtx, cancel := context.WithCancelCause(ctx)
@@ -174,6 +255,7 @@ func (mgr *Manager) Send(ctx context.Context, data common.ShardedData) (ack bool
 	expiredAt := mgr.clock.Now().Add(mgr.refillInterval)
 	group, gCtx := errgroup.WithContext(ctx)
 	mgr.encodersLock.Lock()
+	start := time.Now()
 	for i := range mgr.encoders {
 		i := i
 		group.Go(func() error {
@@ -181,18 +263,41 @@ func (mgr *Manager) Send(ctx context.Context, data common.ShardedData) (ack bool
 			if errEnc != nil {
 				return errEnc
 			}
+			mgr.segmentSize.Observe(float64(len(segment.Bytes())))
+			mgr.segmentSeries.Observe(float64(segment.Series()))
+			mgr.segmentSamples.Observe(float64(segment.Samples()))
+			tsNow := time.Now().UnixMilli()
+			maxTS := segment.Latest()
+			if maxTS != 0 {
+				mgr.lagDuration.With(
+					prometheus.Labels{"type": "max"},
+				).Observe(
+					float64((tsNow - maxTS) / 1000),
+				)
+			}
+			minTS := segment.Earliest()
+			if minTS != math.MaxInt64 {
+				mgr.lagDuration.With(
+					prometheus.Labels{"type": "min"},
+				).Observe(
+					float64((tsNow - minTS) / 1000),
+				)
+			}
 			mgr.exchange.Put(key, segment, redundant, result, expiredAt)
 			return nil
 		})
 	}
 	err = group.Wait()
 	mgr.encodersLock.Unlock()
+	mgr.encodeDuration.Observe(float64(time.Since(start).Milliseconds()))
 	data.Destroy()
 	if err != nil {
 		// TODO: is encoder recoverable?
 		return false, err
 	}
-
+	defer func(start time.Time) {
+		mgr.promiseDuration.Observe(time.Since(start).Seconds())
+	}(time.Now())
 	return result.Await(ctx)
 }
 
@@ -202,7 +307,16 @@ func (mgr *Manager) Open(ctx context.Context) {
 	for name, dialer := range mgr.dialers {
 		for shardID := range mgr.encoders {
 			lastAck := mgr.refill.LastSegment(uint16(shardID), name)
-			sender := NewSender(ctx, mgr.blockID, uint16(shardID), dialer, lastAck, mgr, mgr.errorHandler)
+			sender := NewSender(
+				ctx,
+				mgr.blockID,
+				uint16(shardID),
+				dialer,
+				lastAck,
+				mgr,
+				mgr.errorHandler,
+				mgr.registerer,
+			)
 			mgr.senders = append(mgr.senders, sender)
 		}
 	}
@@ -232,6 +346,7 @@ func (mgr *Manager) Reject(key common.SegmentKey, dest string) {
 		default:
 		}
 	}
+	mgr.rejects.Inc()
 }
 
 // Restore - get data for restore state from refill.
@@ -266,6 +381,9 @@ func (mgr *Manager) Close() error {
 // or the shutdown time must be greater than refillInterval.
 // Otherwise, the data will be lost (not included in the refill file).
 func (mgr *Manager) Shutdown(ctx context.Context) error {
+	defer func(start time.Time) {
+		mgr.shutdownDuration.Observe(time.Since(start).Seconds())
+	}(time.Now())
 	mgr.exchange.Shutdown(ctx)
 	mgr.cancelRefill(ErrShutdown)
 	<-mgr.refillDone
@@ -399,7 +517,9 @@ func (mgr *Manager) snapshot(ctx context.Context, key common.SegmentKey) (common
 		redundants = append(redundants, redundant)
 	}
 
-	return mgr.encoders[key.ShardID].Snapshot(ctx, redundants)
+	snapshot, err := mgr.encoders[key.ShardID].Snapshot(ctx, redundants)
+	mgr.snapshotSize.Observe(float64(len(snapshot.Bytes())))
+	return snapshot, err
 }
 
 // DefaultShardsNumberPower - default shards number power.

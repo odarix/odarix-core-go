@@ -16,6 +16,7 @@ import (
 	"github.com/go-faker/faker/v4"
 	"github.com/google/uuid"
 	"github.com/jonboulle/clockwork"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/odarix/odarix-core-go/common"
@@ -163,7 +164,7 @@ func (*ManagerKeeperSuite) transportWithReject(name string, delay time.Duration,
 }
 
 func (*ManagerKeeperSuite) constructorForRefill(refill *ManagerRefillMock) delivery.ManagerRefillCtor {
-	return func(_ context.Context, blockID uuid.UUID, destinations []string, shardsNumberPower uint8) (delivery.ManagerRefill, error) {
+	return func(_ context.Context, blockID uuid.UUID, destinations []string, shardsNumberPower uint8, registerer prometheus.Registerer) (delivery.ManagerRefill, error) {
 		if refill.BlockIDFunc == nil {
 			refill.BlockIDFunc = func() uuid.UUID { return blockID }
 		}
@@ -184,7 +185,7 @@ func (*ManagerKeeperSuite) constructorForRefill(refill *ManagerRefillMock) deliv
 }
 
 func (*ManagerKeeperSuite) constructorForRefillSender(mrs *ManagerRefillSenderMock) delivery.MangerRefillSenderCtor {
-	return func(cfg *delivery.RefillSendManagerConfig, dialers []delivery.Dialer, errorHandler delivery.ErrorHandler, clock clockwork.Clock) (delivery.ManagerRefillSender, error) {
+	return func(cfg *delivery.RefillSendManagerConfig, dialers []delivery.Dialer, errorHandler delivery.ErrorHandler, clock clockwork.Clock, registerer prometheus.Registerer) (delivery.ManagerRefillSender, error) {
 		if mrs.RunFunc == nil {
 			mrs.RunFunc = func(ctx context.Context) {
 				<-ctx.Done()
@@ -424,6 +425,7 @@ func (s *ManagerKeeperSuite) TestSendHappyPath() {
 		clock,
 		dialers,
 		s.errorHandler,
+		nil,
 	)
 	s.Require().NoError(err)
 
@@ -488,6 +490,7 @@ func (s *ManagerKeeperSuite) TestSendWithRotate() {
 		clock,
 		dialers,
 		s.errorHandler,
+		nil,
 	)
 	s.Require().NoError(err)
 
@@ -565,6 +568,7 @@ func (s *ManagerKeeperSuite) TestSendWithReject() {
 		clock,
 		dialers,
 		s.errorHandler,
+		nil,
 	)
 	s.Require().NoError(err)
 

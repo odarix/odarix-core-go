@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/odarix/odarix-core-go/common"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 const posNotFound int64 = -1
@@ -46,6 +47,10 @@ type StorageManager struct {
 	isOpenFile bool
 	// are there any rejects
 	hasRejects atomic.Bool
+	// stat
+	currentSize prometheus.Gauge
+	readBytes   prometheus.Histogram
+	writeBytes  prometheus.Histogram
 }
 
 // NewStorageManager - init new MarkupMap.
@@ -53,12 +58,34 @@ func NewStorageManager(
 	cfg *FileStorageConfig,
 	shardsNumberPower uint8,
 	blockID uuid.UUID,
+	registerer prometheus.Registerer,
 	names ...string,
 ) (*StorageManager, error) {
 	var err error
+	factory := NewConflictRegisterer(registerer)
 	sm := &StorageManager{
 		markupMap:  make(map[MarkupKey]int64),
 		hasRejects: atomic.Bool{},
+		currentSize: factory.NewGauge(
+			prometheus.GaugeOpts{
+				Name: "odarix_core_delivery_storage_manager_current_refill_size",
+				Help: "Size of current refill.",
+			},
+		),
+		readBytes: factory.NewHistogram(
+			prometheus.HistogramOpts{
+				Name:    "odarix_core_delivery_storage_manager_read_bytes",
+				Help:    "Number of read bytes.",
+				Buckets: prometheus.ExponentialBucketsRange(1024, 125829120, 10),
+			},
+		),
+		writeBytes: factory.NewHistogram(
+			prometheus.HistogramOpts{
+				Name:    "odarix_core_delivery_storage_manager_write_bytes",
+				Help:    "Number of write bytes.",
+				Buckets: prometheus.ExponentialBucketsRange(1024, 125829120, 10),
+			},
+		),
 	}
 
 	// init storage
@@ -88,6 +115,7 @@ func NewStorageManager(
 		sm.title = NewTitle(shardsNumberPower, blockID)
 		sm.ackStatus = NewAckStatus(names, shardsNumberPower)
 		sm.lastWriteSegment = newShardStatuses(1 << shardsNumberPower)
+		sm.setLastWriteOffset(0)
 	}
 
 	sm.statuses = sm.ackStatus.GetCopyAckStatuses()
@@ -200,6 +228,8 @@ func (sm *StorageManager) GetSnapshot(ctx context.Context, segKey common.Segment
 		return nil, err
 	}
 
+	sm.readBytes.Observe(float64(snapshotData.SizeOf()))
+
 	return snapshotData, nil
 }
 
@@ -243,6 +273,8 @@ func (sm *StorageManager) GetSegment(ctx context.Context, segKey common.SegmentK
 	if err != nil {
 		return nil, err
 	}
+
+	sm.readBytes.Observe(float64(segmentData.SizeOf()))
 
 	return segmentData, nil
 }
@@ -388,7 +420,7 @@ func (sm *StorageManager) restore() (bool, error) {
 
 		// move cursor position
 		off += int64(h.GetSize())
-		sm.lastWriteOffset = off
+		sm.setLastWriteOffset(off)
 	}
 
 	// check for nil file
@@ -403,12 +435,13 @@ func (sm *StorageManager) restore() (bool, error) {
 func (sm *StorageManager) writeTitle(ctx context.Context) error {
 	frame := NewTitleFrame(sm.title.GetShardsNumberPower(), sm.BlockID()).Encode()
 	n, err := sm.storage.WriteAt(ctx, frame, sm.lastWriteOffset)
+	sm.writeBytes.Observe(float64(n))
 	if err != nil {
 		return err
 	}
 
 	// move position
-	sm.lastWriteOffset += int64(n)
+	sm.moveLastWriteOffset(int64(n))
 
 	return nil
 }
@@ -417,12 +450,13 @@ func (sm *StorageManager) writeTitle(ctx context.Context) error {
 func (sm *StorageManager) writeDestinationNames(ctx context.Context) error {
 	frame := NewDestinationsNamesFrame(sm.ackStatus.names).Encode()
 	n, err := sm.storage.WriteAt(ctx, frame, sm.lastWriteOffset)
+	sm.writeBytes.Observe(float64(n))
 	if err != nil {
 		return err
 	}
 
 	// move position
-	sm.lastWriteOffset += int64(n)
+	sm.moveLastWriteOffset(int64(n))
 
 	return nil
 }
@@ -482,12 +516,13 @@ func (sm *StorageManager) WriteSegment(ctx context.Context, key common.SegmentKe
 	}
 	frame := NewSegmentFrame(key.ShardID, key.Segment, seg.Bytes()).Encode()
 	n, err := sm.storage.WriteAt(ctx, frame, sm.lastWriteOffset)
+	sm.writeBytes.Observe(float64(n))
 	if err != nil {
 		return err
 	}
 
 	sm.setSegmentPosition(key, sm.lastWriteOffset)
-	sm.lastWriteOffset += int64(n)
+	sm.moveLastWriteOffset(int64(n))
 
 	return nil
 }
@@ -502,12 +537,13 @@ func (sm *StorageManager) WriteSnapshot(ctx context.Context, segKey common.Segme
 
 	frame := NewSnapshotFrame(segKey.ShardID, segKey.Segment, snapshot.Bytes()).Encode()
 	n, err := sm.storage.WriteAt(ctx, frame, sm.lastWriteOffset)
+	sm.writeBytes.Observe(float64(n))
 	if err != nil {
 		return err
 	}
 
 	sm.setSnapshotPosition(common.SegmentKey{ShardID: segKey.ShardID, Segment: segKey.Segment}, sm.lastWriteOffset)
-	sm.lastWriteOffset += int64(n)
+	sm.moveLastWriteOffset(int64(n))
 
 	return nil
 }
@@ -532,11 +568,12 @@ func (sm *StorageManager) WriteAckStatus(ctx context.Context) error {
 			return err
 		}
 		n, err := sm.storage.WriteAt(ctx, frame.Encode(), sm.lastWriteOffset)
+		sm.writeBytes.Observe(float64(n))
 		if err != nil {
 			sm.ackStatus.UnrotateRejects(rejects)
 			return err
 		}
-		sm.lastWriteOffset += int64(n)
+		sm.moveLastWriteOffset(int64(n))
 	}
 	if !sm.statuses.Equal(ss) {
 		frame, err := NewStatusesFrame(ss)
@@ -545,14 +582,27 @@ func (sm *StorageManager) WriteAckStatus(ctx context.Context) error {
 			return err
 		}
 		n, err := sm.storage.WriteAt(ctx, frame.Encode(), sm.lastWriteOffset)
+		sm.writeBytes.Observe(float64(n))
 		if err != nil {
 			// TODO: unrotate
 			return err
 		}
-		sm.lastWriteOffset += int64(n)
+		sm.moveLastWriteOffset(int64(n))
 		sm.statuses = ss
 	}
 	return nil
+}
+
+// moveLastWriteOffset - increase the last offset position by n.
+func (sm *StorageManager) moveLastWriteOffset(n int64) {
+	sm.lastWriteOffset += n
+	sm.currentSize.Set(float64(sm.lastWriteOffset))
+}
+
+// setLastWriteOffset - set last offset position to n.
+func (sm *StorageManager) setLastWriteOffset(offset int64) {
+	sm.lastWriteOffset = offset
+	sm.currentSize.Set(float64(sm.lastWriteOffset))
 }
 
 // FileExist - check file exist.

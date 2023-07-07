@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/odarix/odarix-core-go/transport"
 )
@@ -64,15 +65,17 @@ type TCPDialerConfig struct {
 type TCPDialer struct {
 	connDialer ConnDialer
 	config     TCPDialerConfig
+	registerer prometheus.Registerer
 }
 
 var _ Dialer = (*TCPDialer)(nil)
 
 // NewTCPDialer - init new TCPDialer.
-func NewTCPDialer(dialer ConnDialer, config TCPDialerConfig) *TCPDialer {
+func NewTCPDialer(dialer ConnDialer, config TCPDialerConfig, registerer prometheus.Registerer) *TCPDialer {
 	return &TCPDialer{
 		connDialer: dialer,
 		config:     config,
+		registerer: registerer,
 	}
 }
 
@@ -101,7 +104,7 @@ func (dialer *TCPDialer) Dial(ctx context.Context) (Transport, error) {
 		if err != nil {
 			return nil, err
 		}
-		tr := NewTCPTransport(&dialer.config.Transport, conn)
+		tr := NewTCPTransport(&dialer.config.Transport, conn, dialer.registerer)
 		if err := tr.auth(ctx, dialer.config.AuthToken, dialer.config.AgentUUID); err != nil {
 			_ = tr.Close()
 			return nil, err
@@ -124,12 +127,23 @@ type TCPTransport struct {
 	onRejectFunc    func(id uint32)
 	onReadErrorFunc func(err error)
 	cancel          context.CancelFunc
+	// stat
+	roundtripDuration prometheus.Histogram
 }
 
 // NewTCPTransport - init new TCPTransport.
-func NewTCPTransport(cfg *transport.Config, conn net.Conn) *TCPTransport {
+func NewTCPTransport(cfg *transport.Config, conn net.Conn, registerer prometheus.Registerer) *TCPTransport {
+	factory := NewConflictRegisterer(registerer)
 	return &TCPTransport{
 		nt: transport.New(cfg, conn),
+		roundtripDuration: factory.NewHistogram(
+			prometheus.HistogramOpts{
+				Name:        "odarix_core_delivery_tcptransport_roundtrip_duration_seconds",
+				Help:        "Roundtrip of duration(s).",
+				Buckets:     prometheus.ExponentialBucketsRange(0.01, 15, 10),
+				ConstLabels: prometheus.Labels{"host": conn.RemoteAddr().String()},
+			},
+		),
 	}
 }
 
@@ -314,6 +328,7 @@ func (tt *TCPTransport) incomeStream(ctx context.Context) {
 
 		respmsg := &transport.ResponseMsg{}
 		respmsg.DecodeBinary(raw.Payload)
+		tt.roundtripDuration.Observe(float64(time.Now().UnixNano()-respmsg.SendAt) / 1000000)
 
 		switch respmsg.Code {
 		case http.StatusOK:

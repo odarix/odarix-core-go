@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jonboulle/clockwork"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/stretchr/testify/suite"
 
@@ -105,6 +106,7 @@ func (*MainSuite) createDialers(token, address string) []delivery.Dialer {
 					WriteTimeout: 5 * time.Second,
 				},
 			},
+			nil,
 		),
 	}
 }
@@ -134,11 +136,13 @@ func (s *MainSuite) createManager(
 		blockID uuid.UUID,
 		destinations []string,
 		shardsNumberPower uint8,
+		registerer prometheus.Registerer,
 	) (delivery.ManagerRefill, error) {
 		return delivery.NewRefill(
 			rcfg,
 			shardsNumberPower,
 			blockID,
+			registerer,
 			destinations...,
 		)
 	}
@@ -156,6 +160,7 @@ func (s *MainSuite) createManager(
 		refillInterval,
 		errorHandler,
 		clock,
+		nil,
 	)
 	if err != nil {
 		return nil, err
@@ -203,10 +208,16 @@ func (s *MainSuite) runServer(
 
 				s.T().Log("server: authorization")
 				if !s.Equal(token, auth.Token) {
-					s.NoError(tcpReader.SendResponse(ctx, "Unauthorized", 401, 0))
+					s.NoError(tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+						Text: "Unauthorized",
+						Code: http.StatusUnauthorized,
+					}))
 					return
 				}
-				s.Require().NoError(tcpReader.SendResponse(ctx, "Ok", http.StatusOK, 0))
+				s.Require().NoError(tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+					Text: "OK",
+					Code: 200,
+				}))
 				s.T().Log("server: logged in")
 
 				if onAccept != nil && !onAccept() {
@@ -246,8 +257,9 @@ func (s *MainSuite) createManagerKeeper(
 		dialers []delivery.Dialer,
 		errorHandler delivery.ErrorHandler,
 		clock clockwork.Clock,
+		registerer prometheus.Registerer,
 	) (delivery.ManagerRefillSender, error) {
-		return delivery.NewRefillSendManager(rsmCfg, dialers, errorHandler, clock)
+		return delivery.NewRefillSendManager(rsmCfg, dialers, errorHandler, clock, registerer)
 	}
 
 	encoderCtor := func(
@@ -268,11 +280,13 @@ func (s *MainSuite) createManagerKeeper(
 		blockID uuid.UUID,
 		destinations []string,
 		shardsNumberPower uint8,
+		registerer prometheus.Registerer,
 	) (delivery.ManagerRefill, error) {
 		return delivery.NewRefill(
 			rcfg,
 			shardsNumberPower,
 			blockID,
+			registerer,
 			destinations...,
 		)
 	}
@@ -297,6 +311,7 @@ func (s *MainSuite) createManagerKeeper(
 		clock,
 		dialers,
 		errorHandler,
+		nil,
 	)
 	if err != nil {
 		return nil, err

@@ -19,6 +19,7 @@ import (
 	"github.com/jonboulle/clockwork"
 	"github.com/odarix/odarix-core-go/common"
 	"github.com/odarix/odarix-core-go/transport"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/multierr"
 )
 
@@ -40,6 +41,12 @@ type RefillSendManager struct {
 	clock        clockwork.Clock
 	stop         chan struct{}
 	done         chan struct{}
+	// stat
+	registerer      prometheus.Registerer
+	fileSize        prometheus.Gauge
+	numberFiles     prometheus.Gauge
+	deletedFileSize *prometheus.HistogramVec
+	errors          *prometheus.CounterVec
 }
 
 // NewRefillSendManager - init new RefillSendManger.
@@ -48,6 +55,7 @@ func NewRefillSendManager(
 	dialers []Dialer,
 	errorHandler ErrorHandler,
 	clock clockwork.Clock,
+	registerer prometheus.Registerer,
 ) (*RefillSendManager, error) {
 	if len(dialers) == 0 {
 		return nil, ErrDestinationsRequired
@@ -56,7 +64,7 @@ func NewRefillSendManager(
 	for _, dialer := range dialers {
 		dialersMap[dialer.String()] = dialer
 	}
-
+	factory := NewConflictRegisterer(registerer)
 	return &RefillSendManager{
 		rsmCfg:       rsmCfg,
 		dialers:      dialersMap,
@@ -64,6 +72,34 @@ func NewRefillSendManager(
 		clock:        clock,
 		stop:         make(chan struct{}),
 		done:         make(chan struct{}),
+		registerer:   registerer,
+		fileSize: factory.NewGauge(
+			prometheus.GaugeOpts{
+				Name: "odarix_core_delivery_refill_send_manager_file_bytes",
+				Help: "Total files size of bytes.",
+			},
+		),
+		numberFiles: factory.NewGauge(
+			prometheus.GaugeOpts{
+				Name: "odarix_core_delivery_refill_send_manager_files_count",
+				Help: "Total number of files.",
+			},
+		),
+		deletedFileSize: factory.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "odarix_core_delivery_refill_send_manager_deleted_file_bytes",
+				Help:    "Deleted file sizes of bytes.",
+				Buckets: prometheus.ExponentialBucketsRange(50<<20, 1<<30, 10),
+			},
+			[]string{"cause"},
+		),
+		errors: factory.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "odarix_core_delivery_refill_send_manager_errors",
+				Help: "Total number errors.",
+			},
+			[]string{"place"},
+		),
 	}, nil
 }
 
@@ -86,12 +122,14 @@ func (rsm *RefillSendManager) Run(ctx context.Context) {
 				if errors.Is(err, ErrShutdown) {
 					return
 				}
+				rsm.errors.With(prometheus.Labels{"place": "processing"}).Inc()
 				rsm.errorHandler("fail scan and send loop", err)
 				continue
 			}
 
 			// delete old files if the size exceeds the maximum
 			if err := rsm.clearing(); err != nil {
+				rsm.errors.With(prometheus.Labels{"place": "clearing"}).Inc()
 				rsm.errorHandler("fail clearing", err)
 				continue
 			}
@@ -150,11 +188,12 @@ func (rsm *RefillSendManager) processing(ctx context.Context) error {
 		default:
 		}
 		// read, prepare to send, send
-		if err = rsm.fileProcessing(ctx, strings.TrimSuffix(fileInfo.Name(), refillFileExtension)); err != nil {
+		if err = rsm.fileProcessing(ctx, fileInfo); err != nil {
 			rsm.errorHandler(fmt.Sprintf("fail send file: %s", fileInfo.Name()), err)
 			if IsPermanent(err) {
 				// delete bad refill file
 				_ = os.Remove(filepath.Join(rsm.rsmCfg.Dir, fileInfo.Name()))
+				rsm.deletedFileSize.With(prometheus.Labels{"cause": "error"}).Observe(float64(fileInfo.Size()))
 			}
 		}
 	}
@@ -178,6 +217,7 @@ func (rsm *RefillSendManager) scanFolder() ([]fs.FileInfo, error) {
 			!strings.HasPrefix(entry.Name(), "current")
 	}
 
+	var fullFileSize int64
 	refillFiles := make([]fs.FileInfo, 0, len(files))
 	for _, file := range files {
 		if isCompletedRefill(file) {
@@ -185,19 +225,26 @@ func (rsm *RefillSendManager) scanFolder() ([]fs.FileInfo, error) {
 			if err != nil {
 				return nil, err
 			}
-
+			fullFileSize += fileInfo.Size()
 			refillFiles = append(refillFiles, fileInfo)
 		}
 	}
-
+	rsm.fileSize.Set(float64(fullFileSize))
+	rsm.numberFiles.Set(float64(len(refillFiles)))
 	return refillFiles, nil
 }
 
 // processingFile - read and preparing data and sending to destinations.
 //
 //revive:disable:cognitive-complexity // because there is nowhere to go
-func (rsm *RefillSendManager) fileProcessing(ctx context.Context, fileName string) error {
-	reader, err := NewRefillReader(ctx, &FileStorageConfig{Dir: rsm.rsmCfg.Dir, FileName: fileName})
+func (rsm *RefillSendManager) fileProcessing(ctx context.Context, fileInfo fs.FileInfo) error {
+	reader, err := NewRefillReader(
+		ctx,
+		&FileStorageConfig{
+			Dir:      rsm.rsmCfg.Dir,
+			FileName: strings.TrimSuffix(fileInfo.Name(), refillFileExtension),
+		},
+	)
 	if err != nil {
 		return err
 	}
@@ -206,7 +253,6 @@ func (rsm *RefillSendManager) fileProcessing(ctx context.Context, fileName strin
 	// indicator that all goroutines completed successfully
 	withError := new(atomic.Bool)
 	wg := new(sync.WaitGroup)
-
 	// grouping data by destinations and start send with goroutines
 	groupingByDestinations := reader.MakeSendMap()
 	groupingByDestinations.Range(func(dname string, shardID int, shardData []uint32) bool {
@@ -219,7 +265,7 @@ func (rsm *RefillSendManager) fileProcessing(ctx context.Context, fileName strin
 		wg.Add(1)
 		go func(dr Dialer, id int, data []uint32) {
 			defer wg.Done()
-			if err := rsm.send(ctx, dr, reader, uint16(id), data); err != nil {
+			if err := rsm.send(ctx, dr, reader, uint16(id), data, rsm.registerer); err != nil {
 				if !IsPermanent(err) {
 					withError.Store(true)
 				}
@@ -239,6 +285,7 @@ func (rsm *RefillSendManager) fileProcessing(ctx context.Context, fileName strin
 		return nil
 	}
 
+	rsm.deletedFileSize.With(prometheus.Labels{"cause": "delivered"}).Observe(float64(fileInfo.Size()))
 	// if file has been delivered to all known destinations, it doesn't required anymore and should be deleted
 	return reader.DeleteFile()
 }
@@ -250,6 +297,7 @@ func (rsm *RefillSendManager) send(
 	source *RefillReader,
 	shardID uint16,
 	data []uint32,
+	registerer prometheus.Registerer,
 ) error {
 	rs := NewRefillSender(
 		dialer,
@@ -257,6 +305,7 @@ func (rsm *RefillSendManager) send(
 		rsm.errorHandler,
 		shardID,
 		data,
+		registerer,
 	)
 
 	return rs.Send(ctx)
@@ -280,6 +329,7 @@ func (rsm *RefillSendManager) clearing() error {
 
 	for len(refillFiles) > 0 && fullFileSize > rsm.rsmCfg.MaxRefillSize {
 		rsm.errorHandler(fmt.Sprintf("remove file: %s", refillFiles[0].Name()), errRefillLimitExceeded)
+		rsm.deletedFileSize.With(prometheus.Labels{"cause": "limit"}).Observe(float64(refillFiles[0].Size()))
 		if err = os.Remove(filepath.Join(rsm.rsmCfg.Dir, refillFiles[0].Name())); err != nil {
 			rsm.errorHandler(fmt.Sprintf("failed to delete file: %s", refillFiles[0].Name()), err)
 			refillFiles = refillFiles[1:]
@@ -288,6 +338,8 @@ func (rsm *RefillSendManager) clearing() error {
 		fullFileSize -= refillFiles[0].Size()
 		refillFiles = refillFiles[1:]
 	}
+	rsm.numberFiles.Set(float64(len(refillFiles)))
+	rsm.fileSize.Set(float64(fullFileSize))
 	return nil
 }
 
@@ -321,6 +373,9 @@ type RefillSender struct {
 	done            chan struct{}
 	errs            chan error
 	errorHandler    ErrorHandler
+	// stat
+	successfulDelivery prometheus.Counter
+	needSend           *prometheus.HistogramVec
 }
 
 // NewRefillSender - init new RefillSender.
@@ -330,7 +385,9 @@ func NewRefillSender(
 	errorHandler ErrorHandler,
 	shardID uint16,
 	data []uint32,
+	registerer prometheus.Registerer,
 ) *RefillSender {
+	factory := NewConflictRegisterer(registerer)
 	return &RefillSender{
 		dialer:          dialer,
 		source:          source,
@@ -340,6 +397,22 @@ func NewRefillSender(
 		done:            make(chan struct{}),
 		errs:            make(chan error, 1),
 		errorHandler:    errorHandler,
+		successfulDelivery: factory.NewCounter(
+			prometheus.CounterOpts{
+				Name:        "odarix_core_delivery_refill_sender_successful_delivery",
+				Help:        "Total successful delivery.",
+				ConstLabels: prometheus.Labels{"host": dialer.String()},
+			},
+		),
+		needSend: factory.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:        "odarix_core_delivery_refill_sender_need_send_bytes",
+				Help:        "Amount of data to send.",
+				ConstLabels: prometheus.Labels{"host": dialer.String()},
+				Buckets:     prometheus.ExponentialBucketsRange(1024, 120<<20, 10),
+			},
+			[]string{"type"},
+		),
 	}
 }
 
@@ -392,6 +465,7 @@ func (rs *RefillSender) dial(ctx context.Context) (err error) {
 			rs.errorHandler(fmt.Sprintf("%s: fail to write shard EOF", rs), errWrite)
 		}
 		rs.safeDone()
+		rs.successfulDelivery.Inc()
 	})
 
 	rs.transport.OnReject(func(_ uint32) {
@@ -461,6 +535,17 @@ func (rs *RefillSender) collectedData() ([]PreparedData, error) {
 		)
 
 		lastSendSegment = segment
+	}
+
+	for _, pd := range pData {
+		switch pd.MsgType {
+		case transport.MsgDryPut:
+			rs.needSend.With(prometheus.Labels{"type": "dry_put"}).Observe(float64(pd.Value.size))
+		case transport.MsgPut:
+			rs.needSend.With(prometheus.Labels{"type": "put"}).Observe(float64(pd.Value.size))
+		case transport.MsgSnapshot:
+			rs.needSend.With(prometheus.Labels{"type": "snapshot"}).Observe(float64(pd.Value.size))
+		}
 	}
 
 	return pData, nil

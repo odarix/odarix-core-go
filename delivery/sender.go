@@ -11,6 +11,7 @@ import (
 	"github.com/cenkalti/backoff/v4"
 	"github.com/google/uuid"
 	"github.com/odarix/odarix-core-go/common"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // Source is a manager
@@ -31,6 +32,9 @@ type Sender struct {
 	done          chan struct{}
 	errorHandler  ErrorHandler
 	cancelCause   context.CancelCauseFunc
+	// stat
+	sentSegment      prometheus.Gauge
+	responsedSegment *prometheus.GaugeVec
 }
 
 // NewSender is a constructor
@@ -42,7 +46,9 @@ func NewSender(
 	lastAck uint32,
 	source Source,
 	errorHandler ErrorHandler,
+	registerer prometheus.Registerer,
 ) *Sender {
+	factory := NewConflictRegisterer(registerer)
 	sender := &Sender{
 		dialer:        dialer,
 		source:        source,
@@ -51,6 +57,21 @@ func NewSender(
 		lastDelivered: lastAck,
 		done:          make(chan struct{}),
 		errorHandler:  errorHandler,
+		sentSegment: factory.NewGauge(
+			prometheus.GaugeOpts{
+				Name:        "odarix_core_delivery_sender_sent_segment",
+				Help:        "Sent segment ID.",
+				ConstLabels: prometheus.Labels{"host": dialer.String()},
+			},
+		),
+		responsedSegment: factory.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name:        "odarix_core_delivery_sender_responsed_segment",
+				Help:        "Responsed segment ID.",
+				ConstLabels: prometheus.Labels{"host": dialer.String()},
+			},
+			[]string{"state"},
+		),
 	}
 	ctx, cancel := context.WithCancelCause(ctx)
 	sender.cancelCause = cancel
@@ -95,10 +116,12 @@ func (sender *Sender) mainLoop(ctx context.Context) {
 			}
 		}
 		transport.OnAck(func(id uint32) {
+			sender.responsedSegment.With(prometheus.Labels{"state": "ack"}).Set(float64(id))
 			sender.source.Ack(common.SegmentKey{ShardID: sender.shardID, Segment: id}, sender.String())
 			onResponse(id)
 		})
 		transport.OnReject(func(id uint32) {
+			sender.responsedSegment.With(prometheus.Labels{"state": "reject"}).Set(float64(id))
 			sender.source.Reject(common.SegmentKey{ShardID: sender.shardID, Segment: id}, sender.String())
 			onResponse(id)
 		})
@@ -175,6 +198,7 @@ func (sender *Sender) writeLoop(ctx context.Context, transport Transport, from u
 		if err = transport.SendSegment(ctx, segment); err != nil {
 			return id - 1, err
 		}
+		sender.sentSegment.Set(float64(id))
 	}
 	return id - 1, context.Cause(ctx)
 }

@@ -53,7 +53,7 @@ func (s *ManagerKeeperSuite) TestRefillSenderHappyPath() {
 		reader := server.NewProtocolReader(server.StartWith(tcpReader, msg))
 		defer reader.Destroy()
 		for {
-			segmentID, wrMsg, err := reader.Next(ctx)
+			rq, err := reader.Next(ctx)
 			if err != nil {
 				if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
 					s.NoError(err, "fail to read next message")
@@ -62,9 +62,14 @@ func (s *ManagerKeeperSuite) TestRefillSenderHappyPath() {
 			}
 
 			// process data
-			retCh <- wrMsg
+			retCh <- rq.Message
 
-			if !s.NoError(tcpReader.SendResponse(ctx, "OK", 200, segmentID), "fail to send response") {
+			if !s.NoError(tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+				Text:      "OK",
+				Code:      200,
+				SegmentID: rq.SegmentID,
+				SendAt:    rq.SentAt,
+			}), "fail to send response") {
 				return
 			}
 		}
@@ -72,7 +77,10 @@ func (s *ManagerKeeperSuite) TestRefillSenderHappyPath() {
 
 	handleRefill := func(ctx context.Context, msg *transport.RawMessage, tcpReader *server.TCPReader) {
 		s.T().Log("not required")
-		s.NoError(tcpReader.SendResponse(ctx, "OK", 200, 0), "fail to send response")
+		s.NoError(tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+			Text: "OK",
+			Code: 200,
+		}), "fail to send response")
 	}
 
 	listener := s.runServer(baseCtx, "127.0.0.1:5000", s.token, nil, handleStream, handleRefill)
@@ -119,7 +127,7 @@ func (s *ManagerKeeperSuite) TestWithRotate() {
 		reader := server.NewProtocolReader(server.StartWith(tcpReader, msg))
 		defer reader.Destroy()
 		for {
-			segmentID, wrMsg, err := reader.Next(ctx)
+			rq, err := reader.Next(ctx)
 			if err != nil {
 				if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
 					s.NoError(err, "fail to read next message")
@@ -128,9 +136,13 @@ func (s *ManagerKeeperSuite) TestWithRotate() {
 			}
 
 			// process data
-			retCh <- wrMsg
-
-			if !s.NoError(tcpReader.SendResponse(ctx, "OK", 200, segmentID), "fail to send response") {
+			retCh <- rq.Message
+			if !s.NoError(tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+				Text:      "OK",
+				Code:      200,
+				SegmentID: rq.SegmentID,
+				SendAt:    rq.SentAt,
+			}), "fail to send response") {
 				return
 			}
 		}
@@ -138,7 +150,10 @@ func (s *ManagerKeeperSuite) TestWithRotate() {
 
 	handleRefill := func(ctx context.Context, msg *transport.RawMessage, tcpReader *server.TCPReader) {
 		s.T().Log("not required")
-		s.NoError(tcpReader.SendResponse(ctx, "OK", 200, 0), "fail to send response")
+		s.NoError(tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+			Text: "OK",
+			Code: 200,
+		}), "fail to send response")
 	}
 
 	listener := s.runServer(baseCtx, "127.0.0.1:5001", s.token, nil, handleStream, handleRefill)
@@ -207,7 +222,7 @@ func (s *ManagerKeeperSuite) TestWithReject() {
 		reader := server.NewProtocolReader(server.StartWith(tcpReader, msg))
 		defer reader.Destroy()
 		for {
-			segmentID, wrMsg, err := reader.Next(ctx)
+			rq, err := reader.Next(ctx)
 			if err != nil {
 				if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
 					s.NoError(err, "fail to read next message")
@@ -216,17 +231,27 @@ func (s *ManagerKeeperSuite) TestWithReject() {
 			}
 
 			// process data
-			retCh <- wrMsg
+			retCh <- rq.Message
 
-			if segmentID%2 == 0 {
-				if !s.NoError(tcpReader.SendResponse(ctx, "reject", 400, segmentID), "fail to send response") {
+			if rq.SegmentID%2 == 0 {
+				if !s.NoError(tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+					Text:      "reject",
+					Code:      400,
+					SegmentID: rq.SegmentID,
+					SendAt:    rq.SentAt,
+				}), "fail to send response") {
 					return
 				}
-				rejectsCh <- wrMsg
+				rejectsCh <- rq.Message
 				continue
 			}
 
-			if !s.NoError(tcpReader.SendResponse(ctx, "OK", 200, segmentID), "fail to send response") {
+			if !s.NoError(tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+				Text:      "OK",
+				Code:      200,
+				SegmentID: rq.SegmentID,
+				SendAt:    rq.SentAt,
+			}), "fail to send response") {
 				return
 			}
 		}
@@ -289,7 +314,7 @@ func (s *ManagerKeeperSuite) TestWithReject() {
 		// save BlockWriter
 		// send block to S3
 		for {
-			_, wrMsg, err := pr.Next(ctx)
+			rq, err := pr.Next(ctx)
 			if err != nil {
 				if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
 					s.NoError(err, "fail to read next message")
@@ -299,10 +324,13 @@ func (s *ManagerKeeperSuite) TestWithReject() {
 
 			s.Require().NotEqual(0, len(rejectsCh))
 			ewr := <-rejectsCh
-			s.Equal(ewr.String(), wrMsg.String())
+			s.Equal(ewr.String(), rq.Message.String())
 		}
 
-		_ = tcpReader.SendResponse(ctx, "OK", 200, 0)
+		_ = tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+			Text: "OK",
+			Code: 200,
+		})
 	}
 
 	listener := s.runServer(baseCtx, "127.0.0.1:5002", s.token, nil, handleStream, handleRefill)

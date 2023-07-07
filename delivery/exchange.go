@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/odarix/odarix-core-go/common"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 var (
@@ -25,22 +26,38 @@ type Exchange struct {
 	records      *sync.Map // map[common.SegmentKey]*exchangeRecord
 	lastSegments []uint32  // max segment id per shard
 	rejects      []uint32  // 0-1 marks that shard has rejected segment
+	// stat
+	puts    prometheus.Counter
+	removes prometheus.Counter
 }
 
 // NewExchange is a constructor
 //
 // We rely on the fact that destinations is a correct index name-serial.
-func NewExchange(shards, destinations int) *Exchange {
+func NewExchange(shards, destinations int, registerer prometheus.Registerer) *Exchange {
 	lastSegments := make([]uint32, shards)
 	for i := range lastSegments {
 		lastSegments[i] = math.MaxUint32
 	}
+	factory := NewConflictRegisterer(registerer)
 	return &Exchange{
 		locked:       0,
 		destinations: destinations,
 		records:      new(sync.Map),
 		lastSegments: lastSegments,
 		rejects:      make([]uint32, shards),
+		puts: factory.NewCounter(
+			prometheus.CounterOpts{
+				Name: "odarix_core_delivery_exchange_puts",
+				Help: "Number of put in exchange.",
+			},
+		),
+		removes: factory.NewCounter(
+			prometheus.CounterOpts{
+				Name: "odarix_core_delivery_exchange_removes",
+				Help: "Number of remove in exchange.",
+			},
+		),
 	}
 }
 
@@ -48,7 +65,11 @@ func NewExchange(shards, destinations int) *Exchange {
 func (ex *Exchange) deleteRecord(key any) {
 	record, ok := ex.records.LoadAndDelete(key)
 	if ok {
-		record.(*exchangeRecord).Destroy()
+		exr := record.(*exchangeRecord)
+		exr.Destroy()
+		if exr.Resolved() && !errors.Is(exr.err, ErrPromiseCanceled) {
+			ex.removes.Inc()
+		}
 	}
 }
 
@@ -91,6 +112,7 @@ func (ex *Exchange) Put(
 		panic("put data in locked exchange")
 	}
 
+	ex.puts.Inc()
 	record, _ := ex.records.LoadOrStore(key, newExchangeRecord())
 	record.(*exchangeRecord).Resolve(segment, redundant, ex.destinations, sendPromise, expiredAt)
 	if !atomic.CompareAndSwapUint32(&ex.lastSegments[key.ShardID], key.Segment-1, key.Segment) {

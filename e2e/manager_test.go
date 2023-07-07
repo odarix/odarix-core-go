@@ -44,14 +44,14 @@ func (s *BlockManagerSuite) errorHandler(msg string, err error) {
 }
 
 func (s *BlockManagerSuite) TestDeliveryManagerHappyPath() {
-	var wr *prompb.WriteRequest
+	retCh := make(chan *prompb.WriteRequest, 30)
 	baseCtx := context.Background()
 
 	handleStream := func(ctx context.Context, msg *transport.RawMessage, tcpReader *server.TCPReader) {
 		reader := server.NewProtocolReader(server.StartWith(tcpReader, msg))
 		defer reader.Destroy()
 		for {
-			segmentID, data, err := reader.Next(ctx)
+			rq, err := reader.Next(ctx)
 			if err != nil {
 				if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
 					s.NoError(err, "fail to read next message")
@@ -60,9 +60,14 @@ func (s *BlockManagerSuite) TestDeliveryManagerHappyPath() {
 			}
 
 			// process data
-			s.Equal(wr.String(), data.String())
+			retCh <- rq.Message
 
-			if !s.NoError(tcpReader.SendResponse(ctx, "OK", 200, segmentID), "fail to send response") {
+			if !s.NoError(tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+				Text:      "OK",
+				Code:      200,
+				SegmentID: rq.SegmentID,
+				SendAt:    rq.SentAt,
+			}), "fail to send response") {
 				return
 			}
 		}
@@ -70,7 +75,10 @@ func (s *BlockManagerSuite) TestDeliveryManagerHappyPath() {
 
 	handleRefill := func(ctx context.Context, msg *transport.RawMessage, tcpReader *server.TCPReader) {
 		s.T().Log("not required")
-		s.NoError(tcpReader.SendResponse(ctx, "OK", 200, 0), "fail to send response")
+		s.NoError(tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+			Text: "OK",
+			Code: 200,
+		}), "fail to send response")
 	}
 
 	listener := s.runServer(baseCtx, "127.0.0.1:6000", s.token, nil, handleStream, handleRefill)
@@ -86,7 +94,7 @@ func (s *BlockManagerSuite) TestDeliveryManagerHappyPath() {
 
 	s.T().Log("client: send data")
 	for i := 0; i < 10; i++ {
-		wr = s.makeData(5000, int64(i))
+		wr := s.makeData(5000, int64(i))
 		data, errLoop := wr.Marshal()
 		s.Require().NoError(errLoop)
 		h := common.NewHashdex(data)
@@ -94,6 +102,8 @@ func (s *BlockManagerSuite) TestDeliveryManagerHappyPath() {
 		delivered, errLoop := manager.Send(baseCtx, h)
 		s.Require().NoError(errLoop)
 		s.Require().True(delivered)
+		wrMsg := <-retCh
+		s.Equal(wr.String(), wrMsg.String())
 	}
 
 	s.T().Log("client: shutdown manager")
@@ -109,7 +119,7 @@ func (s *BlockManagerSuite) TestDeliveryManagerHappyPath() {
 //revive:disable-next-line:cognitive-complexity this is test
 func (s *BlockManagerSuite) TestDeliveryManagerBreakingConnection() {
 	var (
-		wr      *prompb.WriteRequest
+		retCh   = make(chan *prompb.WriteRequest, 30)
 		breaker int32
 	)
 	const (
@@ -145,7 +155,7 @@ func (s *BlockManagerSuite) TestDeliveryManagerBreakingConnection() {
 				return
 			}
 
-			segmentID, data, err := reader.Next(ctx)
+			rq, err := reader.Next(ctx)
 			if err != nil {
 				if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
 					s.NoError(err, "fail to read next message")
@@ -159,9 +169,14 @@ func (s *BlockManagerSuite) TestDeliveryManagerBreakingConnection() {
 			}
 
 			// process data
-			s.Equal(wr.String(), data.String())
+			retCh <- rq.Message
 
-			if !s.NoError(tcpReader.SendResponse(ctx, "OK", 200, segmentID), "fail to send response") {
+			if !s.NoError(tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+				Text:      "OK",
+				Code:      200,
+				SegmentID: rq.SegmentID,
+				SendAt:    rq.SentAt,
+			}), "fail to send response") {
 				return
 			}
 		}
@@ -169,7 +184,10 @@ func (s *BlockManagerSuite) TestDeliveryManagerBreakingConnection() {
 
 	handleRefill := func(ctx context.Context, msg *transport.RawMessage, tcpReader *server.TCPReader) {
 		s.T().Log("not required")
-		s.NoError(tcpReader.SendResponse(ctx, "OK", 200, 0), "fail to send response")
+		s.NoError(tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+			Text: "OK",
+			Code: 200,
+		}), "fail to send response")
 	}
 
 	listener := s.runServer(baseCtx, "127.0.0.1:6001", s.token, onAccept, handleStream, handleRefill)
@@ -185,35 +203,41 @@ func (s *BlockManagerSuite) TestDeliveryManagerBreakingConnection() {
 
 	s.T().Log("client: send data before break")
 	for i := 0; i < 5; i++ {
-		wr = s.makeData(5000, int64(i))
+		wr := s.makeData(5000, int64(i))
 		data, errLoop := wr.Marshal()
 		s.Require().NoError(errLoop)
 		h := common.NewHashdex(data)
 		delivered, errLoop := manager.Send(baseCtx, h)
 		s.Require().NoError(errLoop)
 		s.Require().True(delivered)
+		wrMsg := <-retCh
+		s.Equal(wr.String(), wrMsg.String())
 	}
 
 	s.T().Log("client: break connection before read")
 	for i := 5; i < 10; i++ {
-		wr = s.makeData(5000, int64(i))
+		wr := s.makeData(5000, int64(i))
 		data, errLoop := wr.Marshal()
 		s.Require().NoError(errLoop)
 		h := common.NewHashdex(data)
 		delivered, errLoop := manager.Send(baseCtx, h)
 		s.Require().NoError(errLoop)
 		s.Require().True(delivered)
+		wrMsg := <-retCh
+		s.Equal(wr.String(), wrMsg.String())
 	}
 
 	s.T().Log("client: break connection after read")
 	for i := 10; i < 15; i++ {
-		wr = s.makeData(5000, int64(i))
+		wr := s.makeData(5000, int64(i))
 		data, errLoop := wr.Marshal()
 		s.Require().NoError(errLoop)
 		h := common.NewHashdex(data)
 		delivered, errLoop := manager.Send(baseCtx, h)
 		s.Require().NoError(errLoop)
 		s.Require().True(delivered)
+		wrMsg := <-retCh
+		s.Equal(wr.String(), wrMsg.String())
 	}
 
 	s.T().Log("client: shutdown manager")
@@ -229,16 +253,16 @@ func (s *BlockManagerSuite) TestDeliveryManagerBreakingConnection() {
 //revive:disable-next-line:cognitive-complexity this is test
 func (s *BlockManagerSuite) TestDeliveryManagerReject() {
 	var (
-		wr            *prompb.WriteRequest
 		rejectSegment uint32 = 5
 	)
+	retCh := make(chan *prompb.WriteRequest, 30)
 	baseCtx := context.Background()
 
 	handleStream := func(ctx context.Context, msg *transport.RawMessage, tcpReader *server.TCPReader) {
 		reader := server.NewProtocolReader(server.StartWith(tcpReader, msg))
 		defer reader.Destroy()
 		for {
-			segmentID, data, err := reader.Next(ctx)
+			rq, err := reader.Next(ctx)
 			if err != nil {
 				if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
 					s.NoError(err, "fail to read next message")
@@ -247,16 +271,26 @@ func (s *BlockManagerSuite) TestDeliveryManagerReject() {
 			}
 
 			// process data
-			s.Equal(wr.String(), data.String())
+			retCh <- rq.Message
 
-			if segmentID == rejectSegment {
-				if !s.NoError(tcpReader.SendResponse(ctx, "reject", 400, segmentID), "fail to send response") {
+			if rq.SegmentID == rejectSegment {
+				if !s.NoError(tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+					Text:      "reject",
+					Code:      400,
+					SegmentID: rq.SegmentID,
+					SendAt:    rq.SentAt,
+				}), "fail to send response") {
 					return
 				}
 				return
 			}
 
-			if !s.NoError(tcpReader.SendResponse(ctx, "OK", 200, segmentID), "fail to send response") {
+			if !s.NoError(tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+				Text:      "OK",
+				Code:      200,
+				SegmentID: rq.SegmentID,
+				SendAt:    rq.SentAt,
+			}), "fail to send response") {
 				return
 			}
 		}
@@ -264,7 +298,10 @@ func (s *BlockManagerSuite) TestDeliveryManagerReject() {
 
 	handleRefill := func(ctx context.Context, msg *transport.RawMessage, tcpReader *server.TCPReader) {
 		s.T().Log("not required")
-		s.NoError(tcpReader.SendResponse(ctx, "OK", 200, 0), "fail to send response")
+		s.NoError(tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+			Text: "OK",
+			Code: 200,
+		}), "fail to send response")
 	}
 
 	listener := s.runServer(baseCtx, "127.0.0.1:6002", s.token, nil, handleStream, handleRefill)
@@ -280,7 +317,7 @@ func (s *BlockManagerSuite) TestDeliveryManagerReject() {
 
 	s.T().Log("client: send data")
 	for i := 0; i < 10; i++ {
-		wr = s.makeData(5000, int64(i))
+		wr := s.makeData(5000, int64(i))
 		data, errLoop := wr.Marshal()
 		s.Require().NoError(errLoop)
 		h := common.NewHashdex(data)
@@ -291,6 +328,8 @@ func (s *BlockManagerSuite) TestDeliveryManagerReject() {
 		} else {
 			s.Require().True(delivered)
 		}
+		wrMsg := <-retCh
+		s.Equal(wr.String(), wrMsg.String())
 	}
 
 	s.T().Log("client: check exist file current.refill")

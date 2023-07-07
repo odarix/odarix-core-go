@@ -144,6 +144,7 @@ func (s *RefillSenderSuite) makeRefill(destinationsNames []string) {
 		fcfg,
 		1,
 		blockID,
+		nil,
 		destinationsNames...,
 	)
 	s.Require().NoError(err)
@@ -241,6 +242,7 @@ func (s *RefillSenderSuite) TestHappyPath() {
 		dialers,
 		s.errorHandler,
 		clock,
+		nil,
 	)
 	s.Require().NoError(err)
 
@@ -295,6 +297,7 @@ func (s *RefillSenderSuite) TestHappyPathWithChangeDestinations() {
 		dialers,
 		s.errorHandler,
 		clock,
+		nil,
 	)
 	s.Require().NoError(err)
 
@@ -417,6 +420,7 @@ func (s *RefillSenderSuite) TestRejectAndAck() {
 		dialers,
 		s.errorHandler,
 		clock,
+		nil,
 	)
 	s.Require().NoError(err)
 
@@ -472,6 +476,7 @@ func (s *RefillSenderSuite) TestClearing() {
 		dialers,
 		s.errorHandler,
 		clock,
+		nil,
 	)
 	s.Require().NoError(err)
 
