@@ -437,7 +437,7 @@ func (rs *RefillSender) collectedData() ([]PreparedData, error) {
 	for _, segment := range rs.dataToSend {
 		if lastSendSegment+1 != segment {
 			if err := rs.source.Restore(
-				common.SegmentKey{ShardID: rs.shardID, Segment: segment},
+				common.SegmentKey{ShardID: rs.shardID, Segment: segment - 1},
 				lastSendSegment,
 				&pData,
 			); err != nil {
@@ -1028,7 +1028,7 @@ func (rr *RefillReader) Restore(key common.SegmentKey, lastSendSegment uint32, p
 	rr.mx.RLock()
 	defer rr.mx.RUnlock()
 
-	for ; key.Segment > lastSendSegment+1; key.Segment-- {
+	for ; key.Segment > lastSendSegment; key.Segment-- {
 		if mval := rr.getSnapshotPosition(key); mval != nil {
 			*pData = append(*pData, PreparedData{
 				MsgType:   transport.MsgSnapshot,

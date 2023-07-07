@@ -22,10 +22,9 @@ var (
 type Exchange struct {
 	locked       uint32
 	destinations int
-	// rwmutex      *sync.RWMutex
-	// records      map[common.SegmentKey]*exchangeRecord
 	records      *sync.Map // map[common.SegmentKey]*exchangeRecord
-	lastSegments []uint32
+	lastSegments []uint32  // max segment id per shard
+	rejects      []uint32  // 0-1 marks that shard has rejected segment
 }
 
 // NewExchange is a constructor
@@ -39,10 +38,9 @@ func NewExchange(shards, destinations int) *Exchange {
 	return &Exchange{
 		locked:       0,
 		destinations: destinations,
-		// rwmutex:      new(sync.RWMutex),
-		// records:      make(map[common.SegmentKey]*exchangeRecord),
 		records:      new(sync.Map),
 		lastSegments: lastSegments,
+		rejects:      make([]uint32, shards),
 	}
 }
 
@@ -114,18 +112,17 @@ func (ex *Exchange) Ack(key common.SegmentKey) {
 	}
 }
 
-// If ancestor still in exchange, then there is a rejected ancestor.
-// We should preserve segments after rejected segment until it will be written in refill
-// because we probably will need to make a snapshot for it (require all redundants after).
-// If some segment not safe for delete it will be deleted later, on remove rejected ancestor.
+// isSafeForDelete checks conditions that segment can be removed safely
+//
+// If shard has any rejected segment, than we should preserve all segments in this shard
+// for minimize snapshots count.
 func (ex *Exchange) isSafeForDelete(key common.SegmentKey) bool {
-	ancestorKey := common.SegmentKey{ShardID: key.ShardID, Segment: key.Segment - 1}
-	_, ancestorInExchange := ex.records.Load(ancestorKey)
-	return !ancestorInExchange
+	return atomic.LoadUint32(&ex.rejects[key.ShardID]) == 0
 }
 
 // Reject segment by key
 func (ex *Exchange) Reject(key common.SegmentKey) bool {
+	atomic.StoreUint32(&ex.rejects[key.ShardID], 1)
 	record, ok := ex.records.Load(key)
 	if ok {
 		record.(*exchangeRecord).Reject()
@@ -137,11 +134,19 @@ func (ex *Exchange) Reject(key common.SegmentKey) bool {
 // RejectedOrExpired returns slice of keys which was rejected
 func (ex *Exchange) RejectedOrExpired(now time.Time) (keys []common.SegmentKey, empty bool) {
 	empty = true
-	ex.records.Range(func(key, value any) bool {
+	ex.records.Range(func(k, value any) bool {
 		empty = false
+		key := k.(common.SegmentKey)
 		record := value.(*exchangeRecord)
+		if !record.Resolved() {
+			return true
+		}
+		if record.Rejected() || record.Expired(now) || atomic.LoadUint32(&ex.rejects[key.ShardID]) != 0 {
+			keys = append(keys, key)
+			return true
+		}
 		if record.Rejected() || record.Expired(now) {
-			keys = append(keys, key.(common.SegmentKey))
+			keys = append(keys, key)
 		}
 		return true
 	})
@@ -155,9 +160,12 @@ func (ex *Exchange) Remove(keys []common.SegmentKey) {
 	}
 
 	for _, key := range keys {
-		if record, ok := ex.records.Load(key); ok {
-			ex.removeWithAckFollowers(key)
-			record.(*exchangeRecord).sendPromise.Refill()
+		if value, ok := ex.records.Load(key); ok {
+			ex.deleteRecord(key)
+			record := value.(*exchangeRecord)
+			if !record.Delivered() {
+				record.sendPromise.Refill()
+			}
 		}
 	}
 }
@@ -171,21 +179,6 @@ func (ex *Exchange) RemoveAll() {
 			return true
 		},
 	)
-}
-
-// It is possible situation when follow segments already delivered
-// but still in exchange because have rejected ancestor.
-// We should delete it here. (See Exchange.Ack method.)
-func (ex *Exchange) removeWithAckFollowers(key common.SegmentKey) {
-	ex.deleteRecord(key)
-	for {
-		key.Segment++
-		record, ok := ex.records.Load(key)
-		if !ok || !record.(*exchangeRecord).Delivered() {
-			return
-		}
-		ex.deleteRecord(key)
-	}
 }
 
 // Redundant returns redundant by key

@@ -213,25 +213,15 @@ func (s *ManagerSuite) TestAckRejectRace() {
 	defer shutdownCancel()
 	s.NoError(manager.Shutdown(shutdownCtx), "manager should be gracefully stopped")
 
-	s.T().Log("Check that rejected data is in refill")
-	for i := 0; i < 4; i++ {
-		segment, err := refill.Get(baseCtx, common.SegmentKey{ShardID: uint16(i), Segment: 1})
-		s.NoError(err, "segment should be in refill")
-		parts := strings.SplitN(string(segment.Bytes()), ":", 6)
-
-		s.Equal("segment", parts[0])
-		s.Equal(strconv.Itoa(i), parts[2])
-		s.Equal(equalRejectedData, parts[5])
-	}
-
-	s.T().Log("Check that exchange is empty")
-	for i := 0; i < 3; i++ {
-		if i == 1 {
-			continue
-		}
+	s.T().Log("Check that rejected and followed data is in refill")
+	for i := 1; i < 3; i++ {
 		for j := 0; j < 4; j++ {
-			_, err := manager.Get(baseCtx, common.SegmentKey{ShardID: uint16(j), Segment: uint32(i)})
-			s.Error(err)
+			segment, err := refill.Get(baseCtx, common.SegmentKey{ShardID: uint16(j), Segment: uint32(i)})
+			s.NoError(err, "segment should be in refill")
+			parts := strings.SplitN(string(segment.Bytes()), ":", 6)
+
+			s.Equal("segment", parts[0])
+			s.Equal(strconv.Itoa(j), parts[2])
 		}
 	}
 }
