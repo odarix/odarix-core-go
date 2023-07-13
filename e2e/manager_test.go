@@ -12,7 +12,6 @@ import (
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/odarix/odarix-core-go/common"
 	"github.com/odarix/odarix-core-go/server"
 	"github.com/odarix/odarix-core-go/transport"
 )
@@ -97,9 +96,7 @@ func (s *BlockManagerSuite) TestDeliveryManagerHappyPath() {
 		wr := s.makeData(5000, int64(i))
 		data, errLoop := wr.Marshal()
 		s.Require().NoError(errLoop)
-		h := common.NewHashdex(data)
-
-		delivered, errLoop := manager.Send(baseCtx, h)
+		delivered, errLoop := manager.Send(baseCtx, newProtoDataTest(data))
 		s.Require().NoError(errLoop)
 		s.Require().True(delivered)
 		wrMsg := <-retCh
@@ -206,8 +203,7 @@ func (s *BlockManagerSuite) TestDeliveryManagerBreakingConnection() {
 		wr := s.makeData(5000, int64(i))
 		data, errLoop := wr.Marshal()
 		s.Require().NoError(errLoop)
-		h := common.NewHashdex(data)
-		delivered, errLoop := manager.Send(baseCtx, h)
+		delivered, errLoop := manager.Send(baseCtx, newProtoDataTest(data))
 		s.Require().NoError(errLoop)
 		s.Require().True(delivered)
 		wrMsg := <-retCh
@@ -219,8 +215,7 @@ func (s *BlockManagerSuite) TestDeliveryManagerBreakingConnection() {
 		wr := s.makeData(5000, int64(i))
 		data, errLoop := wr.Marshal()
 		s.Require().NoError(errLoop)
-		h := common.NewHashdex(data)
-		delivered, errLoop := manager.Send(baseCtx, h)
+		delivered, errLoop := manager.Send(baseCtx, newProtoDataTest(data))
 		s.Require().NoError(errLoop)
 		s.Require().True(delivered)
 		wrMsg := <-retCh
@@ -232,8 +227,7 @@ func (s *BlockManagerSuite) TestDeliveryManagerBreakingConnection() {
 		wr := s.makeData(5000, int64(i))
 		data, errLoop := wr.Marshal()
 		s.Require().NoError(errLoop)
-		h := common.NewHashdex(data)
-		delivered, errLoop := manager.Send(baseCtx, h)
+		delivered, errLoop := manager.Send(baseCtx, newProtoDataTest(data))
 		s.Require().NoError(errLoop)
 		s.Require().True(delivered)
 		wrMsg := <-retCh
@@ -320,8 +314,7 @@ func (s *BlockManagerSuite) TestDeliveryManagerReject() {
 		wr := s.makeData(5000, int64(i))
 		data, errLoop := wr.Marshal()
 		s.Require().NoError(errLoop)
-		h := common.NewHashdex(data)
-		delivered, errLoop := manager.Send(baseCtx, h)
+		delivered, errLoop := manager.Send(baseCtx, newProtoDataTest(data))
 		s.Require().NoError(errLoop)
 		if i == int(rejectSegment) {
 			s.Require().False(delivered)

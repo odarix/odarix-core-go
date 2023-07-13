@@ -39,6 +39,7 @@ type Manager struct {
 	destinations []string
 	blockID      uuid.UUID
 	encodersLock *sync.Mutex
+	hashdexCtor  HashdexCtor
 	encoders     []ManagerEncoder
 	exchange     *Exchange
 	refill       ManagerRefill
@@ -46,6 +47,7 @@ type Manager struct {
 	cancelRefill context.CancelCauseFunc
 	refillDone   chan struct{}
 	senders      []*Sender
+	haTracker    HATracker
 	// stat
 	registerer       prometheus.Registerer
 	encodeDuration   prometheus.Histogram
@@ -101,6 +103,15 @@ type (
 		shardsNumberPower uint8,
 		registerer prometheus.Registerer,
 	) (ManagerRefill, error)
+
+	// HashdexCtor - func-constuctor for Hashdex.
+	HashdexCtor func(protoData []byte) common.ShardedData
+
+	// HATracker - interface for High Availability Tracker.
+	HATracker interface {
+		IsDrop(cluster, replica string) bool
+		Destroy()
+	}
 )
 
 // NewManager - init new Manager.
@@ -110,10 +121,12 @@ type (
 func NewManager(
 	ctx context.Context,
 	dialers []Dialer,
+	hashdexCtor HashdexCtor,
 	encoderCtor ManagerEncoderCtor,
 	refillCtor ManagerRefillCtor,
 	shardsNumberPower uint8,
 	refillInterval time.Duration,
+	haTracker HATracker,
 	errorHandler ErrorHandler,
 	clock clockwork.Clock,
 	registerer prometheus.Registerer,
@@ -171,11 +184,13 @@ func NewManager(
 		destinations: destinations,
 		blockID:      blockID,
 		encodersLock: new(sync.Mutex),
+		hashdexCtor:  hashdexCtor,
 		encoders:     encoders,
 		exchange:     exchange,
 		refill:       refill,
 		refillSignal: make(chan struct{}, 1),
 		refillDone:   make(chan struct{}),
+		haTracker:    haTracker,
 		registerer:   registerer,
 		encodeDuration: factory.NewHistogram(
 			prometheus.HistogramOpts{
@@ -250,7 +265,13 @@ func NewManager(
 }
 
 // Send - send data to encoders.
-func (mgr *Manager) Send(ctx context.Context, data common.ShardedData) (ack bool, err error) {
+func (mgr *Manager) Send(ctx context.Context, data ProtoData) (ack bool, err error) {
+	hx := mgr.hashdexCtor(data.Bytes())
+	if mgr.haTracker.IsDrop(hx.Cluster(), hx.Replica()) {
+		hx.Destroy()
+		data.Destroy()
+		return true, nil
+	}
 	result := NewSendPromise(len(mgr.encoders))
 	expiredAt := mgr.clock.Now().Add(mgr.refillInterval)
 	group, gCtx := errgroup.WithContext(ctx)
@@ -259,7 +280,7 @@ func (mgr *Manager) Send(ctx context.Context, data common.ShardedData) (ack bool
 	for i := range mgr.encoders {
 		i := i
 		group.Go(func() error {
-			key, segment, redundant, errEnc := mgr.encoders[i].Encode(gCtx, data)
+			key, segment, redundant, errEnc := mgr.encoders[i].Encode(gCtx, hx)
 			if errEnc != nil {
 				return errEnc
 			}
@@ -269,19 +290,11 @@ func (mgr *Manager) Send(ctx context.Context, data common.ShardedData) (ack bool
 			tsNow := time.Now().UnixMilli()
 			maxTS := segment.Latest()
 			if maxTS != 0 {
-				mgr.lagDuration.With(
-					prometheus.Labels{"type": "max"},
-				).Observe(
-					float64((tsNow - maxTS) / 1000),
-				)
+				mgr.lagDuration.With(prometheus.Labels{"type": "max"}).Observe(float64((tsNow - maxTS) / 1000))
 			}
 			minTS := segment.Earliest()
 			if minTS != math.MaxInt64 {
-				mgr.lagDuration.With(
-					prometheus.Labels{"type": "min"},
-				).Observe(
-					float64((tsNow - minTS) / 1000),
-				)
+				mgr.lagDuration.With(prometheus.Labels{"type": "min"}).Observe(float64((tsNow - minTS) / 1000))
 			}
 			mgr.exchange.Put(key, segment, redundant, result, expiredAt)
 			return nil
@@ -290,6 +303,7 @@ func (mgr *Manager) Send(ctx context.Context, data common.ShardedData) (ack bool
 	err = group.Wait()
 	mgr.encodersLock.Unlock()
 	mgr.encodeDuration.Observe(float64(time.Since(start).Milliseconds()))
+	hx.Destroy()
 	data.Destroy()
 	if err != nil {
 		// TODO: is encoder recoverable?
@@ -467,7 +481,6 @@ func (mgr *Manager) collectSegmentsToRefill(ctx context.Context) bool {
 	if err := mgr.refill.WriteAckStatus(ctx); err != nil {
 		mgr.errorHandler("fail write ack status in refill", err)
 	}
-
 	mgr.exchange.Remove(rejected)
 	return !empty
 }

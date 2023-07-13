@@ -47,6 +47,10 @@ func (*MainSuite) makeData(count int, sid int64) *prompb.WriteRequest {
 						Value: "test" + strconv.Itoa(i),
 					},
 					{
+						Name:  "__replica__",
+						Value: "blablabla" + strconv.Itoa(i),
+					},
+					{
 						Name:  "instance",
 						Value: "blablabla" + strconv.Itoa(i),
 					},
@@ -150,14 +154,16 @@ func (s *MainSuite) createManager(
 	shardsNumberPower := uint8(0)
 	refillInterval := time.Minute
 	clock := clockwork.NewFakeClock()
-
+	haTracker := delivery.NewHighAvailabilityTracker(ctx, nil, clock)
 	manager, err := delivery.NewManager(
 		ctx,
 		dialers,
+		common.NewHashdex,
 		encoderCtor,
 		refillCtor,
 		shardsNumberPower,
 		refillInterval,
+		haTracker,
 		errorHandler,
 		clock,
 		nil,
@@ -305,6 +311,7 @@ func (s *MainSuite) createManagerKeeper(
 		ctx,
 		cfg,
 		delivery.NewManager,
+		common.NewHashdex,
 		encoderCtor,
 		refillCtor,
 		managerCtor,
@@ -318,4 +325,25 @@ func (s *MainSuite) createManagerKeeper(
 	}
 
 	return managerKeeper, nil
+}
+
+// protoDataTest - test data.
+type protoDataTest struct {
+	data []byte
+}
+
+func newProtoDataTest(data []byte) *protoDataTest {
+	return &protoDataTest{
+		data: data,
+	}
+}
+
+// Bytes - return bytes, for implements.
+func (pd *protoDataTest) Bytes() []byte {
+	return pd.data
+}
+
+// Destroy - clear memory, for implements.
+func (pd *protoDataTest) Destroy() {
+	pd.data = nil
 }

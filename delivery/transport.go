@@ -328,7 +328,7 @@ func (tt *TCPTransport) incomeStream(ctx context.Context) {
 
 		respmsg := &transport.ResponseMsg{}
 		respmsg.DecodeBinary(raw.Payload)
-		tt.roundtripDuration.Observe(float64(time.Now().UnixNano()-respmsg.SendAt) / 1000000)
+		tt.roundtripDuration.Observe(float64(time.Now().UnixNano()-respmsg.SendAt) / float64(time.Second))
 
 		switch respmsg.Code {
 		case http.StatusOK:

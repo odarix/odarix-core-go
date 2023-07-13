@@ -73,6 +73,9 @@ func NewSender(
 			[]string{"state"},
 		),
 	}
+	sender.sentSegment.Set(0)
+	sender.responsedSegment.With(prometheus.Labels{"state": "ack"}).Set(0)
+	sender.responsedSegment.With(prometheus.Labels{"state": "reject"}).Set(0)
 	ctx, cancel := context.WithCancelCause(ctx)
 	sender.cancelCause = cancel
 	go sender.mainLoop(ctx)

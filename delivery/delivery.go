@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/jonboulle/clockwork"
-	"github.com/odarix/odarix-core-go/common"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/multierr"
 )
@@ -16,10 +15,12 @@ import (
 type ManagerCtor func(
 	ctx context.Context,
 	dialers []Dialer,
+	hashdexCtor HashdexCtor,
 	encoderCtor ManagerEncoderCtor,
 	refillCtor ManagerRefillCtor,
 	shardsNumberPower uint8,
 	refillInterval time.Duration,
+	haTracker HATracker,
 	errorHandler ErrorHandler,
 	clock clockwork.Clock,
 	registerer prometheus.Registerer,
@@ -53,12 +54,14 @@ type ManagerKeeper struct {
 	cfg                *ManagerKeeperConfig
 	manager            *Manager
 	managerCtor        ManagerCtor
+	hashdexCtor        HashdexCtor
 	managerEncoderCtor ManagerEncoderCtor
 	managerRefillCtor  ManagerRefillCtor
 	mangerRefillSender ManagerRefillSender
 	clock              clockwork.Clock
 	rwm                *sync.RWMutex
 	dialers            []Dialer
+	haTracker          HATracker
 	errorHandler       ErrorHandler
 	rotateTick         time.Duration
 	ctx                context.Context
@@ -77,6 +80,7 @@ func NewManagerKeeper(
 	ctx context.Context,
 	cfg *ManagerKeeperConfig,
 	managerCtor ManagerCtor,
+	hashdexCtor HashdexCtor,
 	managerEncoderCtor ManagerEncoderCtor,
 	managerRefillCtor ManagerRefillCtor,
 	mangerRefillSenderCtor MangerRefillSenderCtor,
@@ -87,14 +91,17 @@ func NewManagerKeeper(
 ) (*ManagerKeeper, error) {
 	var err error
 	factory := NewConflictRegisterer(registerer)
+	haTracker := NewHighAvailabilityTracker(ctx, registerer, clock)
 	dk := &ManagerKeeper{
 		cfg:                cfg,
 		managerCtor:        managerCtor,
+		hashdexCtor:        hashdexCtor,
 		managerEncoderCtor: managerEncoderCtor,
 		managerRefillCtor:  managerRefillCtor,
 		clock:              clock,
 		rwm:                new(sync.RWMutex),
 		dialers:            dialers,
+		haTracker:          haTracker,
 		errorHandler:       errorHandler,
 		rotateTick:         cfg.RotateInterval,
 		ctx:                ctx,
@@ -120,10 +127,12 @@ func NewManagerKeeper(
 	dk.manager, err = dk.managerCtor(
 		dk.ctx,
 		dk.dialers,
+		dk.hashdexCtor,
 		dk.managerEncoderCtor,
 		dk.managerRefillCtor,
 		DefaultShardsNumberPower,
 		dk.cfg.RefillInterval,
+		dk.haTracker,
 		dk.errorHandler,
 		dk.clock,
 		dk.registerer,
@@ -169,10 +178,12 @@ func (dk *ManagerKeeper) rotateLoop(ctx context.Context) {
 			newManager, err := dk.managerCtor(
 				dk.ctx,
 				dk.dialers,
+				dk.hashdexCtor,
 				dk.managerEncoderCtor,
 				dk.managerRefillCtor,
 				prevManager.CalculateRequiredShardsNumberPower(),
 				dk.cfg.RefillInterval,
+				dk.haTracker,
 				dk.errorHandler,
 				dk.clock,
 				dk.registerer,
@@ -202,7 +213,7 @@ func (dk *ManagerKeeper) rotateLoop(ctx context.Context) {
 }
 
 // Send - send metrics data to encode and send.
-func (dk *ManagerKeeper) Send(ctx context.Context, data common.ShardedData) (bool, error) {
+func (dk *ManagerKeeper) Send(ctx context.Context, data ProtoData) (bool, error) {
 	dk.inFlight.Inc()
 	defer dk.inFlight.Dec()
 	start := time.Now()
@@ -229,6 +240,7 @@ func (dk *ManagerKeeper) Send(ctx context.Context, data common.ShardedData) (boo
 
 // Shutdown - stop ticker and waits until Manager end to work and then exits.
 func (dk *ManagerKeeper) Shutdown(ctx context.Context) error {
+	defer dk.haTracker.Destroy()
 	close(dk.stop)
 	<-dk.done
 

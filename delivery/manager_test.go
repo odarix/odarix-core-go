@@ -50,13 +50,17 @@ func (s *ManagerSuite) TestSendWithAck() {
 
 	s.T().Log("Instance and open manager")
 	clock := clockwork.NewFakeClock()
+	haTracker := delivery.NewHighAvailabilityTracker(baseCtx, nil, clock)
+	defer haTracker.Destroy()
 	manager, err := delivery.NewManager(
 		baseCtx,
 		dialers,
+		newByteShardedDataTest,
 		s.simpleEncoder(),
 		refillCtor,
 		2,
 		time.Minute,
+		haTracker,
 		s.errorHandler,
 		clock,
 		nil,
@@ -102,7 +106,9 @@ func (s *ManagerSuite) TestRejectToRefill() {
 
 	s.T().Log("Instance and open manager")
 	clock := clockwork.NewFakeClock()
-	manager, err := delivery.NewManager(baseCtx, dialers, s.simpleEncoder(), refillCtor, 2, time.Minute, s.errorHandler, clock, nil)
+	haTracker := delivery.NewHighAvailabilityTracker(baseCtx, nil, clock)
+	defer haTracker.Destroy()
+	manager, err := delivery.NewManager(baseCtx, dialers, newByteShardedDataTest, s.simpleEncoder(), refillCtor, 2, time.Minute, haTracker, s.errorHandler, clock, nil)
 	s.Require().NoError(err)
 	manager.Open(baseCtx)
 
@@ -164,7 +170,9 @@ func (s *ManagerSuite) TestAckRejectRace() {
 
 	s.T().Log("Instance and open manager")
 	clock := clockwork.NewFakeClock()
-	manager, err := delivery.NewManager(baseCtx, dialers, s.simpleEncoder(), refillCtor, 2, time.Minute, s.errorHandler, clock, nil)
+	haTracker := delivery.NewHighAvailabilityTracker(baseCtx, nil, clock)
+	defer haTracker.Destroy()
+	manager, err := delivery.NewManager(baseCtx, dialers, newByteShardedDataTest, s.simpleEncoder(), refillCtor, 2, time.Minute, haTracker, s.errorHandler, clock, nil)
 	s.Require().NoError(err)
 	manager.Open(baseCtx)
 
@@ -248,7 +256,9 @@ func (s *ManagerSuite) TestRestoreFromRefill() {
 
 	s.T().Log("Instance and open manager")
 	clock := clockwork.NewFakeClock()
-	manager, err := delivery.NewManager(baseCtx, dialers, s.simpleEncoder(), refillCtor, 2, 5*time.Second, s.errorHandler, clock, nil)
+	haTracker := delivery.NewHighAvailabilityTracker(baseCtx, nil, clock)
+	defer haTracker.Destroy()
+	manager, err := delivery.NewManager(baseCtx, dialers, newByteShardedDataTest, s.simpleEncoder(), refillCtor, 2, 5*time.Second, haTracker, s.errorHandler, clock, nil)
 	s.Require().NoError(err)
 	manager.Open(baseCtx)
 
@@ -304,7 +314,9 @@ func (s *ManagerSuite) TestRestoreWithNoRefill() {
 
 	s.T().Log("Instance and open manager")
 	clock := clockwork.NewFakeClock()
-	manager, err := delivery.NewManager(baseCtx, dialers, s.simpleEncoder(), refillCtor, 2, time.Minute, s.errorHandler, clock, nil)
+	haTracker := delivery.NewHighAvailabilityTracker(baseCtx, nil, clock)
+	defer haTracker.Destroy()
+	manager, err := delivery.NewManager(baseCtx, dialers, newByteShardedDataTest, s.simpleEncoder(), refillCtor, 2, time.Minute, haTracker, s.errorHandler, clock, nil)
 	s.Require().NoError(err)
 	manager.Open(baseCtx)
 
@@ -351,7 +363,9 @@ func (s *ManagerSuite) TestNotOpened() {
 
 	s.T().Log("Instance manager")
 	clock := clockwork.NewFakeClock()
-	manager, err := delivery.NewManager(baseCtx, dialers, s.simpleEncoder(), refillCtor, 2, time.Minute, s.errorHandler, clock, nil)
+	haTracker := delivery.NewHighAvailabilityTracker(baseCtx, nil, clock)
+	defer haTracker.Destroy()
+	manager, err := delivery.NewManager(baseCtx, dialers, newByteShardedDataTest, s.simpleEncoder(), refillCtor, 2, time.Minute, haTracker, s.errorHandler, clock, nil)
 	s.Require().NoError(err)
 
 	s.T().Log("Send data will fall with timeout")
@@ -398,7 +412,9 @@ func (s *ManagerSuite) TestLongDial() {
 
 	s.T().Log("Instance and open manager")
 	clock := clockwork.NewFakeClock()
-	manager, err := delivery.NewManager(baseCtx, dialers, s.simpleEncoder(), refillCtor, 2, time.Minute, s.errorHandler, clock, nil)
+	haTracker := delivery.NewHighAvailabilityTracker(baseCtx, nil, clock)
+	defer haTracker.Destroy()
+	manager, err := delivery.NewManager(baseCtx, dialers, newByteShardedDataTest, s.simpleEncoder(), refillCtor, 2, time.Minute, haTracker, s.errorHandler, clock, nil)
 	s.Require().NoError(err)
 	manager.Open(baseCtx)
 

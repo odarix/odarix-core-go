@@ -26,6 +26,12 @@ type Snapshot interface {
 	Destroy()
 }
 
+// ProtoData is an universal interface for blob protobuf data
+type ProtoData interface {
+	Bytes() []byte
+	Destroy()
+}
+
 // ErrorHandler useful for logging errors caused in delivery box
 type ErrorHandler func(msg string, err error)
 

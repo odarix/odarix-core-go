@@ -1,5 +1,7 @@
 package delivery_test
 
+import "github.com/odarix/odarix-core-go/common"
+
 // dataTest - test data.
 type dataTest struct {
 	data []byte
@@ -45,10 +47,29 @@ type shardedDataTest struct {
 	data string
 }
 
+func newByteShardedDataTest(data []byte) common.ShardedData {
+	return newShardedDataTest(string(data))
+}
+
 func newShardedDataTest(data string) *shardedDataTest {
 	return &shardedDataTest{
 		data: data,
 	}
+}
+
+// Bytes - return bytes, for implements.
+func (dt *shardedDataTest) Bytes() []byte {
+	return []byte(dt.data)
+}
+
+// Cluster -  return cluster name, for implements.
+func (*shardedDataTest) Cluster() string {
+	return ""
+}
+
+// Replica - return replica name, for implements.
+func (*shardedDataTest) Replica() string {
+	return ""
 }
 
 // Destroy - clear memory, for implements.
