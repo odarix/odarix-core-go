@@ -36,18 +36,19 @@ type Manager struct {
 	errorHandler   ErrorHandler
 	clock          clockwork.Clock
 
-	destinations []string
-	blockID      uuid.UUID
-	encodersLock *sync.Mutex
-	hashdexCtor  HashdexCtor
-	encoders     []ManagerEncoder
-	exchange     *Exchange
-	refill       ManagerRefill
-	refillSignal chan struct{}
-	cancelRefill context.CancelCauseFunc
-	refillDone   chan struct{}
-	senders      []*Sender
-	haTracker    HATracker
+	destinations   []string
+	blockID        uuid.UUID
+	encodersLock   *sync.Mutex
+	hashdexCtor    HashdexCtor
+	encoders       []ManagerEncoder
+	exchange       *Exchange
+	refill         ManagerRefill
+	refillSignal   chan struct{}
+	cancelRefill   context.CancelCauseFunc
+	refillDone     chan struct{}
+	senders        []*Sender
+	rejectNotifyer RejectNotifyer
+	haTracker      HATracker
 	// stat
 	registerer       prometheus.Registerer
 	encodeDuration   prometheus.Histogram
@@ -112,6 +113,11 @@ type (
 		IsDrop(cluster, replica string) bool
 		Destroy()
 	}
+
+	// RejectNotifyer - notify on reject.
+	RejectNotifyer interface {
+		NotifyOnReject()
+	}
 )
 
 // NewManager - init new Manager.
@@ -126,6 +132,7 @@ func NewManager(
 	refillCtor ManagerRefillCtor,
 	shardsNumberPower uint8,
 	refillInterval time.Duration,
+	rejectNotifyer RejectNotifyer,
 	haTracker HATracker,
 	errorHandler ErrorHandler,
 	clock clockwork.Clock,
@@ -181,17 +188,18 @@ func NewManager(
 		errorHandler:   errorHandler,
 		clock:          clock,
 
-		destinations: destinations,
-		blockID:      blockID,
-		encodersLock: new(sync.Mutex),
-		hashdexCtor:  hashdexCtor,
-		encoders:     encoders,
-		exchange:     exchange,
-		refill:       refill,
-		refillSignal: make(chan struct{}, 1),
-		refillDone:   make(chan struct{}),
-		haTracker:    haTracker,
-		registerer:   registerer,
+		destinations:   destinations,
+		blockID:        blockID,
+		encodersLock:   new(sync.Mutex),
+		hashdexCtor:    hashdexCtor,
+		encoders:       encoders,
+		exchange:       exchange,
+		refill:         refill,
+		refillSignal:   make(chan struct{}, 1),
+		refillDone:     make(chan struct{}),
+		rejectNotifyer: rejectNotifyer,
+		haTracker:      haTracker,
+		registerer:     registerer,
 		encodeDuration: factory.NewHistogram(
 			prometheus.HistogramOpts{
 				Name:    "odarix_core_delivery_manager_encode_duration_milliseconds",
@@ -360,6 +368,7 @@ func (mgr *Manager) Reject(key common.SegmentKey, dest string) {
 		default:
 		}
 	}
+	mgr.rejectNotifyer.NotifyOnReject()
 	mgr.rejects.Inc()
 }
 

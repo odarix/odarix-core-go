@@ -199,6 +199,30 @@ func (s *RefillSuite) TestRestoreWithSegment() {
 	s.NoError(err)
 }
 
+func (s *RefillSuite) TestRestoreWithoutSnapshot() {
+	segKey := common.SegmentKey{
+		ShardID: 0,
+		Segment: 0,
+	}
+
+	s.mr.WriteSegment(s.ctx, segKey, s.etalonsData)
+	segKey.Segment++
+	s.mr.WriteSegment(s.ctx, segKey, s.etalonsData)
+	segKey.Segment++
+	s.mr.WriteSegment(s.ctx, segKey, s.etalonsData)
+	segKey.Segment++
+	s.mr.WriteSegment(s.ctx, segKey, s.etalonsData)
+
+	actualSnap, actSegments, err := s.mr.Restore(s.ctx, segKey)
+	s.NoError(err)
+	s.Equal(4, len(actSegments))
+	s.Nil(actualSnap)
+	s.Equal(s.etalonsData.Bytes(), actSegments[0].Bytes())
+
+	err = s.mr.Shutdown(s.ctx)
+	s.NoError(err)
+}
+
 func (s *RefillSuite) TestRestoreWithoutSegment() {
 	segKey := common.SegmentKey{
 		ShardID: 0,

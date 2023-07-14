@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jonboulle/clockwork"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/odarix/odarix-core-go/common"
@@ -403,8 +404,10 @@ func (s *ManagerKeeperSuite) TestSendHappyPath() {
 	mangerRefillSenderCtor := s.constructorForRefillSender(&ManagerRefillSenderMock{})
 
 	cfg := &delivery.ManagerKeeperConfig{
-		RotateInterval: 5 * time.Second,
-		RefillInterval: 5 * time.Second,
+		RotateInterval:       5 * time.Second,
+		RefillInterval:       5 * time.Second,
+		RejectRotateInterval: 2 * time.Second,
+		ShutdownTimeout:      time.Second,
 		RefillSenderManager: &delivery.RefillSendManagerConfig{
 			Dir:           "/tmp/refill",
 			ScanInterval:  3 * time.Second,
@@ -469,8 +472,10 @@ func (s *ManagerKeeperSuite) TestSendWithRotate() {
 	mangerRefillSenderCtor := s.constructorForRefillSender(&ManagerRefillSenderMock{})
 
 	cfg := &delivery.ManagerKeeperConfig{
-		RotateInterval: 2 * time.Second,
-		RefillInterval: 5 * time.Second,
+		RotateInterval:       2 * time.Second,
+		RefillInterval:       5 * time.Second,
+		RejectRotateInterval: 2 * time.Second,
+		ShutdownTimeout:      time.Second,
 		RefillSenderManager: &delivery.RefillSendManagerConfig{
 			Dir:           "/tmp/refill",
 			ScanInterval:  3 * time.Second,
@@ -548,8 +553,10 @@ func (s *ManagerKeeperSuite) TestSendWithReject() {
 	mangerRefillSenderCtor := s.constructorForRefillSender(&ManagerRefillSenderMock{})
 
 	cfg := &delivery.ManagerKeeperConfig{
-		RotateInterval: 2 * time.Second,
-		RefillInterval: 5 * time.Second,
+		RotateInterval:       2 * time.Second,
+		RefillInterval:       5 * time.Second,
+		RejectRotateInterval: 2 * time.Second,
+		ShutdownTimeout:      time.Second,
 		RefillSenderManager: &delivery.RefillSendManagerConfig{
 			Dir:           "/tmp/refill",
 			ScanInterval:  3 * time.Second,
@@ -608,4 +615,58 @@ func (s *ManagerKeeperSuite) TestSendWithReject() {
 
 	err = managerKeeper.Shutdown(shutdownCtx)
 	s.NoError(err)
+}
+
+func TestRotateTimer(t *testing.T) {
+	delayAfterNotify := 4 * time.Second
+	durationBlock := 10 * time.Second
+	clock := clockwork.NewFakeClock()
+	rt := delivery.NewRotateTimer(clock, durationBlock, delayAfterNotify)
+
+	t.Log("notify tick")
+	rt.NotifyOnReject()
+	clock.Advance(delayAfterNotify)
+	loop := <-rt.Chan()
+	assert.Zero(t, clock.Since(loop))
+
+	t.Log("main tick")
+	rt.Reset()
+	clock.Advance(durationBlock)
+	loop = <-rt.Chan()
+	assert.Zero(t, clock.Since(loop))
+
+	t.Log("2 notify tick")
+	rt.Reset()
+	rt.NotifyOnReject()
+	clock.Advance(delayAfterNotify / 2)
+	rt.NotifyOnReject()
+	clock.Advance(delayAfterNotify)
+	loop = <-rt.Chan()
+	assert.Zero(t, clock.Since(loop))
+
+	t.Log("main tick")
+	rt.Reset()
+	var stop bool
+	i := 0
+	for ; i < 20 && !stop; i++ {
+		rt.NotifyOnReject()
+		clock.Advance(delayAfterNotify / 2)
+		select {
+		case loop = <-rt.Chan():
+			stop = true
+		default:
+		}
+	}
+	assert.Equal(t, 5, i)
+	assert.Zero(t, clock.Since(loop))
+
+	t.Log("main tick stopped")
+	rt.Reset()
+	rt.Stop()
+	clock.Advance(durationBlock)
+	select {
+	case loop = <-rt.Chan():
+	default:
+	}
+	assert.NotZero(t, clock.Since(loop))
 }

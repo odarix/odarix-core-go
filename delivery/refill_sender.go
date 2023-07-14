@@ -24,7 +24,11 @@ import (
 )
 
 // errRefillLimitExceeded - error if refill limit exceeded.
-var errRefillLimitExceeded = errors.New("refill limit exceeded")
+var (
+	errRefillLimitExceeded = errors.New("refill limit exceeded")
+	// errCorruptedFile - error if the file is corrupted.
+	errCorruptedFile = errors.New("corrupted file")
+)
 
 // RefillSendManagerConfig - config for RefillSendManagerConfig.
 type RefillSendManagerConfig struct {
@@ -108,15 +112,12 @@ func (rsm *RefillSendManager) Run(ctx context.Context) {
 	if err := rsm.checkTmpRefill(); err != nil {
 		rsm.errorHandler("fail check and rename tmp refill file", err)
 	}
-
-	ticker := rsm.clock.NewTicker(rsm.rsmCfg.ScanInterval)
-	defer ticker.Stop()
+	loopTicker := rsm.clock.NewTicker(rsm.rsmCfg.ScanInterval)
+	defer loopTicker.Stop()
 	defer close(rsm.done)
-
 	for {
 		select {
-		// TODO fast start
-		case <-ticker.Chan():
+		case <-loopTicker.Chan():
 			// scan the folder for files to send and process these files
 			if err := rsm.processing(ctx); err != nil {
 				if errors.Is(err, ErrShutdown) {
@@ -244,6 +245,7 @@ func (rsm *RefillSendManager) fileProcessing(ctx context.Context, fileInfo fs.Fi
 			Dir:      rsm.rsmCfg.Dir,
 			FileName: strings.TrimSuffix(fileInfo.Name(), refillFileExtension),
 		},
+		rsm.errorHandler,
 	)
 	if err != nil {
 		return err
@@ -504,6 +506,8 @@ func (rs *RefillSender) safeError(err error) {
 }
 
 // collectedData - collects all the necessary position data for sending.
+//
+//revive:disable-next-line:cyclomatic  but readable
 func (rs *RefillSender) collectedData() ([]PreparedData, error) {
 	var lastSendSegment uint32 = math.MaxUint32
 	pData := make([]PreparedData, 0, len(rs.dataToSend))
@@ -511,7 +515,7 @@ func (rs *RefillSender) collectedData() ([]PreparedData, error) {
 	for _, segment := range rs.dataToSend {
 		if lastSendSegment+1 != segment {
 			if err := rs.source.Restore(
-				common.SegmentKey{ShardID: rs.shardID, Segment: segment - 1},
+				common.SegmentKey{ShardID: rs.shardID, Segment: segment},
 				lastSendSegment,
 				&pData,
 			); err != nil {
@@ -686,18 +690,21 @@ type RefillReader struct {
 	isOpenFile bool
 	// last position when writing to
 	lastWriteOffset int64
+	// handler for error
+	errorHandler ErrorHandler
 }
 
 // NewRefillReader - init new RefillReader.
-func NewRefillReader(ctx context.Context, cfg *FileStorageConfig) (*RefillReader, error) {
+func NewRefillReader(ctx context.Context, cfg *FileStorageConfig, errorHandler ErrorHandler) (*RefillReader, error) {
 	storage, err := NewFileStorage(cfg)
 	if err != nil {
 		return nil, err
 	}
 	rr := &RefillReader{
-		storage:   storage,
-		mx:        new(sync.RWMutex),
-		markupMap: make(map[MarkupKey]*MarkupValue),
+		storage:      storage,
+		mx:           new(sync.RWMutex),
+		markupMap:    make(map[MarkupKey]*MarkupValue),
+		errorHandler: errorHandler,
 	}
 	if err := rr.openFile(); err != nil {
 		return nil, err
@@ -771,8 +778,14 @@ func (rr *RefillReader) clearingToSent(sm *SendMap) {
 }
 
 // readMarkup - read MarkupMap from storage.
+//
+//revive:disable-next-line:cyclomatic  but readable
 func (rr *RefillReader) readMarkup(ctx context.Context) error {
 	var off int64
+	fsize, err := rr.storage.Size()
+	if err != nil {
+		return err
+	}
 	for {
 		h, err := ReadHeader(ctx, rr.storage, off)
 		if errors.Is(err, io.EOF) || errors.Is(err, ErrUnknownFrameType) {
@@ -781,23 +794,36 @@ func (rr *RefillReader) readMarkup(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		if fsize < off+int64(h.FullSize()) {
+			rr.errorHandler("truncated file by frame", errCorruptedFile)
+			if err = rr.storage.Truncate(off); err != nil {
+				return err
+			}
+			break
+		}
 		off += int64(h.SizeOf())
-
 		// read data from body
 		err = rr.readFromBody(h, off)
 		if err != nil {
 			return err
 		}
-
 		// move cursor position
 		off += int64(h.GetSize())
+		if fsize > off+int64(h.SizeOf()) {
+			continue
+		}
+		if fsize != off {
+			rr.errorHandler("truncated file by header", errCorruptedFile)
+			if err = rr.storage.Truncate(off); err != nil {
+				return err
+			}
+		}
+		break
 	}
-
 	rr.lastWriteOffset = off
 	if !rr.checkRestoredServiceData() {
 		return ErrServiceDataNotRestored{}
 	}
-
 	return rr.restoreStatuses()
 }
 
@@ -1110,10 +1136,20 @@ func (rr *RefillReader) getSegmentPosition(segKey common.SegmentKey) *MarkupValu
 
 // Restore - get data for restore.
 func (rr *RefillReader) Restore(key common.SegmentKey, lastSendSegment uint32, pData *[]PreparedData) error {
+	reverse := func(s []PreparedData) {
+		r := len(s) - 1
+		//revive:disable-next-line:add-constant take half length
+		for i := 0; i < len(s)/2; i++ {
+			s[i], s[r-i] = s[r-i], s[i]
+		}
+	}
 	rr.mx.RLock()
 	defer rr.mx.RUnlock()
-
-	for ; key.Segment > lastSendSegment; key.Segment-- {
+	rlen := len(*pData)
+	defer func() {
+		reverse((*pData)[rlen:])
+	}()
+	for key.Segment > lastSendSegment+1 {
 		if mval := rr.getSnapshotPosition(key); mval != nil {
 			*pData = append(*pData, PreparedData{
 				MsgType:   transport.MsgSnapshot,
@@ -1122,6 +1158,7 @@ func (rr *RefillReader) Restore(key common.SegmentKey, lastSendSegment uint32, p
 			})
 			return nil
 		}
+		key.Segment--
 		mval := rr.getSegmentPosition(key)
 		if mval == nil {
 			return SegmentNotFoundInRefill(key)
@@ -1132,7 +1169,6 @@ func (rr *RefillReader) Restore(key common.SegmentKey, lastSendSegment uint32, p
 			Value:     mval,
 		})
 	}
-
 	return nil
 }
 

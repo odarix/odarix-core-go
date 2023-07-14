@@ -46,7 +46,7 @@ func (fs *FileStorage) OpenFile() error {
 
 	f, err := os.OpenFile(
 		fs.GetPath(),
-		os.O_CREATE|os.O_RDWR|os.O_SYNC,
+		os.O_CREATE|os.O_RDWR,
 		//revive:disable-next-line:add-constant file permissions simple readable as octa-number
 		0o600,
 	)
@@ -177,4 +177,14 @@ func (fs *FileStorage) Truncate(size int64) error {
 	}
 
 	return nil
+}
+
+// Size - length in bytes for regular files; system-dependent for others.
+func (fs *FileStorage) Size() (int64, error) {
+	fstat, err := fs.fileDescriptor.Stat()
+	if err != nil {
+		return 0, err
+	}
+
+	return fstat.Size(), nil
 }

@@ -20,6 +20,7 @@ type ManagerCtor func(
 	refillCtor ManagerRefillCtor,
 	shardsNumberPower uint8,
 	refillInterval time.Duration,
+	rejectNotifyer RejectNotifyer,
 	haTracker HATracker,
 	errorHandler ErrorHandler,
 	clock clockwork.Clock,
@@ -43,10 +44,11 @@ type MangerRefillSenderCtor func(
 
 // ManagerKeeperConfig - config for ManagerKeeper.
 type ManagerKeeperConfig struct {
-	RotateInterval      time.Duration
-	RefillInterval      time.Duration
-	ShutdownTimeout     time.Duration
-	RefillSenderManager *RefillSendManagerConfig
+	RotateInterval       time.Duration
+	RefillInterval       time.Duration
+	RejectRotateInterval time.Duration
+	ShutdownTimeout      time.Duration
+	RefillSenderManager  *RefillSendManagerConfig
 }
 
 // ManagerKeeper - a global object through which all writing and sending of data takes place.
@@ -63,7 +65,7 @@ type ManagerKeeper struct {
 	dialers            []Dialer
 	haTracker          HATracker
 	errorHandler       ErrorHandler
-	rotateTick         time.Duration
+	rotateTimer        *RotateTimer
 	ctx                context.Context
 	stop               chan struct{}
 	done               chan struct{}
@@ -103,7 +105,7 @@ func NewManagerKeeper(
 		dialers:            dialers,
 		haTracker:          haTracker,
 		errorHandler:       errorHandler,
-		rotateTick:         cfg.RotateInterval,
+		rotateTimer:        NewRotateTimer(clock, cfg.RotateInterval, cfg.RejectRotateInterval),
 		ctx:                ctx,
 		stop:               make(chan struct{}),
 		done:               make(chan struct{}),
@@ -132,6 +134,7 @@ func NewManagerKeeper(
 		dk.managerRefillCtor,
 		DefaultShardsNumberPower,
 		dk.cfg.RefillInterval,
+		dk.rotateTimer,
 		dk.haTracker,
 		dk.errorHandler,
 		dk.clock,
@@ -161,13 +164,12 @@ func NewManagerKeeper(
 
 // rotateLoop - loop for rotate Manage.
 func (dk *ManagerKeeper) rotateLoop(ctx context.Context) {
-	ticker := dk.clock.NewTicker(dk.rotateTick)
-	defer ticker.Stop()
+	defer dk.rotateTimer.Stop()
 	defer close(dk.done)
 
 	for {
 		select {
-		case <-ticker.Chan():
+		case <-dk.rotateTimer.Chan():
 			dk.rwm.Lock()
 			prevManager := dk.manager
 			if err := prevManager.Close(); err != nil {
@@ -183,6 +185,7 @@ func (dk *ManagerKeeper) rotateLoop(ctx context.Context) {
 				dk.managerRefillCtor,
 				prevManager.CalculateRequiredShardsNumberPower(),
 				dk.cfg.RefillInterval,
+				dk.rotateTimer,
 				dk.haTracker,
 				dk.errorHandler,
 				dk.clock,
@@ -201,6 +204,7 @@ func (dk *ManagerKeeper) rotateLoop(ctx context.Context) {
 			}
 			cancel()
 			dk.manager.Open(dk.ctx)
+			dk.rotateTimer.Reset()
 		case <-dk.stop:
 			return
 		case <-ctx.Done():
@@ -250,4 +254,62 @@ func (dk *ManagerKeeper) Shutdown(ctx context.Context) error {
 	dk.rwm.RUnlock()
 
 	return multierr.Append(errs, dk.mangerRefillSender.Shutdown(ctx))
+}
+
+// RotateTimer - custom timer with reset the timer for the delay time.
+type RotateTimer struct {
+	clock            clockwork.Clock
+	timer            clockwork.Timer
+	rotateAt         time.Time
+	delayAfterNotify time.Duration
+	durationBlock    time.Duration
+	mx               *sync.Mutex
+}
+
+// NewRotateTimer - init new RotateTimer. The duration durationBlock and delayAfterNotify must be greater than zero;
+// if not, Ticker will panic. Stop the ticker to release associated resources.
+func NewRotateTimer(clock clockwork.Clock, durationBlock, delayAfterNotify time.Duration) *RotateTimer {
+	return &RotateTimer{
+		clock:            clock,
+		timer:            clock.NewTimer(durationBlock),
+		rotateAt:         clock.Now().Add(durationBlock),
+		delayAfterNotify: delayAfterNotify,
+		durationBlock:    durationBlock,
+		mx:               new(sync.Mutex),
+	}
+}
+
+// NotifyOnReject - reset the timer for the delay time if the time does not exceed the duration Block.
+func (rt *RotateTimer) NotifyOnReject() {
+	rt.mx.Lock()
+	defer rt.mx.Unlock()
+	until := rt.rotateAt.Sub(rt.clock.Now())
+	if rt.delayAfterNotify > until {
+		if until > 0 {
+			rt.timer.Reset(until)
+		}
+		return
+	}
+	rt.timer.Reset(rt.delayAfterNotify)
+}
+
+// Chan - return chan with ticker time.
+func (rt *RotateTimer) Chan() <-chan time.Time {
+	return rt.timer.Chan()
+}
+
+// Reset - changes the timer to expire after duration Block.
+func (rt *RotateTimer) Reset() {
+	rt.mx.Lock()
+	rt.rotateAt = rt.clock.Now().Add(rt.durationBlock)
+	rt.timer.Reset(rt.durationBlock)
+	rt.mx.Unlock()
+}
+
+// Stop - prevents the Timer from firing.
+// Stop does not close the channel, to prevent a read from the channel succeeding incorrectly.
+func (rt *RotateTimer) Stop() {
+	if !rt.timer.Stop() {
+		<-rt.timer.Chan()
+	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -114,7 +115,6 @@ func (rl *Refill) Restore(ctx context.Context, key common.SegmentKey) (Snapshot,
 	defer rl.mx.RUnlock()
 
 	segments := make([]Segment, 0)
-
 	snapshot, err := rl.sm.GetSnapshot(ctx, key)
 	if err == nil {
 		return snapshot, segments, nil
@@ -123,7 +123,7 @@ func (rl *Refill) Restore(ctx context.Context, key common.SegmentKey) (Snapshot,
 		return nil, nil, err
 	}
 
-	for {
+	for key.Segment != math.MaxUint32 {
 		seg, err := rl.sm.GetSegment(ctx, key)
 		if err != nil {
 			return nil, nil, err
@@ -144,6 +144,7 @@ func (rl *Refill) Restore(ctx context.Context, key common.SegmentKey) (Snapshot,
 
 		key.Segment--
 	}
+	return nil, segments, nil
 }
 
 // WriteSegment - write Segment in file.

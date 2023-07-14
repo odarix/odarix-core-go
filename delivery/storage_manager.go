@@ -631,6 +631,7 @@ func (sm *StorageManager) DeleteCurrentFile() error {
 	sm.lastWriteSegment = newShardStatuses(1 << sm.title.shardsNumberPower)
 	sm.markupMap = make(map[MarkupKey]int64)
 	sm.statuses.Reset()
+	sm.setLastWriteOffset(0)
 
 	// check open file
 	if !sm.isOpenFile {

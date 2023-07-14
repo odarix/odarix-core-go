@@ -1457,3 +1457,62 @@ func (mock *ManagerRefillMock) WriteSnapshotCalls() []struct {
 	mock.lockWriteSnapshot.RUnlock()
 	return calls
 }
+
+// Ensure, that RejectNotifyerMock does implement delivery.RejectNotifyer.
+// If this is not the case, regenerate this file with moq.
+var _ delivery.RejectNotifyer = &RejectNotifyerMock{}
+
+// RejectNotifyerMock is a mock implementation of delivery.RejectNotifyer.
+//
+//	func TestSomethingThatUsesRejectNotifyer(t *testing.T) {
+//
+//		// make and configure a mocked delivery.RejectNotifyer
+//		mockedRejectNotifyer := &RejectNotifyerMock{
+//			NotifyOnRejectFunc: func()  {
+//				panic("mock out the NotifyOnReject method")
+//			},
+//		}
+//
+//		// use mockedRejectNotifyer in code that requires delivery.RejectNotifyer
+//		// and then make assertions.
+//
+//	}
+type RejectNotifyerMock struct {
+	// NotifyOnRejectFunc mocks the NotifyOnReject method.
+	NotifyOnRejectFunc func()
+
+	// calls tracks calls to the methods.
+	calls struct {
+		// NotifyOnReject holds details about calls to the NotifyOnReject method.
+		NotifyOnReject []struct {
+		}
+	}
+	lockNotifyOnReject sync.RWMutex
+}
+
+// NotifyOnReject calls NotifyOnRejectFunc.
+func (mock *RejectNotifyerMock) NotifyOnReject() {
+	if mock.NotifyOnRejectFunc == nil {
+		panic("RejectNotifyerMock.NotifyOnRejectFunc: method is nil but RejectNotifyer.NotifyOnReject was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockNotifyOnReject.Lock()
+	mock.calls.NotifyOnReject = append(mock.calls.NotifyOnReject, callInfo)
+	mock.lockNotifyOnReject.Unlock()
+	mock.NotifyOnRejectFunc()
+}
+
+// NotifyOnRejectCalls gets all the calls that were made to NotifyOnReject.
+// Check the length with:
+//
+//	len(mockedRejectNotifyer.NotifyOnRejectCalls())
+func (mock *RejectNotifyerMock) NotifyOnRejectCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockNotifyOnReject.RLock()
+	calls = mock.calls.NotifyOnReject
+	mock.lockNotifyOnReject.RUnlock()
+	return calls
+}

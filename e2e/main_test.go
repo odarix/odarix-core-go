@@ -155,6 +155,7 @@ func (s *MainSuite) createManager(
 	refillInterval := time.Minute
 	clock := clockwork.NewFakeClock()
 	haTracker := delivery.NewHighAvailabilityTracker(ctx, nil, clock)
+	rejectNotifyer := delivery.NewRotateTimer(clock, time.Hour, 5*time.Minute)
 	manager, err := delivery.NewManager(
 		ctx,
 		dialers,
@@ -163,6 +164,7 @@ func (s *MainSuite) createManager(
 		refillCtor,
 		shardsNumberPower,
 		refillInterval,
+		rejectNotifyer,
 		haTracker,
 		errorHandler,
 		clock,
@@ -210,6 +212,9 @@ func (s *MainSuite) runServer(
 					conn,
 				)
 				auth, err := tcpReader.Authorization(ctx)
+				if errors.Is(err, io.EOF) {
+					return
+				}
 				s.Require().NoError(err, "fail to read auth message")
 
 				s.T().Log("server: authorization")
@@ -298,8 +303,10 @@ func (s *MainSuite) createManagerKeeper(
 	}
 
 	cfg := &delivery.ManagerKeeperConfig{
-		RotateInterval: 4 * time.Second,
-		RefillInterval: 5 * time.Second,
+		RotateInterval:       4 * time.Second,
+		RefillInterval:       5 * time.Second,
+		RejectRotateInterval: 4 * time.Second,
+		ShutdownTimeout:      4 * time.Second,
 		RefillSenderManager: &delivery.RefillSendManagerConfig{
 			Dir:           dir,
 			ScanInterval:  2 * time.Second,

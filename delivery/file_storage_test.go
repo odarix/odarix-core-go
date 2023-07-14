@@ -177,3 +177,30 @@ func (s *FileManagerSuite) TestDeleteCurrentFile() {
 	s.NoError(err)
 	s.False(ok)
 }
+
+func (s *FileManagerSuite) TestFileSize() {
+	ok, err := s.fm.FileExist()
+	s.NoError(err)
+	s.False(ok)
+
+	err = s.fm.OpenFile()
+	s.NoError(err)
+
+	n, err := s.fm.WriteAt(context.Background(), s.etalonsData, io.SeekStart)
+	s.NoError(err)
+	s.Equal(len(s.etalonsData), n)
+
+	size, err := s.fm.Size()
+	s.Require().NoError(err)
+	s.Equal(int64(n), size)
+
+	err = s.fm.Close()
+	s.NoError(err)
+
+	err = s.fm.DeleteCurrentFile()
+	s.NoError(err)
+
+	ok, err = s.fm.FileExist()
+	s.NoError(err)
+	s.False(ok)
+}
