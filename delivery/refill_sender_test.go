@@ -503,3 +503,43 @@ func (s *RefillSenderSuite) TestClearing() {
 	err = os.RemoveAll(filepath.Clean(s.rcfg.Dir))
 	s.Require().NoError(err)
 }
+
+func TestSendMap(t *testing.T) {
+	sm := delivery.NewSendMap(1)
+	referenceData := []uint32{4, 5, 6, 7, 8, 9, 10, 11, 12}
+	for _, data := range referenceData {
+		sm.Append("testName", 0, data)
+	}
+
+	t.Log("happy path")
+	sm.Range(func(_ string, _ int, shardData []uint32) bool {
+		require.Equal(t, referenceData, shardData)
+		return true
+	})
+
+	t.Log("less segment")
+	sm.Append("testName", 0, 6)
+	for _, data := range referenceData[2:] {
+		sm.Append("testName", 0, data)
+	}
+	sm.Range(func(_ string, _ int, shardData []uint32) bool {
+		require.Equal(t, referenceData, shardData)
+		return true
+	})
+
+	t.Log("less range segment")
+	sm.Append("testName", 0, 3)
+	for _, data := range referenceData {
+		sm.Append("testName", 0, data)
+	}
+	sm.Range(func(_ string, _ int, shardData []uint32) bool {
+		require.Equal(t, append([]uint32{3}, referenceData...), shardData)
+		return true
+	})
+
+	sm.Remove("testName", 0)
+	sm.Range(func(_ string, _ int, shardData []uint32) bool {
+		require.Equal(t, []uint32{}, shardData)
+		return true
+	})
+}

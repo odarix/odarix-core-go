@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
@@ -65,16 +66,51 @@ type TCPDialerConfig struct {
 type TCPDialer struct {
 	connDialer ConnDialer
 	config     TCPDialerConfig
+	backoff    backoff.BackOff
 	registerer prometheus.Registerer
+}
+
+type backoffWithLock struct {
+	m  *sync.Mutex
+	bo backoff.BackOff
+}
+
+// BackoffWithLock wraps backoff with mutex to concurrent free use
+func BackoffWithLock(bo backoff.BackOff) backoff.BackOff {
+	return backoffWithLock{
+		m:  new(sync.Mutex),
+		bo: bo,
+	}
+}
+
+func (bwl backoffWithLock) NextBackOff() time.Duration {
+	bwl.m.Lock()
+	defer bwl.m.Unlock()
+	return bwl.bo.NextBackOff()
+}
+
+func (bwl backoffWithLock) Reset() {
+	bwl.m.Lock()
+	defer bwl.m.Unlock()
+	bwl.bo.Reset()
 }
 
 var _ Dialer = (*TCPDialer)(nil)
 
 // NewTCPDialer - init new TCPDialer.
 func NewTCPDialer(dialer ConnDialer, config TCPDialerConfig, registerer prometheus.Registerer) *TCPDialer {
+	ebo := backoff.NewExponentialBackOff()
+	ebo.InitialInterval = time.Second
+	ebo.RandomizationFactor = 0.5 //revive:disable-line:add-constant it's explained in field name
+	ebo.Multiplier = 1.5          //revive:disable-line:add-constant it's explained in field name
+	ebo.MaxElapsedTime = 0
+	if config.BackoffMaxInterval > 0 {
+		ebo.MaxInterval = config.BackoffMaxInterval
+	}
 	return &TCPDialer{
 		connDialer: dialer,
 		config:     config,
+		backoff:    BackoffWithLock(ebo),
 		registerer: registerer,
 	}
 }
@@ -86,15 +122,7 @@ func (dialer *TCPDialer) String() string {
 
 // Dial - create a connection and init stream.
 func (dialer *TCPDialer) Dial(ctx context.Context) (Transport, error) {
-	ebo := backoff.NewExponentialBackOff()
-	ebo.InitialInterval = time.Second
-	ebo.RandomizationFactor = 0.5 //revive:disable-line:add-constant it's explained in field name
-	ebo.Multiplier = 1.5          //revive:disable-line:add-constant it's explained in field name
-	ebo.MaxElapsedTime = 0
-	if dialer.config.BackoffMaxInterval > 0 {
-		ebo.MaxInterval = dialer.config.BackoffMaxInterval
-	}
-	var bo backoff.BackOff = backoff.WithContext(ebo, ctx)
+	var bo backoff.BackOff = backoff.WithContext(dialer.backoff, ctx)
 	if dialer.config.BackoffMaxTries > 0 {
 		bo = backoff.WithMaxRetries(bo, dialer.config.BackoffMaxTries)
 	}
@@ -104,7 +132,7 @@ func (dialer *TCPDialer) Dial(ctx context.Context) (Transport, error) {
 		if err != nil {
 			return nil, err
 		}
-		tr := NewTCPTransport(&dialer.config.Transport, conn, dialer.registerer)
+		tr := NewTCPTransport(&dialer.config.Transport, conn, dialer, dialer.registerer)
 		if err := tr.auth(ctx, dialer.config.AuthToken, dialer.config.AgentUUID); err != nil {
 			_ = tr.Close()
 			return nil, err
@@ -117,12 +145,18 @@ func (dialer *TCPDialer) Dial(ctx context.Context) (Transport, error) {
 	return tr, nil
 }
 
+// ResetBackoff resets next delay to zero
+func (dialer *TCPDialer) ResetBackoff() {
+	dialer.backoff.Reset()
+}
+
 // ErrCallbackNotSet - error for callback not set.
 var ErrCallbackNotSet = errors.New("callback not set")
 
 // TCPTransport - transport implementation.
 type TCPTransport struct {
 	nt              *transport.Transport
+	dialer          interface{ ResetBackoff() }
 	onAckFunc       func(id uint32)
 	onRejectFunc    func(id uint32)
 	onReadErrorFunc func(err error)
@@ -132,10 +166,11 @@ type TCPTransport struct {
 }
 
 // NewTCPTransport - init new TCPTransport.
-func NewTCPTransport(cfg *transport.Config, conn net.Conn, registerer prometheus.Registerer) *TCPTransport {
+func NewTCPTransport(cfg *transport.Config, conn net.Conn, dialer *TCPDialer, registerer prometheus.Registerer) *TCPTransport {
 	factory := NewConflictRegisterer(registerer)
 	return &TCPTransport{
-		nt: transport.New(cfg, conn),
+		nt:     transport.New(cfg, conn),
+		dialer: dialer,
 		roundtripDuration: factory.NewHistogram(
 			prometheus.HistogramOpts{
 				Name:        "odarix_core_delivery_tcptransport_roundtrip_duration_seconds",
@@ -190,11 +225,13 @@ func (tt *TCPTransport) auth(ctx context.Context, token, uuid string) error {
 
 // SendRestore -  send Snapshot and Segments for restore over connection.
 func (tt *TCPTransport) SendRestore(ctx context.Context, snap Snapshot, segs []Segment) error {
-	if err := tt.nt.Write(
-		ctx,
-		transport.NewRawMessage(protocolVersion, transport.MsgSnapshot, snap.Bytes()),
-	); err != nil {
-		return fmt.Errorf("failed send snapshot: %w", err)
+	if snap != nil {
+		if err := tt.nt.Write(
+			ctx,
+			transport.NewRawMessage(protocolVersion, transport.MsgSnapshot, snap.Bytes()),
+		); err != nil {
+			return fmt.Errorf("failed send snapshot: %w", err)
+		}
 	}
 
 	for _, seg := range segs {
@@ -332,6 +369,7 @@ func (tt *TCPTransport) incomeStream(ctx context.Context) {
 
 		switch respmsg.Code {
 		case http.StatusOK:
+			tt.dialer.ResetBackoff()
 			tt.onAckFunc(respmsg.SegmentID)
 		default:
 			tt.onRejectFunc(respmsg.SegmentID)

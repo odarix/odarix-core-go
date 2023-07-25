@@ -11,6 +11,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -641,7 +642,7 @@ func (sm *SendMap) Append(dname string, shardID uint16, segmentID uint32) {
 			return
 		}
 		if list[n-1] > segmentID {
-			panic("add segmentID less than last one")
+			list = list[:sort.Search(len(list), func(i int) bool { return list[i] >= segmentID })]
 		}
 	}
 
