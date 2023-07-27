@@ -642,6 +642,10 @@ func (sm *SendMap) Append(dname string, shardID uint16, segmentID uint32) {
 			return
 		}
 		if list[n-1] > segmentID {
+			// It is possible that AckStatusFrame is corrupted or lost.
+			// It is exactly reason for this condition is true.
+			// We choose send all segments with unknown state (their ack status is lost).
+			// Rejected segments should be added too as unacked.
 			list = list[:sort.Search(len(list), func(i int) bool { return list[i] >= segmentID })]
 		}
 	}

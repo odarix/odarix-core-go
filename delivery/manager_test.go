@@ -1,6 +1,6 @@
 package delivery_test
 
-//go:generate moq -out manager_moq_test.go -pkg delivery_test -rm . Dialer Transport ManagerEncoder ManagerRefill
+//go:generate moq -out manager_moq_test.go -pkg delivery_test -rm . Dialer Transport ManagerEncoder ManagerRefill RejectNotifyer
 
 import (
 	"context"
@@ -18,6 +18,7 @@ import (
 	"github.com/odarix/odarix-core-go/common"
 	"github.com/odarix/odarix-core-go/delivery"
 	"github.com/prometheus/client_golang/prometheus"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/go-faker/faker/v4"
 	"github.com/google/uuid"
@@ -841,6 +842,8 @@ func (*ManagerSuite) simpleEncoder() delivery.ManagerEncoderCtor {
 	return func(blockID uuid.UUID, shardID uint16, shardsNumberPower uint8) (delivery.ManagerEncoder, error) {
 		var nextSegmentID uint32
 		shards := 1 << shardsNumberPower
+		headData := ""
+		mx := new(sync.Mutex)
 
 		return &ManagerEncoderMock{
 			LastEncodedSegmentFunc: func() uint32 { return nextSegmentID - 1 },
@@ -895,10 +898,113 @@ func (*ManagerSuite) simpleEncoder() delivery.ManagerEncoderCtor {
 				))}, nil
 			},
 			DestroyFunc: func() {},
+			AddFunc: func(_ context.Context, shardedData common.ShardedData) (common.Segment, error) {
+				mx.Lock()
+				defer mx.Unlock()
+				headData += shardedData.(*shardedDataTest).data
+
+				return &dataTest{}, nil
+			},
+			FinalizeFunc: func(_ context.Context) (common.SegmentKey, common.Segment, common.Redundant, error) {
+				key := common.SegmentKey{
+					ShardID: shardID,
+					Segment: nextSegmentID,
+				}
+				mx.Lock()
+				data := headData
+				headData = ""
+				mx.Unlock()
+				segment := &dataTest{
+					data: []byte(fmt.Sprintf(
+						"segment:%s:%d:%d:%d:%+v",
+						blockID, shardID, shards, nextSegmentID, data,
+					)),
+				}
+				redundant := &RedundantTest{
+					blockID: blockID,
+					shardID: shardID,
+					segment: nextSegmentID,
+				}
+				nextSegmentID++
+				return key, segment, redundant, nil
+			},
 		}, nil
 	}
 }
 
 func (s *ManagerSuite) errorHandler(msg string, err error) {
 	s.T().Logf("%s: %s", msg, err)
+}
+
+func (s *ManagerSuite) TestSend2WithAck() {
+	baseCtx := context.Background()
+
+	s.T().Log("Use auto-ack transport (ack segements after ms delay)")
+	destination := make(chan string, 4)
+	dialers := []delivery.Dialer{s.transportNewAutoAck(s.T().Name(), time.Millisecond, destination)}
+
+	s.T().Log("Use no-op refill: assumed that it won't be touched")
+	refillCtor := s.constructorForRefill(&ManagerRefillMock{
+		AckFunc:            func(common.SegmentKey, string) {},
+		WriteAckStatusFunc: func(context.Context) error { return nil },
+		ShutdownFunc:       func(context.Context) error { return nil },
+	})
+
+	s.T().Log("Instance and open manager")
+	clock := clockwork.NewFakeClock()
+	rejectNotifyer := &RejectNotifyerMock{NotifyOnRejectFunc: func() {}}
+	haTracker := delivery.NewHighAvailabilityTracker(baseCtx, nil, clock)
+	defer haTracker.Destroy()
+	manager, err := delivery.NewManager(
+		baseCtx,
+		dialers,
+		newByteShardedDataTest,
+		s.simpleEncoder(),
+		refillCtor,
+		2,
+		time.Minute,
+		rejectNotifyer,
+		haTracker,
+		s.errorHandler,
+		clock,
+		nil,
+	)
+	s.Require().NoError(err)
+	manager.Open(baseCtx)
+	s.T().Log("Send and check a few parts of data")
+	group, gCtx := errgroup.WithContext(baseCtx)
+	for i := 0; i < 10; i++ {
+		group.Go(func() error {
+			data := newShardedDataTest(faker.Paragraph())
+			sendCtx, sendCancel := context.WithTimeout(gCtx, 4000*time.Millisecond)
+			delivered, errSend := manager.SendOpenHead(sendCtx, data)
+			sendCancel()
+			if errSend != nil {
+				return errSend
+			}
+			s.True(delivered, "data should be delivered in 2600 ms")
+			return nil
+		})
+	}
+	time.AfterFunc(
+		100*time.Millisecond,
+		func() {
+			clock.Advance(2500 * time.Millisecond)
+		},
+	)
+	err = group.Wait()
+	s.NoError(err, "data should be delivered in 2600 ms")
+	j := 0
+	for ; j < 4; j++ {
+		select {
+		case <-destination:
+		default:
+		}
+	}
+	s.Equal(4, j)
+
+	s.T().Log("Shutdown manager")
+	shutdownCtx, shutdownCancel := context.WithTimeout(baseCtx, time.Second)
+	defer shutdownCancel()
+	s.NoError(manager.Shutdown(shutdownCtx), "manager should be gracefully stopped")
 }

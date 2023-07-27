@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"sync/atomic"
+	"time"
 
+	"github.com/jonboulle/clockwork"
 	"github.com/odarix/odarix-core-go/common"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 var (
@@ -42,9 +45,9 @@ type ErrorHandler func(msg string, err error)
 // Promise resolved when all statuses has been changed.
 type SendPromise struct {
 	done    chan struct{}
+	err     error
 	counter int32
 	refills int32
-	aborts  int32
 }
 
 // NewSendPromise is a constructor
@@ -53,7 +56,6 @@ func NewSendPromise(shardsNumber int) *SendPromise {
 		done:    make(chan struct{}),
 		counter: int32(shardsNumber),
 		refills: 0,
-		aborts:  0,
 	}
 }
 
@@ -75,9 +77,18 @@ func (promise *SendPromise) Refill() {
 
 // Abort - marks that one of shards has been aborted.
 func (promise *SendPromise) Abort() {
-	atomic.AddInt32(&promise.aborts, 1)
 	counter := atomic.SwapInt32(&promise.counter, 0)
 	if counter > 0 {
+		promise.err = ErrAborted
+		close(promise.done)
+	}
+}
+
+// Error - promise resolve with error.
+func (promise *SendPromise) Error(err error) {
+	counter := atomic.SwapInt32(&promise.counter, 0)
+	if counter > 0 {
+		promise.err = err
 		close(promise.done)
 	}
 }
@@ -91,11 +102,103 @@ func (promise *SendPromise) Await(ctx context.Context) (ack bool, err error) {
 	case <-ctx.Done():
 		return false, context.Cause(ctx)
 	case <-promise.done:
-		if atomic.LoadInt32(&promise.aborts) != 0 {
-			return false, ErrAborted
+		if promise.err != nil {
+			return false, promise.err
 		}
 		return promise.refills == 0, nil
 	}
+}
+
+// OpenHeadLimits configure how long encoder should accumulate data for one segment
+type OpenHeadLimits struct {
+	MaxDuration    time.Duration
+	MaxSamples     uint32
+	LastAddTimeout time.Duration
+}
+
+// OpenHeadPromise is a SendPromise wrapper to combine several Sends in one segment
+type OpenHeadPromise struct {
+	*SendPromise
+	done     chan struct{}
+	timer    clockwork.Timer
+	deadline time.Time
+	samples  []uint32 // limit to decrease
+	clock    clockwork.Clock
+	timeout  time.Duration
+}
+
+// NewOpenHeadPromise is a constructor
+func NewOpenHeadPromise(
+	shards int,
+	limits OpenHeadLimits,
+	clock clockwork.Clock,
+	callback func(),
+	raceCounter prometheus.Counter,
+) *OpenHeadPromise {
+	done := make(chan struct{})
+	samples := make([]uint32, shards)
+	for i := range samples {
+		samples[i] = limits.MaxSamples
+	}
+	return &OpenHeadPromise{
+		SendPromise: NewSendPromise(shards),
+		done:        done,
+		timer: clock.AfterFunc(limits.MaxDuration, func() {
+			callback()
+			// We catch bug when timer.Stop return true even if function is called.
+			// In this case we have double close channel. It's not clear how reproduce it in tests
+			// or why it's happen. So here is a crutch
+			// FIXME: double close channel on timer.Stop race
+			select {
+			case <-done:
+				raceCounter.Inc()
+			default:
+				close(done)
+			}
+		}),
+		deadline: clock.Now().Add(limits.MaxDuration),
+		samples:  samples,
+		clock:    clock,
+		timeout:  limits.LastAddTimeout,
+	}
+}
+
+// Add appends data to promise and checks limits. It returns true if limits reached.
+func (promise *OpenHeadPromise) Add(segments []common.Segment) (limitsReached bool, afterFinish func()) {
+	select {
+	case <-promise.done:
+		panic("Attempt to add data in finalized promise")
+	default:
+	}
+	stopAndReturnCloser := func() func() {
+		if promise.timer.Stop() {
+			return func() { close(promise.done) }
+		}
+		return func() {}
+	}
+	for i, segment := range segments {
+		if segment == nil {
+			continue
+		}
+		if promise.samples[i] < segment.Samples() {
+			return true, stopAndReturnCloser()
+		}
+		promise.samples[i] -= segment.Samples()
+	}
+	timeout := -promise.clock.Since(promise.deadline)
+	if timeout > promise.timeout {
+		timeout = promise.timeout
+	}
+	if timeout <= 0 {
+		return true, stopAndReturnCloser()
+	}
+	promise.timer.Reset(timeout)
+	return false, func() {}
+}
+
+// Finalized wait until Close method call
+func (promise *OpenHeadPromise) Finalized() <-chan struct{} {
+	return promise.done
 }
 
 // IsPermanent - check if the error is permanent.

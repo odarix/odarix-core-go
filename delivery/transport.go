@@ -110,6 +110,8 @@ func NewTCPDialer(dialer ConnDialer, config TCPDialerConfig, registerer promethe
 	return &TCPDialer{
 		connDialer: dialer,
 		config:     config,
+		// reset backoff may be called concurrent with it use
+		// so here we add mutex on this operations.
 		backoff:    BackoffWithLock(ebo),
 		registerer: registerer,
 	}

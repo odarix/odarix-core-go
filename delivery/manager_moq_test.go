@@ -615,11 +615,17 @@ var _ delivery.ManagerEncoder = &ManagerEncoderMock{}
 //
 //		// make and configure a mocked delivery.ManagerEncoder
 //		mockedManagerEncoder := &ManagerEncoderMock{
+//			AddFunc: func(contextMoqParam context.Context, shardedData common.ShardedData) (common.Segment, error) {
+//				panic("mock out the Add method")
+//			},
 //			DestroyFunc: func()  {
 //				panic("mock out the Destroy method")
 //			},
 //			EncodeFunc: func(contextMoqParam context.Context, shardedData common.ShardedData) (common.SegmentKey, common.Segment, common.Redundant, error) {
 //				panic("mock out the Encode method")
+//			},
+//			FinalizeFunc: func(contextMoqParam context.Context) (common.SegmentKey, common.Segment, common.Redundant, error) {
+//				panic("mock out the Finalize method")
 //			},
 //			LastEncodedSegmentFunc: func() uint32 {
 //				panic("mock out the LastEncodedSegment method")
@@ -634,11 +640,17 @@ var _ delivery.ManagerEncoder = &ManagerEncoderMock{}
 //
 //	}
 type ManagerEncoderMock struct {
+	// AddFunc mocks the Add method.
+	AddFunc func(contextMoqParam context.Context, shardedData common.ShardedData) (common.Segment, error)
+
 	// DestroyFunc mocks the Destroy method.
 	DestroyFunc func()
 
 	// EncodeFunc mocks the Encode method.
 	EncodeFunc func(contextMoqParam context.Context, shardedData common.ShardedData) (common.SegmentKey, common.Segment, common.Redundant, error)
+
+	// FinalizeFunc mocks the Finalize method.
+	FinalizeFunc func(contextMoqParam context.Context) (common.SegmentKey, common.Segment, common.Redundant, error)
 
 	// LastEncodedSegmentFunc mocks the LastEncodedSegment method.
 	LastEncodedSegmentFunc func() uint32
@@ -648,6 +660,13 @@ type ManagerEncoderMock struct {
 
 	// calls tracks calls to the methods.
 	calls struct {
+		// Add holds details about calls to the Add method.
+		Add []struct {
+			// ContextMoqParam is the contextMoqParam argument value.
+			ContextMoqParam context.Context
+			// ShardedData is the shardedData argument value.
+			ShardedData common.ShardedData
+		}
 		// Destroy holds details about calls to the Destroy method.
 		Destroy []struct {
 		}
@@ -657,6 +676,11 @@ type ManagerEncoderMock struct {
 			ContextMoqParam context.Context
 			// ShardedData is the shardedData argument value.
 			ShardedData common.ShardedData
+		}
+		// Finalize holds details about calls to the Finalize method.
+		Finalize []struct {
+			// ContextMoqParam is the contextMoqParam argument value.
+			ContextMoqParam context.Context
 		}
 		// LastEncodedSegment holds details about calls to the LastEncodedSegment method.
 		LastEncodedSegment []struct {
@@ -669,10 +693,48 @@ type ManagerEncoderMock struct {
 			Redundants []common.Redundant
 		}
 	}
+	lockAdd                sync.RWMutex
 	lockDestroy            sync.RWMutex
 	lockEncode             sync.RWMutex
+	lockFinalize           sync.RWMutex
 	lockLastEncodedSegment sync.RWMutex
 	lockSnapshot           sync.RWMutex
+}
+
+// Add calls AddFunc.
+func (mock *ManagerEncoderMock) Add(contextMoqParam context.Context, shardedData common.ShardedData) (common.Segment, error) {
+	if mock.AddFunc == nil {
+		panic("ManagerEncoderMock.AddFunc: method is nil but ManagerEncoder.Add was just called")
+	}
+	callInfo := struct {
+		ContextMoqParam context.Context
+		ShardedData     common.ShardedData
+	}{
+		ContextMoqParam: contextMoqParam,
+		ShardedData:     shardedData,
+	}
+	mock.lockAdd.Lock()
+	mock.calls.Add = append(mock.calls.Add, callInfo)
+	mock.lockAdd.Unlock()
+	return mock.AddFunc(contextMoqParam, shardedData)
+}
+
+// AddCalls gets all the calls that were made to Add.
+// Check the length with:
+//
+//	len(mockedManagerEncoder.AddCalls())
+func (mock *ManagerEncoderMock) AddCalls() []struct {
+	ContextMoqParam context.Context
+	ShardedData     common.ShardedData
+} {
+	var calls []struct {
+		ContextMoqParam context.Context
+		ShardedData     common.ShardedData
+	}
+	mock.lockAdd.RLock()
+	calls = mock.calls.Add
+	mock.lockAdd.RUnlock()
+	return calls
 }
 
 // Destroy calls DestroyFunc.
@@ -735,6 +797,38 @@ func (mock *ManagerEncoderMock) EncodeCalls() []struct {
 	mock.lockEncode.RLock()
 	calls = mock.calls.Encode
 	mock.lockEncode.RUnlock()
+	return calls
+}
+
+// Finalize calls FinalizeFunc.
+func (mock *ManagerEncoderMock) Finalize(contextMoqParam context.Context) (common.SegmentKey, common.Segment, common.Redundant, error) {
+	if mock.FinalizeFunc == nil {
+		panic("ManagerEncoderMock.FinalizeFunc: method is nil but ManagerEncoder.Finalize was just called")
+	}
+	callInfo := struct {
+		ContextMoqParam context.Context
+	}{
+		ContextMoqParam: contextMoqParam,
+	}
+	mock.lockFinalize.Lock()
+	mock.calls.Finalize = append(mock.calls.Finalize, callInfo)
+	mock.lockFinalize.Unlock()
+	return mock.FinalizeFunc(contextMoqParam)
+}
+
+// FinalizeCalls gets all the calls that were made to Finalize.
+// Check the length with:
+//
+//	len(mockedManagerEncoder.FinalizeCalls())
+func (mock *ManagerEncoderMock) FinalizeCalls() []struct {
+	ContextMoqParam context.Context
+} {
+	var calls []struct {
+		ContextMoqParam context.Context
+	}
+	mock.lockFinalize.RLock()
+	calls = mock.calls.Finalize
+	mock.lockFinalize.RUnlock()
 	return calls
 }
 

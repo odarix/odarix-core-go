@@ -242,6 +242,32 @@ func (dk *ManagerKeeper) Send(ctx context.Context, data ProtoData) (bool, error)
 	return delivered, nil
 }
 
+// SendOpenHead - send metrics data to encode and send.
+func (dk *ManagerKeeper) SendOpenHead(ctx context.Context, data ProtoData) (bool, error) {
+	dk.inFlight.Inc()
+	defer dk.inFlight.Dec()
+	start := time.Now()
+
+	dk.rwm.RLock()
+	defer dk.rwm.RUnlock()
+	select {
+	case <-dk.stop:
+		return false, ErrShutdown
+	default:
+	}
+	delivered, err := dk.manager.SendOpenHead(ctx, data)
+	if err != nil {
+		dk.sendDuration.With(prometheus.Labels{"state": "error"}).Observe(time.Since(start).Seconds())
+		return delivered, err
+	}
+	if !delivered {
+		dk.sendDuration.With(prometheus.Labels{"state": "refill"}).Observe(time.Since(start).Seconds())
+		return delivered, err
+	}
+	dk.sendDuration.With(prometheus.Labels{"state": "success"}).Observe(time.Since(start).Seconds())
+	return delivered, nil
+}
+
 // Shutdown - stop ticker and waits until Manager end to work and then exits.
 func (dk *ManagerKeeper) Shutdown(ctx context.Context) error {
 	defer dk.haTracker.Destroy()

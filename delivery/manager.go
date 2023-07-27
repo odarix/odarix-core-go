@@ -41,6 +41,8 @@ type Manager struct {
 	encodersLock   *sync.Mutex
 	hashdexCtor    HashdexCtor
 	encoders       []ManagerEncoder
+	ohLimits       OpenHeadLimits
+	ohPromise      *OpenHeadPromise
 	exchange       *Exchange
 	refill         ManagerRefill
 	refillSignal   chan struct{}
@@ -60,6 +62,7 @@ type Manager struct {
 	segmentSamples   prometheus.Histogram
 	rejects          prometheus.Counter
 	shutdownDuration prometheus.Histogram
+	promiseStopRace  prometheus.Counter
 }
 
 type (
@@ -67,6 +70,8 @@ type (
 	ManagerEncoder interface {
 		LastEncodedSegment() uint32
 		Encode(context.Context, common.ShardedData) (common.SegmentKey, common.Segment, common.Redundant, error)
+		Add(context.Context, common.ShardedData) (common.Segment, error)
+		Finalize(context.Context) (common.SegmentKey, common.Segment, common.Redundant, error)
 		Snapshot(context.Context, []common.Redundant) (common.Snapshot, error)
 		Destroy()
 	}
@@ -188,11 +193,16 @@ func NewManager(
 		errorHandler:   errorHandler,
 		clock:          clock,
 
-		destinations:   destinations,
-		blockID:        blockID,
-		encodersLock:   new(sync.Mutex),
-		hashdexCtor:    hashdexCtor,
-		encoders:       encoders,
+		destinations: destinations,
+		blockID:      blockID,
+		encodersLock: new(sync.Mutex),
+		hashdexCtor:  hashdexCtor,
+		encoders:     encoders,
+		ohLimits: OpenHeadLimits{
+			MaxDuration:    5 * time.Second,
+			MaxSamples:     40e3,
+			LastAddTimeout: 200 * time.Millisecond,
+		},
 		exchange:       exchange,
 		refill:         refill,
 		refillSignal:   make(chan struct{}, 1),
@@ -240,14 +250,14 @@ func NewManager(
 			prometheus.HistogramOpts{
 				Name:    "odarix_core_delivery_manager_segment_series",
 				Help:    "Number of timeseries.",
-				Buckets: prometheus.ExponentialBucketsRange(500, 5000, 10),
+				Buckets: prometheus.ExponentialBucketsRange(500, 20000, 10),
 			},
 		),
 		segmentSamples: factory.NewHistogram(
 			prometheus.HistogramOpts{
 				Name:    "odarix_core_delivery_manager_segment_samples",
 				Help:    "Number of samples.",
-				Buckets: prometheus.ExponentialBucketsRange(500, 5000, 10),
+				Buckets: prometheus.ExponentialBucketsRange(500, 20000, 10),
 			},
 		),
 		rejects: factory.NewCounter(
@@ -261,6 +271,12 @@ func NewManager(
 				Name:    "odarix_core_delivery_manager_shutdown_duration_seconds",
 				Help:    "Duration of shutdown manager(s).",
 				Buckets: prometheus.ExponentialBucketsRange(0.1, 20, 10),
+			},
+		),
+		promiseStopRace: factory.NewCounter(
+			prometheus.CounterOpts{
+				Name: "odarix_core_delivery_manager_promise_stop_race_total",
+				Help: "Counter of race error on open head promise finalization.",
 			},
 		),
 	}
@@ -292,18 +308,7 @@ func (mgr *Manager) Send(ctx context.Context, data ProtoData) (ack bool, err err
 			if errEnc != nil {
 				return errEnc
 			}
-			mgr.segmentSize.Observe(float64(len(segment.Bytes())))
-			mgr.segmentSeries.Observe(float64(segment.Series()))
-			mgr.segmentSamples.Observe(float64(segment.Samples()))
-			tsNow := time.Now().UnixMilli()
-			maxTS := segment.Latest()
-			if maxTS != 0 {
-				mgr.lagDuration.With(prometheus.Labels{"type": "max"}).Observe(float64((tsNow - maxTS) / 1000))
-			}
-			minTS := segment.Earliest()
-			if minTS != math.MaxInt64 {
-				mgr.lagDuration.With(prometheus.Labels{"type": "min"}).Observe(float64((tsNow - minTS) / 1000))
-			}
+			mgr.observeSegmentMetrics(segment)
 			mgr.exchange.Put(key, segment, redundant, result, expiredAt)
 			return nil
 		})
@@ -321,6 +326,131 @@ func (mgr *Manager) Send(ctx context.Context, data ProtoData) (ack bool, err err
 		mgr.promiseDuration.Observe(time.Since(start).Seconds())
 	}(time.Now())
 	return result.Await(ctx)
+}
+
+// SendOpenHead adds data to encoders to send it later when limits reached
+func (mgr *Manager) SendOpenHead(ctx context.Context, data ProtoData) (ack bool, err error) {
+	hx := mgr.hashdexCtor(data.Bytes())
+	if mgr.haTracker.IsDrop(hx.Cluster(), hx.Replica()) {
+		hx.Destroy()
+		data.Destroy()
+		return true, nil
+	}
+
+	mgr.encodersLock.Lock()
+	segments, err := mgr.addData(ctx, hx)
+	hx.Destroy()
+	data.Destroy()
+
+	promise := mgr.getPromise()
+	limitsReached, afterFinish := promise.Add(segments)
+	go func() {
+		for _, segment := range segments {
+			if segment != nil {
+				segment.Destroy()
+			}
+		}
+	}()
+	if limitsReached {
+		mgr.finalizePromise()
+		afterFinish()
+	}
+	mgr.encodersLock.Unlock()
+	if err != nil {
+		// TODO: is encoder recoverable?
+		return false, err
+	}
+
+	defer func(start time.Time) {
+		mgr.promiseDuration.Observe(time.Since(start).Seconds())
+	}(time.Now())
+	return promise.Await(ctx)
+}
+
+func (mgr *Manager) addData(ctx context.Context, hx common.ShardedData) ([]common.Segment, error) {
+	defer func(start time.Time) {
+		mgr.encodeDuration.Observe(float64(time.Since(start).Milliseconds()))
+	}(time.Now())
+
+	segments := make([]common.Segment, len(mgr.encoders))
+
+	group, gCtx := errgroup.WithContext(ctx)
+	for i := range mgr.encoders {
+		i := i
+		group.Go(func() error {
+			segment, err := mgr.encoders[i].Add(gCtx, hx)
+			if err != nil {
+				return err
+			}
+			segments[i] = segment
+			return nil
+		})
+	}
+	err := group.Wait()
+
+	return segments, err
+}
+
+func (mgr *Manager) getPromise() *OpenHeadPromise {
+	if mgr.ohPromise == nil {
+		var promise *OpenHeadPromise
+		promise = NewOpenHeadPromise(len(mgr.encoders), mgr.ohLimits, mgr.clock, func() {
+			mgr.encodersLock.Lock()
+			defer mgr.encodersLock.Unlock()
+
+			// It is possible that this function called concurrent with SendOpenHead method.
+			// In this case finalizePromise will be called directly from SendOpenHead.
+			// To avoid finalizing different promise we check here that promise didn't changed.
+			if mgr.ohPromise == promise {
+				mgr.finalizePromise()
+			}
+		}, mgr.promiseStopRace)
+
+		mgr.ohPromise = promise
+	}
+	return mgr.ohPromise
+}
+
+func (mgr *Manager) finalizePromise() {
+	ctx := context.Background()
+	group, gCtx := errgroup.WithContext(ctx)
+	expiredAt := mgr.clock.Now().Add(mgr.refillInterval)
+	for i := range mgr.encoders {
+		i := i
+		group.Go(func() error {
+			key, segment, redundant, errEnc := mgr.encoders[i].Finalize(gCtx)
+			if errEnc != nil {
+				return errEnc
+			}
+			mgr.observeSegmentMetrics(segment)
+			mgr.exchange.Put(key, segment, redundant, mgr.ohPromise.SendPromise, expiredAt)
+			return nil
+		})
+	}
+	err := group.Wait()
+	if err != nil {
+		mgr.ohPromise.Error(err)
+	}
+	mgr.ohPromise = nil
+}
+
+func (mgr *Manager) observeSegmentMetrics(segment common.Segment) {
+	mgr.segmentSize.Observe(float64(len(segment.Bytes())))
+	mgr.segmentSeries.Observe(float64(segment.Series()))
+	mgr.segmentSamples.Observe(float64(segment.Samples()))
+	tsNow := time.Now().UnixMilli()
+	maxTS := segment.Latest()
+	if maxTS != 0 {
+		mgr.lagDuration.With(
+			prometheus.Labels{"type": "max"},
+		).Observe(float64((tsNow - maxTS) / 1000))
+	}
+	minTS := segment.Earliest()
+	if minTS != math.MaxInt64 {
+		mgr.lagDuration.With(
+			prometheus.Labels{"type": "min"},
+		).Observe(float64((tsNow - minTS) / 1000))
+	}
 }
 
 // Open run senders and refill loops
@@ -407,6 +537,13 @@ func (mgr *Manager) Shutdown(ctx context.Context) error {
 	defer func(start time.Time) {
 		mgr.shutdownDuration.Observe(time.Since(start).Seconds())
 	}(time.Now())
+	mgr.encodersLock.Lock()
+	promise := mgr.ohPromise
+	mgr.encodersLock.Unlock()
+	if promise != nil {
+		<-promise.Finalized()
+	}
+
 	mgr.exchange.Shutdown(ctx)
 	mgr.cancelRefill(ErrShutdown)
 	<-mgr.refillDone
@@ -432,10 +569,8 @@ func (mgr *Manager) Shutdown(ctx context.Context) error {
 		}(sender)
 	}
 	wg.Wait()
-
 	// delete all segments because they are not required and reject all state
 	mgr.exchange.RemoveAll()
-
 	mgr.encodersLock.Lock()
 	for i := range mgr.encoders {
 		mgr.encoders[i].Destroy()
