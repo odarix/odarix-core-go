@@ -17,6 +17,7 @@ import (
 
 	"github.com/odarix/odarix-core-go/common"
 	"github.com/odarix/odarix-core-go/delivery"
+	"github.com/odarix/odarix-core-go/frames"
 	"github.com/odarix/odarix-core-go/server"
 	"github.com/odarix/odarix-core-go/transport"
 )
@@ -187,8 +188,8 @@ func (s *MainSuite) runServer(
 	ctx context.Context,
 	listen, token string,
 	onAccept func() bool,
-	handleStream func(ctx context.Context, msg *transport.RawMessage, tcpReader *server.TCPReader),
-	handleRefill func(ctx context.Context, msg *transport.RawMessage, tcpReader *server.TCPReader),
+	handleStream func(ctx context.Context, msg *frames.Frame, tcpReader *server.TCPReader),
+	handleRefill func(ctx context.Context, msg *frames.Frame, tcpReader *server.TCPReader),
 ) net.Listener {
 	lc := net.ListenConfig{}
 	listener, err := lc.Listen(ctx, "tcp", listen)
@@ -219,13 +220,13 @@ func (s *MainSuite) runServer(
 
 				s.T().Log("server: authorization")
 				if !s.Equal(token, auth.Token) {
-					s.NoError(tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+					s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 						Text: "Unauthorized",
 						Code: http.StatusUnauthorized,
 					}))
 					return
 				}
-				s.Require().NoError(tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+				s.Require().NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 					Text: "OK",
 					Code: 200,
 				}))
@@ -236,7 +237,7 @@ func (s *MainSuite) runServer(
 					return
 				}
 
-				msg, err := tcpReader.Next(ctx)
+				fe, err := tcpReader.Next(ctx)
 				if err != nil {
 					if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
 						s.NoError(err, "fail to read next message")
@@ -244,10 +245,10 @@ func (s *MainSuite) runServer(
 					return
 				}
 
-				if msg.Header.Type == transport.MsgRefill {
-					handleRefill(ctx, msg, tcpReader)
+				if fe.GetType() == frames.RefillType {
+					handleRefill(ctx, fe, tcpReader)
 				} else {
-					handleStream(ctx, msg, tcpReader)
+					handleStream(ctx, fe, tcpReader)
 				}
 			}(conn)
 		}

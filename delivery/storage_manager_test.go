@@ -7,7 +7,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"sort"
 	"testing"
 
 	"github.com/google/uuid"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/odarix/odarix-core-go/common"
 	"github.com/odarix/odarix-core-go/delivery"
+	"github.com/odarix/odarix-core-go/frames"
 )
 
 // FileBuffer - implement file.
@@ -114,44 +114,6 @@ func (fb *FileBuffer) Seek(offset int64, whence int) (int64, error) {
 	return 0, errors.New("Seek: invalid whence")
 }
 
-type HeaderFrameSuite struct {
-	suite.Suite
-
-	rw         *FileBuffer
-	etalonSize uint32
-	ctx        context.Context
-}
-
-func TestHeaderFrameSuite(t *testing.T) {
-	suite.Run(t, new(HeaderFrameSuite))
-}
-
-func (hs *HeaderFrameSuite) SetupSuite() {
-	hs.rw = NewFileBuffer()
-	hs.etalonSize = 42
-	hs.ctx = context.Background()
-}
-
-func (hs *HeaderFrameSuite) TearDownTest() {
-	hs.rw.Reset()
-}
-
-func (hs *HeaderFrameSuite) TestHeaderWriteRead() {
-	wh := delivery.NewHeaderFrame(delivery.DestinationNamesType, 0, hs.etalonSize, 0)
-
-	hs.Equal(hs.etalonSize, wh.GetSize())
-
-	b := wh.EncodeBinary()
-	n, err := hs.rw.Write(b)
-	hs.NoError(err)
-	hs.Equal(n, wh.SizeOf())
-
-	rh, err := delivery.ReadHeader(hs.ctx, hs.rw, 0)
-	hs.NoError(err)
-	hs.Equal(hs.etalonSize, rh.GetSize())
-	hs.Equal(delivery.DestinationNamesType, rh.GetType())
-}
-
 type FrameSuite struct {
 	suite.Suite
 
@@ -160,71 +122,6 @@ type FrameSuite struct {
 	etalonBlockID        uuid.UUID
 	rw                   *FileBuffer
 	ctx                  context.Context
-}
-
-func TestFrameSuite(t *testing.T) {
-	suite.Run(t, new(FrameSuite))
-}
-
-func (fs *FrameSuite) SetupSuite() {
-	var err error
-	fs.ctx = context.Background()
-	fs.rw = NewFileBuffer()
-
-	fs.etalonsNames = []string{
-		"www.collector.com",
-		"www.collector-dev.com",
-		"www.collector-prod.com",
-		"www.collector-replica.com",
-	}
-	fs.etalonNumberOfShards = 42
-	fs.etalonBlockID, err = uuid.NewRandom()
-	fs.NoError(err)
-}
-
-func (fs *FrameSuite) TearDownTest() {
-	fs.rw.Reset()
-}
-
-func (fs *FrameSuite) TestFrameEmpty() {
-	fre := delivery.NewFrameEmpty()
-	buf := fre.Encode()
-	n, err := fs.rw.Write(buf)
-	fs.NoError(err)
-
-	fs.Equal(11, fre.SizeOf())
-	fs.Equal(fre.SizeOf(), len(buf))
-	fs.Equal(fre.SizeOf(), n)
-
-	_, err = delivery.ReadHeader(fs.ctx, fs.rw, 0)
-	fs.ErrorIs(err, delivery.ErrUnknownFrameType)
-}
-
-func (fs *FrameSuite) TestFrameWriteRead() {
-	tbf := delivery.NewTitleFrame(fs.etalonNumberOfShards, fs.etalonBlockID)
-	buf := tbf.Encode()
-	n, err := fs.rw.Write(buf)
-	fs.NoError(err)
-	fs.Equal(len(buf), n)
-	fs.Equal(len(buf), tbf.SizeOf())
-
-	dnf := delivery.NewDestinationsNamesFrameWithNames(fs.etalonsNames...)
-	buf = dnf.Encode()
-	n, err = fs.rw.Write(buf)
-	fs.NoError(err)
-	fs.Equal(len(buf), n)
-	fs.Equal(len(buf), dnf.SizeOf())
-
-	var off int64
-
-	title, off, err := delivery.ReadFrameTitle(fs.ctx, fs.rw, off)
-	fs.NoError(err)
-	fs.Equal(fs.etalonBlockID, title.GetBlockID())
-	fs.Equal(fs.etalonNumberOfShards, title.GetShardsNumberPower())
-
-	names, _, err := delivery.ReadDestinationsNamesFrame(fs.ctx, fs.rw, off)
-	fs.NoError(err)
-	fs.ElementsMatch(fs.etalonsNames, names.ToString())
 }
 
 type StorageManagerSuite struct {
@@ -510,286 +407,6 @@ func (s *StorageManagerSuite) TestRestore() {
 	s.Equal(s.etalonsNames, actualAckStatus.GetNames().ToString())
 }
 
-type TitleFrameSuite struct {
-	suite.Suite
-
-	etalonNumberOfShards uint8
-	etalonBlockID        uuid.UUID
-	rw                   *FileBuffer
-	ctx                  context.Context
-}
-
-func TestTitleBodySuite(t *testing.T) {
-	suite.Run(t, new(TitleFrameSuite))
-}
-
-func (tfs *TitleFrameSuite) SetupSuite() {
-	var err error
-	tfs.ctx = context.Background()
-	tfs.etalonNumberOfShards = 42
-	tfs.etalonBlockID, err = uuid.NewRandom()
-	tfs.NoError(err)
-
-	tfs.rw = NewFileBuffer()
-}
-
-func (tfs *TitleFrameSuite) TearDownTest() {
-	tfs.rw.Reset()
-}
-
-func (tfs *TitleFrameSuite) TestTitleBodyWriteRead() {
-	wtb := delivery.NewTitle(tfs.etalonNumberOfShards, tfs.etalonBlockID)
-
-	n, err := tfs.rw.Write(wtb.EncodeBinary())
-	tfs.NoError(err)
-	tfs.Equal(n, wtb.SizeOf())
-
-	rtb, err := delivery.ReadTitle(tfs.rw, 0)
-	tfs.NoError(err)
-	tfs.Equal(tfs.etalonNumberOfShards, rtb.GetShardsNumberPower())
-	tfs.Equal(tfs.etalonBlockID, rtb.GetBlockID())
-}
-
-func (tfs *TitleFrameSuite) TestFrame() {
-	fr := delivery.NewTitleFrame(tfs.etalonNumberOfShards, tfs.etalonBlockID)
-
-	_, err := tfs.rw.Write(fr.Encode())
-	tfs.NoError(err)
-
-	title, _, err := delivery.ReadFrameTitle(tfs.ctx, tfs.rw, 0)
-	tfs.NoError(err)
-
-	tfs.Equal(tfs.etalonNumberOfShards, title.GetShardsNumberPower())
-	tfs.Equal(tfs.etalonBlockID, title.GetBlockID())
-}
-
-type StatusesFrameSuite struct {
-	suite.Suite
-
-	etalonsStatuses delivery.Statuses
-	rw              *FileBuffer
-	ctx             context.Context
-}
-
-func TestStatusesFrameSuite(t *testing.T) {
-	suite.Run(t, new(StatusesFrameSuite))
-}
-
-func (sfs *StatusesFrameSuite) SetupSuite() {
-	sfs.ctx = context.Background()
-	sfs.etalonsStatuses = []uint32{
-		1, 2, 3,
-		4, 5, 6,
-		7, 8, 9,
-	}
-
-	sfs.rw = NewFileBuffer()
-}
-
-func (sfs *StatusesFrameSuite) TearDownTest() {
-	sfs.rw.Reset()
-}
-
-func (sfs *StatusesFrameSuite) TestStatusesWriteRead() {
-	buf, err := sfs.etalonsStatuses.MarshalBinary()
-	sfs.NoError(err)
-
-	var rs delivery.Statuses
-	err = rs.UnmarshalBinary(buf)
-	sfs.NoError(err)
-
-	sfs.ElementsMatch(sfs.etalonsStatuses, rs)
-}
-
-func (sfs *StatusesFrameSuite) TestFrameStatuses() {
-	wframe, err := delivery.NewStatusesFrame(sfs.etalonsStatuses)
-	sfs.NoError(err)
-
-	_, err = sfs.rw.Write(wframe.Encode())
-	sfs.NoError(err)
-
-	rss, err := delivery.ReadFrameStatuses(sfs.ctx, sfs.rw, 0)
-	sfs.NoError(err)
-	sfs.ElementsMatch(sfs.etalonsStatuses, rss)
-}
-
-func (sfs *StatusesFrameSuite) TestNewStatuses() {
-	newss := make(delivery.Statuses, len(sfs.etalonsStatuses))
-	copy(newss, sfs.etalonsStatuses)
-
-	sfs.ElementsMatch(sfs.etalonsStatuses, newss)
-
-	newss[0] = 4
-	sfs.NotEqual(sfs.etalonsStatuses, newss)
-
-	newss[0] = sfs.etalonsStatuses[0]
-	newss.Reset()
-	sfs.NotEqual(sfs.etalonsStatuses, newss)
-}
-
-type DestinationsNamesFrameSuite struct {
-	suite.Suite
-
-	etalonsNames []string
-	rw           *FileBuffer
-	ctx          context.Context
-}
-
-func TestDestinationsNamesFrameSuite(t *testing.T) {
-	suite.Run(t, new(DestinationsNamesFrameSuite))
-}
-
-func (dnfs *DestinationsNamesFrameSuite) SetupSuite() {
-	dnfs.ctx = context.Background()
-	dnfs.etalonsNames = []string{
-		"www.bcollector.com",
-		"www.ucollector-dev.com",
-		"www.fcollector-prod.com",
-		"www.ncollector-replica.com",
-	}
-
-	dnfs.rw = NewFileBuffer()
-}
-
-func (dnfs *DestinationsNamesFrameSuite) TearDownTest() {
-	dnfs.rw.Reset()
-}
-
-func (dnfs *DestinationsNamesFrameSuite) TestBodyToString() {
-	nb := delivery.NewDestinationsNames(dnfs.etalonsNames...)
-	actualNames := nb.ToString()
-	dnfs.True(sort.StringsAreSorted(actualNames))
-
-	dnfs.ElementsMatch(dnfs.etalonsNames, actualNames)
-}
-
-func (dnfs *DestinationsNamesFrameSuite) TestNamesWriteRead() {
-	wdn := delivery.NewDestinationsNames(dnfs.etalonsNames...)
-
-	_, err := dnfs.rw.Write(wdn.EncodeBinary())
-	dnfs.NoError(err)
-
-	var off int64
-
-	rb1, err := delivery.ReadDestinationsNames(dnfs.ctx, dnfs.rw, off)
-	dnfs.NoError(err)
-	dnfs.ElementsMatch(dnfs.etalonsNames, rb1.ToString())
-}
-
-func (dnfs *DestinationsNamesFrameSuite) TestFrameNames() {
-	wframe := delivery.NewDestinationsNamesFrameWithNames(dnfs.etalonsNames...)
-
-	_, err := dnfs.rw.Write(wframe.Encode())
-	dnfs.NoError(err)
-
-	rdn, _, err := delivery.ReadDestinationsNamesFrame(dnfs.ctx, dnfs.rw, 0)
-	dnfs.NoError(err)
-
-	actualNames := rdn.ToString()
-	dnfs.ElementsMatch(dnfs.etalonsNames, actualNames)
-}
-
-type BinaryFrameSuite struct {
-	suite.Suite
-
-	etalonsData []byte
-	rw          *FileBuffer
-	ctx         context.Context
-}
-
-func TestSegmentFrameSuite(t *testing.T) {
-	suite.Run(t, new(BinaryFrameSuite))
-}
-
-func (bfs *BinaryFrameSuite) SetupSuite() {
-	bfs.ctx = context.Background()
-	bfs.etalonsData = []byte{
-		1,
-		2,
-		3,
-		4,
-		5,
-		6,
-		7,
-		8,
-		9,
-		10,
-		11,
-		12,
-		13,
-		14,
-		15,
-		16,
-		17,
-		18,
-		19,
-		20,
-		21,
-		22,
-		23,
-		24,
-		25,
-		26,
-		27,
-		28,
-		29,
-		30,
-		31,
-		32,
-		33,
-		34,
-		35,
-		36,
-		37,
-		38,
-		39,
-		40,
-		41,
-		42,
-	}
-
-	bfs.rw = NewFileBuffer()
-}
-
-func (bfs *BinaryFrameSuite) TearDownTest() {
-	bfs.rw.Reset()
-}
-
-func (bfs *BinaryFrameSuite) TestSegmentBody() {
-	wbb := delivery.NewBinaryBody(bfs.etalonsData)
-
-	_, err := bfs.rw.Write(wbb.EncodeBinary())
-	bfs.NoError(err)
-
-	rbody, err := delivery.ReadBinaryBodyBody(bfs.ctx, bfs.rw, 0)
-	bfs.NoError(err)
-	bfs.ElementsMatch(bfs.etalonsData, rbody.Bytes())
-}
-
-func (bfs *BinaryFrameSuite) TestSegmentFrame() {
-	wframe := delivery.NewSegmentFrame(0, 0, bfs.etalonsData)
-
-	_, err := bfs.rw.Write(wframe.Encode())
-	bfs.NoError(err)
-
-	rsb, err := delivery.ReadFrameSegment(bfs.ctx, bfs.rw, 0)
-	bfs.NoError(err)
-
-	bfs.ElementsMatch(bfs.etalonsData, rsb.Bytes())
-}
-
-func (bfs *BinaryFrameSuite) TestSnapshotFrame() {
-	wframe := delivery.NewSnapshotFrame(0, 0, bfs.etalonsData)
-
-	_, err := bfs.rw.Write(wframe.Encode())
-	bfs.NoError(err)
-
-	rsb, err := delivery.ReadFrameSnapshot(bfs.ctx, bfs.rw, 0)
-	bfs.NoError(err)
-
-	bfs.ElementsMatch(bfs.etalonsData, rsb.Bytes())
-}
-
 type AckStatusSuite struct {
 	suite.Suite
 
@@ -870,63 +487,10 @@ func (ass *AckStatusSuite) TestAckStatus() {
 	ass.Equal(-1, index)
 }
 
-type RejectStatusesSuite struct {
-	suite.Suite
-
-	etalonsData delivery.RejectStatuses
-	rw          *FileBuffer
-	ctx         context.Context
-}
-
-func TestRejectStatusesSuite(t *testing.T) {
-	suite.Run(t, new(RejectStatusesSuite))
-}
-
-func (rss *RejectStatusesSuite) SetupSuite() {
-	rss.ctx = context.Background()
-	rss.etalonsData = delivery.RejectStatuses{
-		{NameID: 3, Segment: 3, ShardID: 2},
-		{NameID: 3, Segment: 2, ShardID: 2},
-		{NameID: 3, Segment: 1, ShardID: 2},
-
-		{NameID: 3, Segment: 3, ShardID: 1},
-		{NameID: 3, Segment: 2, ShardID: 1},
-		{NameID: 3, Segment: 1, ShardID: 1},
-
-		{NameID: 1, Segment: 3, ShardID: 2},
-		{NameID: 1, Segment: 2, ShardID: 2},
-		{NameID: 1, Segment: 1, ShardID: 2},
-
-		{NameID: 1, Segment: 3, ShardID: 1},
-		{NameID: 1, Segment: 2, ShardID: 1},
-		{NameID: 1, Segment: 1, ShardID: 1},
-	}
-
-	rss.rw = NewFileBuffer()
-}
-
-func (rss *RejectStatusesSuite) TearDownTest() {
-	rss.rw.Reset()
-}
-
-func (rss *RejectStatusesSuite) TestEncodeDecode() {
-	rss.T().Log("encoding reject statuses and write")
-	buf, err := rss.etalonsData.MarshalBinary()
-	rss.NoError(err)
-
-	rss.T().Log("read and decoding reject statuses")
-	var rjss delivery.RejectStatuses
-	err = rjss.UnmarshalBinary(buf)
-	rss.NoError(err)
-
-	rss.T().Log("sort etalon data and match with decoding data")
-	rss.Equal(rss.etalonsData, rjss)
-}
-
 type RejectsSuite struct {
 	suite.Suite
 
-	etalonsData delivery.RejectStatuses
+	etalonsData frames.RejectStatuses
 	rw          *FileBuffer
 	ctx         context.Context
 }
@@ -937,7 +501,7 @@ func TestRejectsSuite(t *testing.T) {
 
 func (rss *RejectsSuite) SetupSuite() {
 	rss.ctx = context.Background()
-	rss.etalonsData = delivery.RejectStatuses{
+	rss.etalonsData = frames.RejectStatuses{
 		{NameID: 3, Segment: 3, ShardID: 2},
 		{NameID: 3, Segment: 2, ShardID: 2},
 		{NameID: 3, Segment: 1, ShardID: 2},
@@ -979,7 +543,7 @@ func (rss *RejectsSuite) TestEncodeDecode() {
 	rss.NoError(err)
 
 	rss.T().Log("read and decoding reject statuses")
-	var rrs delivery.RejectStatuses
+	var rrs frames.RejectStatuses
 	err = rrs.UnmarshalBinary(buf)
 	rss.NoError(err)
 

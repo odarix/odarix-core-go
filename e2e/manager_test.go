@@ -12,8 +12,8 @@ import (
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/odarix/odarix-core-go/frames"
 	"github.com/odarix/odarix-core-go/server"
-	"github.com/odarix/odarix-core-go/transport"
 )
 
 type BlockManagerSuite struct {
@@ -46,8 +46,8 @@ func (s *BlockManagerSuite) TestDeliveryManagerHappyPath() {
 	retCh := make(chan *prompb.WriteRequest, 30)
 	baseCtx := context.Background()
 
-	handleStream := func(ctx context.Context, msg *transport.RawMessage, tcpReader *server.TCPReader) {
-		reader := server.NewProtocolReader(server.StartWith(tcpReader, msg))
+	handleStream := func(ctx context.Context, fe *frames.Frame, tcpReader *server.TCPReader) {
+		reader := server.NewProtocolReader(server.StartWith(tcpReader, fe))
 		defer reader.Destroy()
 		for {
 			rq, err := reader.Next(ctx)
@@ -61,7 +61,7 @@ func (s *BlockManagerSuite) TestDeliveryManagerHappyPath() {
 			// process data
 			retCh <- rq.Message
 
-			if !s.NoError(tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+			if !s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 				Text:      "OK",
 				Code:      200,
 				SegmentID: rq.SegmentID,
@@ -72,9 +72,9 @@ func (s *BlockManagerSuite) TestDeliveryManagerHappyPath() {
 		}
 	}
 
-	handleRefill := func(ctx context.Context, msg *transport.RawMessage, tcpReader *server.TCPReader) {
+	handleRefill := func(ctx context.Context, fe *frames.Frame, tcpReader *server.TCPReader) {
 		s.T().Log("not required")
-		s.NoError(tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+		s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 			Text: "OK",
 			Code: 200,
 		}), "fail to send response")
@@ -143,8 +143,8 @@ func (s *BlockManagerSuite) TestDeliveryManagerBreakingConnection() {
 		return false
 	}
 
-	handleStream := func(ctx context.Context, msg *transport.RawMessage, tcpReader *server.TCPReader) {
-		reader := server.NewProtocolReader(server.StartWith(tcpReader, msg))
+	handleStream := func(ctx context.Context, fe *frames.Frame, tcpReader *server.TCPReader) {
+		reader := server.NewProtocolReader(server.StartWith(tcpReader, fe))
 		defer reader.Destroy()
 		for {
 			if onAccept != nil && !onAccept() {
@@ -168,7 +168,7 @@ func (s *BlockManagerSuite) TestDeliveryManagerBreakingConnection() {
 			// process data
 			retCh <- rq.Message
 
-			if !s.NoError(tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+			if !s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 				Text:      "OK",
 				Code:      200,
 				SegmentID: rq.SegmentID,
@@ -179,9 +179,9 @@ func (s *BlockManagerSuite) TestDeliveryManagerBreakingConnection() {
 		}
 	}
 
-	handleRefill := func(ctx context.Context, msg *transport.RawMessage, tcpReader *server.TCPReader) {
+	handleRefill := func(ctx context.Context, fe *frames.Frame, tcpReader *server.TCPReader) {
 		s.T().Log("not required")
-		s.NoError(tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+		s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 			Text: "OK",
 			Code: 200,
 		}), "fail to send response")
@@ -252,8 +252,8 @@ func (s *BlockManagerSuite) TestDeliveryManagerReject() {
 	retCh := make(chan *prompb.WriteRequest, 30)
 	baseCtx := context.Background()
 
-	handleStream := func(ctx context.Context, msg *transport.RawMessage, tcpReader *server.TCPReader) {
-		reader := server.NewProtocolReader(server.StartWith(tcpReader, msg))
+	handleStream := func(ctx context.Context, fe *frames.Frame, tcpReader *server.TCPReader) {
+		reader := server.NewProtocolReader(server.StartWith(tcpReader, fe))
 		defer reader.Destroy()
 		for {
 			rq, err := reader.Next(ctx)
@@ -268,7 +268,7 @@ func (s *BlockManagerSuite) TestDeliveryManagerReject() {
 			retCh <- rq.Message
 
 			if rq.SegmentID == rejectSegment {
-				if !s.NoError(tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+				if !s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 					Text:      "reject",
 					Code:      400,
 					SegmentID: rq.SegmentID,
@@ -279,7 +279,7 @@ func (s *BlockManagerSuite) TestDeliveryManagerReject() {
 				return
 			}
 
-			if !s.NoError(tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+			if !s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 				Text:      "OK",
 				Code:      200,
 				SegmentID: rq.SegmentID,
@@ -290,9 +290,9 @@ func (s *BlockManagerSuite) TestDeliveryManagerReject() {
 		}
 	}
 
-	handleRefill := func(ctx context.Context, msg *transport.RawMessage, tcpReader *server.TCPReader) {
+	handleRefill := func(ctx context.Context, fe *frames.Frame, tcpReader *server.TCPReader) {
 		s.T().Log("not required")
-		s.NoError(tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+		s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 			Text: "OK",
 			Code: 200,
 		}), "fail to send response")

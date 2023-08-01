@@ -1,9 +1,7 @@
 package delivery
 
 import (
-	"bytes"
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -19,7 +17,7 @@ import (
 
 	"github.com/jonboulle/clockwork"
 	"github.com/odarix/odarix-core-go/common"
-	"github.com/odarix/odarix-core-go/transport"
+	"github.com/odarix/odarix-core-go/frames"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/multierr"
 )
@@ -362,7 +360,7 @@ func (rsm *RefillSendManager) Shutdown(ctx context.Context) error {
 type PreparedData struct {
 	Value     *MarkupValue
 	SegmentID uint32
-	MsgType   transport.MsgType
+	MsgType   frames.TypeFrame
 }
 
 // RefillSender - sender refill to server.
@@ -533,7 +531,7 @@ func (rs *RefillSender) collectedData() ([]PreparedData, error) {
 		pData = append(
 			pData,
 			PreparedData{
-				MsgType:   transport.MsgPut,
+				MsgType:   frames.SegmentType,
 				SegmentID: segment,
 				Value:     mval,
 			},
@@ -544,11 +542,11 @@ func (rs *RefillSender) collectedData() ([]PreparedData, error) {
 
 	for _, pd := range pData {
 		switch pd.MsgType {
-		case transport.MsgDryPut:
+		case frames.DrySegmentType:
 			rs.needSend.With(prometheus.Labels{"type": "dry_put"}).Observe(float64(pd.Value.size))
-		case transport.MsgPut:
+		case frames.SegmentType:
 			rs.needSend.With(prometheus.Labels{"type": "put"}).Observe(float64(pd.Value.size))
-		case transport.MsgSnapshot:
+		case frames.SnapshotType:
 			rs.needSend.With(prometheus.Labels{"type": "snapshot"}).Observe(float64(pd.Value.size))
 		}
 	}
@@ -560,15 +558,15 @@ func (rs *RefillSender) collectedData() ([]PreparedData, error) {
 func (rs *RefillSender) sendData(ctx context.Context, pData []PreparedData) error {
 	for _, data := range pData {
 		switch data.MsgType {
-		case transport.MsgSnapshot:
+		case frames.SnapshotType:
 			if err := rs.sendSnapshot(ctx, data.Value); err != nil {
 				return fmt.Errorf("%s: fail send snapshot: %w", rs, err)
 			}
-		case transport.MsgDryPut:
+		case frames.DrySegmentType:
 			if err := rs.sendDrySegment(ctx, data.Value); err != nil {
 				return fmt.Errorf("%s: fail send dry segment: %w", rs, err)
 			}
-		case transport.MsgPut:
+		case frames.SegmentType:
 			if err := rs.sendSegment(ctx, data.Value); err != nil {
 				return fmt.Errorf("%s: fail send segment: %w", rs, err)
 			}
@@ -676,7 +674,7 @@ func (sm *SendMap) Range(fn func(dname string, shardID int, shardData []uint32) 
 // RefillReader - reader for refill files.
 type RefillReader struct {
 	// title frame
-	title *Title
+	title *frames.Title
 	// last status of writers
 	ackStatus *AckStatus
 	// reader/writer for restore file
@@ -688,7 +686,7 @@ type RefillReader struct {
 	// last frame for all segment send for shard
 	destinationsEOF map[string][]bool
 	// restored all rejects
-	rejects RejectStatuses
+	rejects frames.RejectStatuses
 	// max written segment ID for shard
 	maxWriteSegments []uint32
 	// state open file
@@ -792,8 +790,8 @@ func (rr *RefillReader) readMarkup(ctx context.Context) error {
 		return err
 	}
 	for {
-		h, err := ReadHeader(ctx, rr.storage, off)
-		if errors.Is(err, io.EOF) || errors.Is(err, ErrUnknownFrameType) {
+		h, err := frames.ReadAtHeader(ctx, rr.storage, off)
+		if errors.Is(err, io.EOF) || errors.Is(err, frames.ErrUnknownFrameType) {
 			break
 		}
 		if err != nil {
@@ -808,7 +806,7 @@ func (rr *RefillReader) readMarkup(ctx context.Context) error {
 		}
 		off += int64(h.SizeOf())
 		// read data from body
-		err = rr.readFromBody(h, off)
+		err = rr.readFromBody(ctx, h, off, int(h.GetSize()))
 		if err != nil {
 			return err
 		}
@@ -847,21 +845,21 @@ func (rr *RefillReader) openFile() error {
 }
 
 // restoreFromBody - restore from body frame.
-func (rr *RefillReader) readFromBody(h *HeaderFrame, off int64) error {
+func (rr *RefillReader) readFromBody(ctx context.Context, h *frames.Header, off int64, size int) error {
 	switch h.GetType() {
-	case TitleType:
-		return rr.readTitle(off)
-	case DestinationNamesType:
-		return rr.readDestinationsNames(off)
-	case SnapshotType:
+	case frames.TitleType:
+		return rr.readTitle(ctx, off, size)
+	case frames.DestinationNamesType:
+		return rr.readDestinationsNames(ctx, off, size)
+	case frames.SnapshotType:
 		return rr.setMarkupSnapshot(h, off)
-	case SegmentType:
+	case frames.SegmentType:
 		return rr.setMarkupSegment(h, off)
-	case StatusType:
+	case frames.StatusType:
 		return rr.setMarkupStatus(h, off)
-	case RejectStatusType:
+	case frames.RejectStatusType:
 		return rr.restoreRejectStatuses(h, off)
-	case RefillShardEOFType:
+	case frames.RefillShardEOFType:
 		return rr.restoreRefillShardEOF(h, off)
 	}
 
@@ -869,25 +867,25 @@ func (rr *RefillReader) readFromBody(h *HeaderFrame, off int64) error {
 }
 
 // readTitle - read title from file.
-func (rr *RefillReader) readTitle(off int64) error {
+func (rr *RefillReader) readTitle(ctx context.Context, off int64, size int) error {
 	var err error
-	rr.title, err = ReadTitle(rr.storage, off)
+	rr.title, err = frames.ReadAtTitle(ctx, rr.storage, off, size)
 	if err != nil {
 		return err
 	}
 
 	// init maxWriteSegments for future reference and not to panic
-	rr.maxWriteSegments = newShardStatuses(1 << rr.title.shardsNumberPower)
+	rr.maxWriteSegments = newShardStatuses(1 << rr.title.GetShardsNumberPower())
 
 	return nil
 }
 
 // readDestinationsNames - restore Destinations Names from file.
-func (rr *RefillReader) readDestinationsNames(off int64) error {
+func (rr *RefillReader) readDestinationsNames(ctx context.Context, off int64, size int) error {
 	// init lastWriteSegment for future reference and not to panic
 	// init with shardsNumberPower to init statuses for null values
-	rr.ackStatus = NewAckStatusEmpty(rr.title.shardsNumberPower)
-	err := rr.ackStatus.ReadDestinationsNames(rr.storage, off)
+	rr.ackStatus = NewAckStatusEmpty(rr.title.GetShardsNumberPower())
+	err := rr.ackStatus.ReadDestinationsNames(ctx, rr.storage, off, size)
 	if err != nil {
 		return err
 	}
@@ -909,13 +907,13 @@ func (rr *RefillReader) makeDestinationsEOF() {
 }
 
 // setMarkupSnapshot - fill position and size Snapshot.
-func (rr *RefillReader) setMarkupSnapshot(h *HeaderFrame, off int64) error {
+func (rr *RefillReader) setMarkupSnapshot(h *frames.Header, off int64) error {
 	if !rr.checkRestoredServiceData() {
 		return ErrServiceDataNotRestored{}
 	}
 
 	mk := MarkupKey{
-		typeFrame: SnapshotType,
+		typeFrame: frames.SnapshotType,
 		SegmentKey: common.SegmentKey{
 			ShardID: h.GetShardID(),
 			Segment: h.GetSegmentID(),
@@ -930,7 +928,7 @@ func (rr *RefillReader) setMarkupSnapshot(h *HeaderFrame, off int64) error {
 }
 
 // setMarkupSegment - fill position and size Segment
-func (rr *RefillReader) setMarkupSegment(h *HeaderFrame, off int64) error {
+func (rr *RefillReader) setMarkupSegment(h *frames.Header, off int64) error {
 	if !rr.checkRestoredServiceData() {
 		return ErrServiceDataNotRestored{}
 	}
@@ -940,7 +938,7 @@ func (rr *RefillReader) setMarkupSegment(h *HeaderFrame, off int64) error {
 		Segment: h.GetSegmentID(),
 	}
 	mk := MarkupKey{
-		typeFrame:  SegmentType,
+		typeFrame:  frames.SegmentType,
 		SegmentKey: segKey,
 	}
 	rr.markupMap[mk] = &MarkupValue{
@@ -957,8 +955,8 @@ func (rr *RefillReader) setMarkupSegment(h *HeaderFrame, off int64) error {
 }
 
 // we just save status frame position until the EOF and then read the last one
-func (rr *RefillReader) setMarkupStatus(h *HeaderFrame, off int64) error {
-	key := MarkupKey{typeFrame: StatusType}
+func (rr *RefillReader) setMarkupStatus(h *frames.Header, off int64) error {
+	key := MarkupKey{typeFrame: frames.StatusType}
 	rr.markupMap[key] = &MarkupValue{
 		pos:  off,
 		size: h.GetSize(),
@@ -968,7 +966,7 @@ func (rr *RefillReader) setMarkupStatus(h *HeaderFrame, off int64) error {
 
 // restoreStatuses - restore states of writers from last status frame
 func (rr *RefillReader) restoreStatuses() error {
-	key := MarkupKey{typeFrame: StatusType}
+	key := MarkupKey{typeFrame: frames.StatusType}
 	val, ok := rr.markupMap[key]
 	if !ok {
 		return nil
@@ -983,17 +981,17 @@ func (rr *RefillReader) restoreStatuses() error {
 }
 
 // restoreRejectStatues - restore reject statues from file.
-func (rr *RefillReader) restoreRejectStatuses(h *HeaderFrame, off int64) error {
+func (rr *RefillReader) restoreRejectStatuses(h *frames.Header, off int64) error {
 	if !rr.checkRestoredServiceData() {
 		return ErrServiceDataNotRestored{}
 	}
 
-	buf := make([]byte, h.size)
+	buf := make([]byte, h.GetSize())
 	if _, err := rr.storage.ReadAt(buf, off); err != nil {
 		return err
 	}
 
-	var rs RejectStatuses
+	var rs frames.RejectStatuses
 	if err := rs.UnmarshalBinary(buf); err != nil {
 		return err
 	}
@@ -1004,17 +1002,17 @@ func (rr *RefillReader) restoreRejectStatuses(h *HeaderFrame, off int64) error {
 }
 
 // restoreRefillShardEOF - restore refill shard EOF from file.
-func (rr *RefillReader) restoreRefillShardEOF(h *HeaderFrame, off int64) error {
+func (rr *RefillReader) restoreRefillShardEOF(h *frames.Header, off int64) error {
 	if !rr.checkRestoredServiceData() {
 		return ErrServiceDataNotRestored{}
 	}
 
-	buf := make([]byte, h.size)
+	buf := make([]byte, h.GetSize())
 	if _, err := rr.storage.ReadAt(buf, off); err != nil {
 		return err
 	}
 
-	rs := NewRefillShardEOFEmpty()
+	rs := frames.NewRefillShardEOFEmpty()
 	if err := rs.UnmarshalBinary(buf); err != nil {
 		return err
 	}
@@ -1041,7 +1039,7 @@ func (rr *RefillReader) Snapshot(ctx context.Context, mval *MarkupValue) (common
 	defer rr.mx.RUnlock()
 
 	// read frame
-	snapshotData, err := ReadFrameSnapshot(ctx, rr.storage, mval.pos)
+	snapshotData, err := frames.ReadAtFrameSnapshot(ctx, rr.storage, mval.pos)
 	if err != nil {
 		return nil, err
 	}
@@ -1061,7 +1059,7 @@ func (rr *RefillReader) GetSnapshot(ctx context.Context, segKey common.SegmentKe
 	}
 
 	// read frame
-	snapshotData, err := ReadFrameSnapshot(ctx, rr.storage, mval.pos)
+	snapshotData, err := frames.ReadAtFrameSnapshot(ctx, rr.storage, mval.pos)
 	if err != nil {
 		return nil, err
 	}
@@ -1072,7 +1070,7 @@ func (rr *RefillReader) GetSnapshot(ctx context.Context, segKey common.SegmentKe
 // getSnapshotPosition - return position in storage.
 func (rr *RefillReader) getSnapshotPosition(segKey common.SegmentKey) *MarkupValue {
 	mk := MarkupKey{
-		typeFrame:  SnapshotType,
+		typeFrame:  frames.SnapshotType,
 		SegmentKey: segKey,
 	}
 	mval, ok := rr.markupMap[mk]
@@ -1084,12 +1082,12 @@ func (rr *RefillReader) getSnapshotPosition(segKey common.SegmentKey) *MarkupVal
 }
 
 // Segment - return segment from storage.
-func (rr *RefillReader) Segment(ctx context.Context, mval *MarkupValue) (*BinaryBody, error) {
+func (rr *RefillReader) Segment(ctx context.Context, mval *MarkupValue) (*frames.BinaryBody, error) {
 	rr.mx.RLock()
 	defer rr.mx.RUnlock()
 
 	// read frame
-	segmentData, err := ReadFrameSegment(ctx, rr.storage, mval.pos)
+	segmentData, err := frames.ReadAtFrameSegment(ctx, rr.storage, mval.pos)
 	if err != nil {
 		return nil, err
 	}
@@ -1106,7 +1104,7 @@ func (rr *RefillReader) SegmentPosition(segKey common.SegmentKey) *MarkupValue {
 }
 
 // GetSegment - return segment from storage.
-func (rr *RefillReader) GetSegment(ctx context.Context, segKey common.SegmentKey) (*BinaryBody, error) {
+func (rr *RefillReader) GetSegment(ctx context.Context, segKey common.SegmentKey) (*frames.BinaryBody, error) {
 	rr.mx.RLock()
 	defer rr.mx.RUnlock()
 
@@ -1117,7 +1115,7 @@ func (rr *RefillReader) GetSegment(ctx context.Context, segKey common.SegmentKey
 	}
 
 	// read frame
-	segmentData, err := ReadFrameSegment(ctx, rr.storage, mval.pos)
+	segmentData, err := frames.ReadAtFrameSegment(ctx, rr.storage, mval.pos)
 	if err != nil {
 		return nil, err
 	}
@@ -1128,7 +1126,7 @@ func (rr *RefillReader) GetSegment(ctx context.Context, segKey common.SegmentKey
 // getSegmentPosition - return position in storage.
 func (rr *RefillReader) getSegmentPosition(segKey common.SegmentKey) *MarkupValue {
 	mk := MarkupKey{
-		typeFrame:  SegmentType,
+		typeFrame:  frames.SegmentType,
 		SegmentKey: segKey,
 	}
 	mval, ok := rr.markupMap[mk]
@@ -1157,7 +1155,7 @@ func (rr *RefillReader) Restore(key common.SegmentKey, lastSendSegment uint32, p
 	for key.Segment > lastSendSegment+1 {
 		if mval := rr.getSnapshotPosition(key); mval != nil {
 			*pData = append(*pData, PreparedData{
-				MsgType:   transport.MsgSnapshot,
+				MsgType:   frames.SnapshotType,
 				SegmentID: key.Segment,
 				Value:     mval,
 			})
@@ -1169,7 +1167,7 @@ func (rr *RefillReader) Restore(key common.SegmentKey, lastSendSegment uint32, p
 			return SegmentNotFoundInRefill(key)
 		}
 		*pData = append(*pData, PreparedData{
-			MsgType:   transport.MsgDryPut,
+			MsgType:   frames.DrySegmentType,
 			SegmentID: key.Segment,
 			Value:     mval,
 		})
@@ -1190,7 +1188,7 @@ func (rr *RefillReader) WriteRefillShardEOF(ctx context.Context, dname string, s
 	}
 
 	dnameID := rr.ackStatus.names.StringToID(dname)
-	if dnameID == NotFoundName {
+	if dnameID == frames.NotFoundName {
 		return fmt.Errorf(
 			"StringToID: unknown name %s",
 			dname,
@@ -1198,7 +1196,7 @@ func (rr *RefillReader) WriteRefillShardEOF(ctx context.Context, dname string, s
 	}
 
 	// create frame
-	frame, err := NewRefillShardEOFFrame(uint32(dnameID), shardID)
+	fe, err := frames.NewRefillShardEOFFrame(uint32(dnameID), shardID)
 	if err != nil {
 		return err
 	}
@@ -1206,7 +1204,7 @@ func (rr *RefillReader) WriteRefillShardEOF(ctx context.Context, dname string, s
 	// write in storage
 	n, err := rr.storage.WriteAt(
 		ctx,
-		frame.Encode(),
+		fe.EncodeBinary(),
 		rr.lastWriteOffset,
 	)
 	if err != nil {
@@ -1247,71 +1245,4 @@ func (rr *RefillReader) Close() error {
 
 	rr.isOpenFile = false
 	return rr.storage.Close()
-}
-
-// RefillShardEOF - a message to mark that all segments have been sent.
-type RefillShardEOF struct {
-	NameID  uint32
-	ShardID uint16
-}
-
-// NewRefillShardEOF - init new RefillShardEOF.
-func NewRefillShardEOF(nameID uint32, shardID uint16) *RefillShardEOF {
-	return &RefillShardEOF{
-		NameID:  nameID,
-		ShardID: shardID,
-	}
-}
-
-// NewRefillShardEOFEmpty - init new empty RefillShardEOF.
-func NewRefillShardEOFEmpty() *RefillShardEOF {
-	return &RefillShardEOF{
-		NameID:  math.MaxUint32,
-		ShardID: math.MaxUint16,
-	}
-}
-
-// MarshalBinary - encoding to byte.
-func (rs RefillShardEOF) MarshalBinary() ([]byte, error) {
-	// (4(NameID(uint32))+2(ShardID(uint16)))
-	buf := make([]byte, 0, sizeOfUint32+sizeOfUint16)
-
-	buf = binary.AppendUvarint(buf, uint64(rs.NameID))
-	buf = binary.AppendUvarint(buf, uint64(rs.ShardID))
-
-	return buf, nil
-}
-
-// UnmarshalBinary - decoding from byte.
-func (rs *RefillShardEOF) UnmarshalBinary(data []byte) error {
-	r := bytes.NewReader(data)
-
-	nameID, err := binary.ReadUvarint(r)
-	if err != nil {
-		return fmt.Errorf("fail read nameID: %w", err)
-	}
-	rs.NameID = uint32(nameID)
-
-	shardID, err := binary.ReadUvarint(r)
-	if err != nil {
-		return fmt.Errorf("fail read shardID: %w", err)
-	}
-	rs.ShardID = uint16(shardID)
-
-	return nil
-}
-
-// NewRefillShardEOFFrame - init new frame.
-func NewRefillShardEOFFrame(nameID uint32, shardID uint16) (*Frame, error) {
-	body, err := NewRefillShardEOF(nameID, shardID).MarshalBinary()
-	if err != nil {
-		return nil, err
-	}
-
-	return NewFrame(
-		RefillShardEOFType,
-		body,
-		shardID,
-		0,
-	), nil
 }

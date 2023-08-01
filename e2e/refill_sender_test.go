@@ -15,8 +15,8 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/odarix/odarix-core-go/delivery"
+	"github.com/odarix/odarix-core-go/frames"
 	"github.com/odarix/odarix-core-go/server"
-	"github.com/odarix/odarix-core-go/transport"
 )
 
 type RefillSenderSuite struct {
@@ -53,8 +53,8 @@ func (s *RefillSenderSuite) TestRefillSenderHappyPath() {
 	retCh := make(chan *prompb.WriteRequest, count*2)
 	rejectsCh := make(chan *prompb.WriteRequest, count*2)
 
-	handleStream := func(ctx context.Context, msg *transport.RawMessage, tcpReader *server.TCPReader) {
-		reader := server.NewProtocolReader(server.StartWith(tcpReader, msg))
+	handleStream := func(ctx context.Context, fe *frames.Frame, tcpReader *server.TCPReader) {
+		reader := server.NewProtocolReader(server.StartWith(tcpReader, fe))
 		defer reader.Destroy()
 		for {
 			rq, err := reader.Next(ctx)
@@ -69,7 +69,7 @@ func (s *RefillSenderSuite) TestRefillSenderHappyPath() {
 			retCh <- rq.Message
 
 			if rq.SegmentID%2 == 0 {
-				if !s.NoError(tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+				if !s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 					Text:      "reject",
 					Code:      400,
 					SegmentID: rq.SegmentID,
@@ -81,7 +81,7 @@ func (s *RefillSenderSuite) TestRefillSenderHappyPath() {
 				continue
 			}
 
-			if !s.NoError(tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+			if !s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 				Text:      "OK",
 				Code:      200,
 				SegmentID: rq.SegmentID,
@@ -92,9 +92,9 @@ func (s *RefillSenderSuite) TestRefillSenderHappyPath() {
 		}
 	}
 
-	handleRefill := func(ctx context.Context, msg *transport.RawMessage, tcpReader *server.TCPReader) {
-		var refillMsg transport.RefillMsg
-		if !s.NoError(refillMsg.UnmarshalBinary(msg.Payload), "unmarshal binary") {
+	handleRefill := func(ctx context.Context, fe *frames.Frame, tcpReader *server.TCPReader) {
+		rmsg := frames.NewRefillMsgEmpty()
+		if !s.NoError(rmsg.UnmarshalBinary(fe.GetBody()), "unmarshal binary") {
 			return
 		}
 
@@ -110,19 +110,19 @@ func (s *RefillSenderSuite) TestRefillSenderHappyPath() {
 		}
 
 		// save Messages to file
-		for i := 0; i < len(refillMsg.Messages); i++ {
-			raw, errNext := tcpReader.Next(ctx)
+		for i := 0; i < len(rmsg.Messages); i++ {
+			fe, errNext := tcpReader.Next(ctx)
 			if !s.NoError(errNext, "fail next") {
 				return
 			}
 
-			switch raw.Header.Type {
-			case transport.MsgSnapshot, transport.MsgDryPut, transport.MsgPut:
-				if !s.NoError(transport.WriteRawMessage(file, raw), "fail write") {
+			switch fe.GetType() {
+			case frames.SnapshotType, frames.DrySegmentType, frames.SegmentType:
+				if !s.NoError(fe.Write(ctx, file), "fail write") {
 					return
 				}
 			default:
-				s.T().Errorf("unexpected msg type %d", raw.Header.Type)
+				s.T().Errorf("unexpected msg type %d", fe.GetType())
 				return
 			}
 		}
@@ -162,7 +162,7 @@ func (s *RefillSenderSuite) TestRefillSenderHappyPath() {
 			s.Equal(ewr.String(), rq.Message.String())
 		}
 
-		s.NoError(tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+		s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 			Text: "OK",
 			Code: 200,
 		}), "fail to send response")
@@ -275,8 +275,8 @@ func (s *RefillSenderSuite) TestRefillSenderBreakingConnection() {
 		return false
 	}
 
-	handleStream := func(ctx context.Context, msg *transport.RawMessage, tcpReader *server.TCPReader) {
-		reader := server.NewProtocolReader(server.StartWith(tcpReader, msg))
+	handleStream := func(ctx context.Context, fe *frames.Frame, tcpReader *server.TCPReader) {
+		reader := server.NewProtocolReader(server.StartWith(tcpReader, fe))
 		defer reader.Destroy()
 		for {
 			rq, err := reader.Next(ctx)
@@ -291,7 +291,7 @@ func (s *RefillSenderSuite) TestRefillSenderBreakingConnection() {
 			retCh <- rq.Message
 
 			if rq.SegmentID%2 == 0 {
-				if !s.NoError(tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+				if !s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 					Text:      "reject",
 					Code:      400,
 					SegmentID: rq.SegmentID,
@@ -303,7 +303,7 @@ func (s *RefillSenderSuite) TestRefillSenderBreakingConnection() {
 				continue
 			}
 
-			if !s.NoError(tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+			if !s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 				Text:      "OK",
 				Code:      200,
 				SegmentID: rq.SegmentID,
@@ -314,9 +314,9 @@ func (s *RefillSenderSuite) TestRefillSenderBreakingConnection() {
 		}
 	}
 
-	handleRefill := func(ctx context.Context, msg *transport.RawMessage, tcpReader *server.TCPReader) {
-		var refillMsg transport.RefillMsg
-		if !s.NoError(refillMsg.UnmarshalBinary(msg.Payload), "unmarshal binary") {
+	handleRefill := func(ctx context.Context, fe *frames.Frame, tcpReader *server.TCPReader) {
+		rmsg := frames.NewRefillMsgEmpty()
+		if !s.NoError(rmsg.UnmarshalBinary(fe.GetBody()), "unmarshal binary") {
 			return
 		}
 
@@ -332,24 +332,24 @@ func (s *RefillSenderSuite) TestRefillSenderBreakingConnection() {
 		}
 
 		// save Messages to file
-		for i := 0; i < len(refillMsg.Messages); i++ {
+		for i := 0; i < len(rmsg.Messages); i++ {
 			if onAccept != nil && !onAccept() {
 				s.T().Log("handleRefill: disconnect before read")
 				return
 			}
 
-			raw, errNext := tcpReader.Next(ctx)
+			fe, errNext := tcpReader.Next(ctx)
 			if !s.NoError(errNext, "fail next") {
 				return
 			}
 
-			switch raw.Header.Type {
-			case transport.MsgSnapshot, transport.MsgDryPut, transport.MsgPut:
-				if !s.NoError(transport.WriteRawMessage(file, raw), "fail write") {
+			switch fe.GetType() {
+			case frames.SnapshotType, frames.DrySegmentType, frames.SegmentType:
+				if !s.NoError(fe.Write(ctx, file), "fail write") {
 					return
 				}
 			default:
-				s.T().Errorf("unexpected msg type %d", raw.Header.Type)
+				s.T().Errorf("unexpected msg type %d", fe.GetType())
 				return
 			}
 		}
@@ -394,7 +394,7 @@ func (s *RefillSenderSuite) TestRefillSenderBreakingConnection() {
 			s.Equal(ewr.String(), rq.Message.String())
 		}
 
-		tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+		tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 			Text: "OK",
 			Code: 200,
 		})

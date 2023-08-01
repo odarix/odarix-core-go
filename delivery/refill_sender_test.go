@@ -10,38 +10,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jonboulle/clockwork"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/odarix/odarix-core-go/common"
 	"github.com/odarix/odarix-core-go/delivery"
 )
-
-func TestRefillShardEOF(t *testing.T) {
-	wrs := delivery.RefillShardEOF{
-		NameID:  3,
-		ShardID: 1,
-	}
-
-	buf, err := wrs.MarshalBinary()
-	require.NoError(t, err)
-
-	rw := NewFileBuffer()
-	_, err = rw.Write(buf)
-	require.NoError(t, err)
-
-	rbuf := make([]byte, len(buf))
-	_, err = rw.ReadAt(rbuf, 0)
-	require.NoError(t, err)
-
-	rrs := delivery.NewRefillShardEOFEmpty()
-	err = rrs.UnmarshalBinary(rbuf)
-	require.NoError(t, err)
-
-	assert.Equal(t, rrs.NameID, wrs.NameID)
-	assert.Equal(t, rrs.ShardID, wrs.ShardID)
-}
 
 type RefillSenderSuite struct {
 	suite.Suite

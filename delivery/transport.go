@@ -12,6 +12,7 @@ import (
 	"github.com/cenkalti/backoff/v4"
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/odarix/odarix-core-go/frames"
 	"github.com/odarix/odarix-core-go/transport"
 )
 
@@ -168,7 +169,12 @@ type TCPTransport struct {
 }
 
 // NewTCPTransport - init new TCPTransport.
-func NewTCPTransport(cfg *transport.Config, conn net.Conn, dialer *TCPDialer, registerer prometheus.Registerer) *TCPTransport {
+func NewTCPTransport(
+	cfg *transport.Config,
+	conn net.Conn,
+	dialer *TCPDialer,
+	registerer prometheus.Registerer,
+) *TCPTransport {
 	factory := NewConflictRegisterer(registerer)
 	return &TCPTransport{
 		nt:     transport.New(cfg, conn),
@@ -186,37 +192,39 @@ func NewTCPTransport(cfg *transport.Config, conn net.Conn, dialer *TCPDialer, re
 
 // auth - request for authentication connection.
 func (tt *TCPTransport) auth(ctx context.Context, token, uuid string) error {
-	payload := (&transport.AuthMsg{
-		Token:     token,
-		AgentUUID: uuid,
-	}).EncodeBinary()
+	fe, err := frames.NewAuthFrameWithMsg(protocolVersion, frames.NewAuthMsg(token, uuid))
+	if err != nil {
+		return err
+	}
 
-	if err := tt.nt.Write(ctx, transport.NewRawMessage(protocolVersion, transport.MsgAuth, payload)); err != nil {
+	if err = tt.nt.Write(ctx, fe); err != nil {
 		return fmt.Errorf("send auth request %w", err)
 	}
 
-	raw, err := tt.nt.Read(ctx)
+	rfe, err := tt.nt.Read(ctx)
 	if err != nil {
 		return fmt.Errorf("receive auth response: %w", err)
 	}
 
-	if raw.Header.Version != protocolVersion {
+	if rfe.GetVersion() != protocolVersion {
 		return fmt.Errorf(
 			"invalid response version %d, expected %d",
-			raw.Header.Version,
+			rfe.GetVersion(),
 			protocolVersion,
 		)
 	}
-	if raw.Header.Type != transport.MsgResponse {
+	if rfe.GetType() != frames.ResponseType {
 		return fmt.Errorf(
 			"unknown msg type %d, expected %d",
-			raw.Header.Type,
-			transport.MsgResponse,
+			rfe.GetType(),
+			frames.ResponseType,
 		)
 	}
 
-	respm := &transport.ResponseMsg{}
-	respm.DecodeBinary(raw.Payload)
+	respm := frames.NewResponseMsgEmpty()
+	if err = respm.UnmarshalBinary(rfe.GetBody()); err != nil {
+		return err
+	}
 
 	if respm.Code != http.StatusOK {
 		return fmt.Errorf("auth failed: %d %s", respm.Code, respm.Text)
@@ -228,19 +236,23 @@ func (tt *TCPTransport) auth(ctx context.Context, token, uuid string) error {
 // SendRestore -  send Snapshot and Segments for restore over connection.
 func (tt *TCPTransport) SendRestore(ctx context.Context, snap Snapshot, segs []Segment) error {
 	if snap != nil {
-		if err := tt.nt.Write(
-			ctx,
-			transport.NewRawMessage(protocolVersion, transport.MsgSnapshot, snap.Bytes()),
-		); err != nil {
+		fe, err := frames.NewSnapshotFrame(protocolVersion, 0, 0, snap.Bytes())
+		if err != nil {
+			return err
+		}
+
+		if err := tt.nt.Write(ctx, fe); err != nil {
 			return fmt.Errorf("failed send snapshot: %w", err)
 		}
 	}
 
 	for _, seg := range segs {
-		if err := tt.nt.Write(
-			ctx,
-			transport.NewRawMessage(protocolVersion, transport.MsgDryPut, seg.Bytes()),
-		); err != nil {
+		fe, err := frames.NewDrySegmentFrame(protocolVersion, 0, 0, seg.Bytes())
+		if err != nil {
+			return err
+		}
+
+		if err := tt.nt.Write(ctx, fe); err != nil {
 			return fmt.Errorf("failed send segment: %w", err)
 		}
 	}
@@ -250,7 +262,11 @@ func (tt *TCPTransport) SendRestore(ctx context.Context, snap Snapshot, segs []S
 
 // SendSegment - send Segment over connection.
 func (tt *TCPTransport) SendSegment(ctx context.Context, seg Segment) error {
-	if err := tt.nt.Write(ctx, transport.NewRawMessage(protocolVersion, transport.MsgPut, seg.Bytes())); err != nil {
+	fe, err := frames.NewSegmentFrame(protocolVersion, 0, 0, seg.Bytes())
+	if err != nil {
+		return err
+	}
+	if err := tt.nt.Write(ctx, fe); err != nil {
 		return fmt.Errorf("failed send segment: %w", err)
 	}
 
@@ -259,51 +275,23 @@ func (tt *TCPTransport) SendSegment(ctx context.Context, seg Segment) error {
 
 // SendRefill - send Refill msg over connection.
 func (tt *TCPTransport) SendRefill(ctx context.Context, pd []PreparedData) error {
-	messages := make([]transport.MessageData, 0, len(pd))
+	messages := make([]frames.MessageData, 0, len(pd))
 	for _, data := range pd {
-		switch data.MsgType {
-		case transport.MsgPut:
-			messages = append(
-				messages,
-				transport.MessageData{
-					ID:      data.SegmentID,
-					Size:    data.Value.size,
-					Typemsg: transport.MsgPut,
-				},
-			)
-		case transport.MsgDryPut:
-			messages = append(
-				messages,
-				transport.MessageData{
-					ID:      data.SegmentID,
-					Size:    data.Value.size,
-					Typemsg: transport.MsgDryPut,
-				},
-			)
-		case transport.MsgSnapshot:
-			messages = append(
-				messages,
-				transport.MessageData{
-					ID:      data.SegmentID,
-					Size:    data.Value.size,
-					Typemsg: transport.MsgSnapshot,
-				},
-			)
-		}
+		messages = append(
+			messages,
+			frames.MessageData{
+				ID:      data.SegmentID,
+				Size:    data.Value.size,
+				Typemsg: data.MsgType,
+			},
+		)
 	}
-	mr := transport.RefillMsg{
-		Messages: messages,
-	}
-
-	mb, err := mr.MarshalBinary()
+	fe, err := frames.NewRefillFrameWithMsg(protocolVersion, frames.NewRefillMsg(messages))
 	if err != nil {
 		return err
 	}
 
-	if err := tt.nt.Write(
-		ctx,
-		transport.NewRawMessage(protocolVersion, transport.MsgRefill, mb),
-	); err != nil {
+	if err := tt.nt.Write(ctx, fe); err != nil {
 		return fmt.Errorf("failed send refill: %w", err)
 	}
 
@@ -312,10 +300,11 @@ func (tt *TCPTransport) SendRefill(ctx context.Context, pd []PreparedData) error
 
 // SendSnapshot -  send Snapshot for restore over connection.
 func (tt *TCPTransport) SendSnapshot(ctx context.Context, snap Snapshot) error {
-	if err := tt.nt.Write(
-		ctx,
-		transport.NewRawMessage(protocolVersion, transport.MsgSnapshot, snap.Bytes()),
-	); err != nil {
+	fe, err := frames.NewSnapshotFrame(protocolVersion, 0, 0, snap.Bytes())
+	if err != nil {
+		return err
+	}
+	if err := tt.nt.Write(ctx, fe); err != nil {
 		return fmt.Errorf("failed send snapshot: %w", err)
 	}
 
@@ -324,7 +313,11 @@ func (tt *TCPTransport) SendSnapshot(ctx context.Context, snap Snapshot) error {
 
 // SendDrySegment - send dry Segment over connection.
 func (tt *TCPTransport) SendDrySegment(ctx context.Context, seg Segment) error {
-	if err := tt.nt.Write(ctx, transport.NewRawMessage(protocolVersion, transport.MsgDryPut, seg.Bytes())); err != nil {
+	fe, err := frames.NewDrySegmentFrame(protocolVersion, 0, 0, seg.Bytes())
+	if err != nil {
+		return err
+	}
+	if err := tt.nt.Write(ctx, fe); err != nil {
 		return fmt.Errorf("failed send dry segment: %w", err)
 	}
 
@@ -353,20 +346,23 @@ func (tt *TCPTransport) Listen(ctx context.Context) {
 // incomeStream - listener for income message.
 func (tt *TCPTransport) incomeStream(ctx context.Context) {
 	for {
-		raw, err := tt.nt.Read(ctx)
+		fe, err := tt.nt.Read(ctx)
 		if err != nil {
 			// TODO use of closed network connection when you close connection from the outside (close)
 			tt.onReadErrorFunc(err)
 			return
 		}
 
-		if raw.Header.Type != transport.MsgResponse {
-			tt.onReadErrorFunc(fmt.Errorf("unknown msg type %d, expected %d", raw.Header.Type, raw.Header.Type))
+		if fe.GetType() != frames.ResponseType {
+			tt.onReadErrorFunc(fmt.Errorf("unknown msg type %d, expected %d", fe.GetType(), frames.ResponseType))
 			return
 		}
 
-		respmsg := &transport.ResponseMsg{}
-		respmsg.DecodeBinary(raw.Payload)
+		respmsg := frames.NewResponseMsgEmpty()
+		if err := respmsg.UnmarshalBinary(fe.GetBody()); err != nil {
+			tt.onReadErrorFunc(err)
+			return
+		}
 		tt.roundtripDuration.Observe(float64(time.Now().UnixNano()-respmsg.SendAt) / float64(time.Second))
 
 		switch respmsg.Code {

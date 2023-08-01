@@ -13,8 +13,8 @@ import (
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/odarix/odarix-core-go/frames"
 	"github.com/odarix/odarix-core-go/server"
-	"github.com/odarix/odarix-core-go/transport"
 )
 
 type ManagerKeeperSuite struct {
@@ -48,8 +48,8 @@ func (s *ManagerKeeperSuite) TestRefillSenderHappyPath() {
 	baseCtx := context.Background()
 	retCh := make(chan *prompb.WriteRequest, count)
 
-	handleStream := func(ctx context.Context, msg *transport.RawMessage, tcpReader *server.TCPReader) {
-		reader := server.NewProtocolReader(server.StartWith(tcpReader, msg))
+	handleStream := func(ctx context.Context, fe *frames.Frame, tcpReader *server.TCPReader) {
+		reader := server.NewProtocolReader(server.StartWith(tcpReader, fe))
 		defer reader.Destroy()
 		for {
 			rq, err := reader.Next(ctx)
@@ -63,7 +63,7 @@ func (s *ManagerKeeperSuite) TestRefillSenderHappyPath() {
 			// process data
 			retCh <- rq.Message
 
-			if !s.NoError(tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+			if !s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 				Text:      "OK",
 				Code:      200,
 				SegmentID: rq.SegmentID,
@@ -74,9 +74,10 @@ func (s *ManagerKeeperSuite) TestRefillSenderHappyPath() {
 		}
 	}
 
-	handleRefill := func(ctx context.Context, msg *transport.RawMessage, tcpReader *server.TCPReader) {
+	handleRefill := func(ctx context.Context, fe *frames.Frame, tcpReader *server.TCPReader) {
 		s.T().Log("not required")
-		s.NoError(tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+
+		s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 			Text: "OK",
 			Code: 200,
 		}), "fail to send response")
@@ -121,8 +122,8 @@ func (s *ManagerKeeperSuite) TestWithRotate() {
 	baseCtx := context.Background()
 	retCh := make(chan *prompb.WriteRequest, count*2)
 
-	handleStream := func(ctx context.Context, msg *transport.RawMessage, tcpReader *server.TCPReader) {
-		reader := server.NewProtocolReader(server.StartWith(tcpReader, msg))
+	handleStream := func(ctx context.Context, fe *frames.Frame, tcpReader *server.TCPReader) {
+		reader := server.NewProtocolReader(server.StartWith(tcpReader, fe))
 		defer reader.Destroy()
 		for {
 			rq, err := reader.Next(ctx)
@@ -135,7 +136,7 @@ func (s *ManagerKeeperSuite) TestWithRotate() {
 
 			// process data
 			retCh <- rq.Message
-			if !s.NoError(tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+			if !s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 				Text:      "OK",
 				Code:      200,
 				SegmentID: rq.SegmentID,
@@ -146,9 +147,9 @@ func (s *ManagerKeeperSuite) TestWithRotate() {
 		}
 	}
 
-	handleRefill := func(ctx context.Context, msg *transport.RawMessage, tcpReader *server.TCPReader) {
+	handleRefill := func(ctx context.Context, fe *frames.Frame, tcpReader *server.TCPReader) {
 		s.T().Log("not required")
-		s.NoError(tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+		s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 			Text: "OK",
 			Code: 200,
 		}), "fail to send response")
@@ -215,8 +216,8 @@ func (s *ManagerKeeperSuite) TestWithReject() {
 	retCh := make(chan *prompb.WriteRequest, count*2)
 	rejectsCh := make(chan *prompb.WriteRequest, count*2)
 
-	handleStream := func(ctx context.Context, msg *transport.RawMessage, tcpReader *server.TCPReader) {
-		reader := server.NewProtocolReader(server.StartWith(tcpReader, msg))
+	handleStream := func(ctx context.Context, fe *frames.Frame, tcpReader *server.TCPReader) {
+		reader := server.NewProtocolReader(server.StartWith(tcpReader, fe))
 		defer reader.Destroy()
 		for {
 			rq, err := reader.Next(ctx)
@@ -231,7 +232,7 @@ func (s *ManagerKeeperSuite) TestWithReject() {
 			retCh <- rq.Message
 
 			if rq.SegmentID%2 == 0 {
-				if !s.NoError(tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+				if !s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 					Text:      "reject",
 					Code:      400,
 					SegmentID: rq.SegmentID,
@@ -243,7 +244,7 @@ func (s *ManagerKeeperSuite) TestWithReject() {
 				continue
 			}
 
-			if !s.NoError(tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+			if !s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 				Text:      "OK",
 				Code:      200,
 				SegmentID: rq.SegmentID,
@@ -254,9 +255,9 @@ func (s *ManagerKeeperSuite) TestWithReject() {
 		}
 	}
 
-	handleRefill := func(ctx context.Context, msg *transport.RawMessage, tcpReader *server.TCPReader) {
-		var refillMsg transport.RefillMsg
-		if !s.NoError(refillMsg.UnmarshalBinary(msg.Payload), "unmarshal binary") {
+	handleRefill := func(ctx context.Context, fe *frames.Frame, tcpReader *server.TCPReader) {
+		rmsg := frames.NewRefillMsgEmpty()
+		if !s.NoError(rmsg.UnmarshalBinary(fe.GetBody()), "unmarshal binary") {
 			return
 		}
 
@@ -272,19 +273,19 @@ func (s *ManagerKeeperSuite) TestWithReject() {
 		}
 
 		// save Messages to file
-		for i := 0; i < len(refillMsg.Messages); i++ {
-			raw, errNext := tcpReader.Next(ctx)
+		for i := 0; i < len(rmsg.Messages); i++ {
+			fe, errNext := tcpReader.Next(ctx)
 			if !s.NoError(errNext, "fail next") {
 				return
 			}
 
-			switch raw.Header.Type {
-			case transport.MsgSnapshot, transport.MsgDryPut, transport.MsgPut:
-				if !s.NoError(transport.WriteRawMessage(file, raw), "fail write") {
+			switch fe.GetType() {
+			case frames.SnapshotType, frames.DrySegmentType, frames.SegmentType:
+				if !s.NoError(fe.Write(ctx, file), "fail write") {
 					return
 				}
 			default:
-				s.T().Errorf("unexpected msg type %d", raw.Header.Type)
+				s.T().Errorf("unexpected msg type %d", fe.GetType())
 				return
 			}
 		}
@@ -324,7 +325,7 @@ func (s *ManagerKeeperSuite) TestWithReject() {
 			s.Equal(ewr.String(), rq.Message.String())
 		}
 
-		_ = tcpReader.SendResponse(ctx, &transport.ResponseMsg{
+		_ = tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 			Text: "OK",
 			Code: 200,
 		})
