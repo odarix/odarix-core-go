@@ -111,7 +111,7 @@ type (
 	) (ManagerRefill, error)
 
 	// HashdexCtor - func-constuctor for Hashdex.
-	HashdexCtor func(protoData []byte) common.ShardedData
+	HashdexCtor func(protoData []byte) (common.ShardedData, error)
 
 	// HATracker - interface for High Availability Tracker.
 	HATracker interface {
@@ -290,7 +290,11 @@ func NewManager(
 
 // Send - send data to encoders.
 func (mgr *Manager) Send(ctx context.Context, data ProtoData) (ack bool, err error) {
-	hx := mgr.hashdexCtor(data.Bytes())
+	hx, err := mgr.hashdexCtor(data.Bytes())
+	if err != nil {
+		return false, err
+	}
+
 	if mgr.haTracker.IsDrop(hx.Cluster(), hx.Replica()) {
 		hx.Destroy()
 		data.Destroy()
@@ -330,7 +334,11 @@ func (mgr *Manager) Send(ctx context.Context, data ProtoData) (ack bool, err err
 
 // SendOpenHead adds data to encoders to send it later when limits reached
 func (mgr *Manager) SendOpenHead(ctx context.Context, data ProtoData) (ack bool, err error) {
-	hx := mgr.hashdexCtor(data.Bytes())
+	hx, err := mgr.hashdexCtor(data.Bytes())
+	if err != nil {
+		return false, err
+	}
+
 	if mgr.haTracker.IsDrop(hx.Cluster(), hx.Replica()) {
 		hx.Destroy()
 		data.Destroy()

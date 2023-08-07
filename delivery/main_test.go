@@ -47,8 +47,8 @@ type shardedDataTest struct {
 	data string
 }
 
-func newByteShardedDataTest(data []byte) common.ShardedData {
-	return newShardedDataTest(string(data))
+func newByteShardedDataTest(data []byte) (common.ShardedData, error) {
+	return newShardedDataTest(string(data)), nil
 }
 
 func newShardedDataTest(data string) *shardedDataTest {
