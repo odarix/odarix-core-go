@@ -22,6 +22,8 @@ import (
 
 	"github.com/odarix/odarix-core-go/common"
 	"github.com/odarix/odarix-core-go/delivery"
+	"github.com/odarix/odarix-core-go/frames"
+	"github.com/odarix/odarix-core-go/frames/framestest"
 )
 
 type ManagerKeeperSuite struct {
@@ -48,11 +50,12 @@ func (*ManagerKeeperSuite) transportNewAutoAck(name string, delay time.Duration,
 				},
 				OnRejectFunc:    func(fn func(uint32)) {},
 				OnReadErrorFunc: func(fn func(error)) {},
-				SendRestoreFunc: func(_ context.Context, _ delivery.Snapshot, _ []delivery.Segment) error {
-					return nil
-				},
-				SendSegmentFunc: func(_ context.Context, segment delivery.Segment) error {
-					parts := strings.SplitN(string(segment.Bytes()), ":", 6)
+				SendFunc: func(ctx context.Context, frame *frames.WriteFrame) error {
+					rf, err := framestest.ReadFrame(ctx, frame)
+					if err != nil {
+						return err
+					}
+					parts := strings.SplitN(string(rf.GetBody()), ":", 6)
 					shardID, err := strconv.ParseUint(parts[2], 10, 16)
 					if err != nil {
 						return err
@@ -120,11 +123,12 @@ func (*ManagerKeeperSuite) transportWithReject(name string, delay time.Duration,
 					reject = fn
 				},
 				OnReadErrorFunc: func(fn func(err error)) {},
-				SendRestoreFunc: func(_ context.Context, _ delivery.Snapshot, _ []delivery.Segment) error {
-					return nil
-				},
-				SendSegmentFunc: func(_ context.Context, segment delivery.Segment) error {
-					parts := strings.SplitN(string(segment.Bytes()), ":", 6)
+				SendFunc: func(ctx context.Context, frame *frames.WriteFrame) error {
+					rf, err := framestest.ReadFrame(ctx, frame)
+					if err != nil {
+						return err
+					}
+					parts := strings.SplitN(string(rf.GetBody()), ":", 6)
 					shardID, err := strconv.ParseUint(parts[2], 10, 16)
 					if err != nil {
 						return err
@@ -291,7 +295,8 @@ func (*ManagerKeeperSuite) inMemoryRefill() *ManagerRefillMock {
 				return nil, errNotFound
 			}
 			if segment, ok := blob.(common.Segment); ok {
-				if !strings.Contains(string(segment.Bytes()), "snapshot:") {
+				buf, _ := framestest.ReadPayload(segment)
+				if !strings.Contains(string(buf), "snapshot:") {
 					return segment, nil
 				}
 			}
@@ -344,12 +349,14 @@ func (*ManagerKeeperSuite) inMemoryRefill() *ManagerRefillMock {
 				data[key.ShardID] = make(map[uint32]interface{})
 			}
 
-			segmentCopy := &dataTest{
-				data: make([]byte, len(segment.Bytes())),
+			buf, err := framestest.ReadPayload(segment)
+			if err != nil {
+				return err
 			}
-			copy(segmentCopy.data, segment.Bytes())
 
-			data[key.ShardID][key.Segment] = segmentCopy
+			data[key.ShardID][key.Segment] = &dataTest{
+				data: buf,
+			}
 			if lastSegment, ok := lastSegments[key.ShardID]; !ok || lastSegment < key.Segment {
 				lastSegments[key.ShardID] = key.Segment
 			}
@@ -365,12 +372,14 @@ func (*ManagerKeeperSuite) inMemoryRefill() *ManagerRefillMock {
 				data[key.ShardID] = shard
 			}
 
-			snapshotCopy := &dataTest{
-				data: make([]byte, len(snapshot.Bytes())),
+			buf, err := framestest.ReadPayload(snapshot)
+			if err != nil {
+				return err
 			}
-			copy(snapshotCopy.data, snapshot.Bytes())
 
-			shard[key.Segment-1] = snapshotCopy
+			shard[key.Segment-1] = &dataTest{
+				data: buf,
+			}
 			return nil
 		},
 		WriteAckStatusFunc: func(_ context.Context) error {

@@ -17,14 +17,16 @@ import (
 
 	"github.com/odarix/odarix-core-go/common"
 	"github.com/odarix/odarix-core-go/delivery"
-	"github.com/prometheus/client_golang/prometheus"
-	"golang.org/x/sync/errgroup"
+	"github.com/odarix/odarix-core-go/frames"
+	"github.com/odarix/odarix-core-go/frames/framestest"
 
 	"github.com/go-faker/faker/v4"
 	"github.com/google/uuid"
 	"github.com/jonboulle/clockwork"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
+	"golang.org/x/sync/errgroup"
 )
 
 type ManagerSuite struct {
@@ -153,11 +155,15 @@ func (s *ManagerSuite) TestRejectToRefill() {
 	s.T().Log("Check that rejected data is in refill")
 	for i := 0; i < 4; i++ {
 		segment, err := refill.Get(baseCtx, common.SegmentKey{ShardID: uint16(i), Segment: 1})
-		s.NoError(err, "segment should be in refill")
-		parts := strings.SplitN(string(segment.Bytes()), ":", 6)
-		s.Equal("segment", parts[0])
-		s.Equal(strconv.Itoa(i), parts[2])
-		s.Equal(expectedData, parts[5])
+		if s.NoError(err, "segment should be in refill") {
+			data, err := framestest.ReadPayload(segment)
+			if s.NoError(err) {
+				parts := strings.SplitN(string(data), ":", 6)
+				s.Equal("segment", parts[0])
+				s.Equal(strconv.Itoa(i), parts[2])
+				s.Equal(expectedData, parts[5])
+			}
+		}
 	}
 }
 
@@ -258,11 +264,14 @@ func (s *ManagerSuite) TestAckRejectRace() {
 	for i := 1; i < 3; i++ {
 		for j := 0; j < 4; j++ {
 			segment, err := refill.Get(baseCtx, common.SegmentKey{ShardID: uint16(j), Segment: uint32(i)})
-			s.NoError(err, "segment should be in refill")
-			parts := strings.SplitN(string(segment.Bytes()), ":", 6)
-
-			s.Equal("segment", parts[0])
-			s.Equal(strconv.Itoa(j), parts[2])
+			if s.NoError(err, "segment should be in refill") {
+				data, err := framestest.ReadPayload(segment)
+				if s.NoError(err) {
+					parts := strings.SplitN(string(data), ":", 6)
+					s.Equal("segment", parts[0], "%q")
+					s.Equal(strconv.Itoa(j), parts[2])
+				}
+			}
 		}
 	}
 }
@@ -459,11 +468,15 @@ func (s *ManagerSuite) TestNotOpened() {
 	s.T().Log("Check that rejected data is in refill")
 	for i := 0; i < 4; i++ {
 		segment, err := refill.Get(baseCtx, common.SegmentKey{ShardID: uint16(i), Segment: 0})
-		s.NoError(err, "segment should be in refill")
-		parts := strings.SplitN(string(segment.Bytes()), ":", 6)
-		s.Equal("segment", parts[0])
-		s.Equal(strconv.Itoa(i), parts[2])
-		s.Equal(expectedData, parts[5])
+		if s.NoError(err, "segment should be in refill") {
+			data, err := framestest.ReadPayload(segment)
+			if s.NoError(err) {
+				parts := strings.SplitN(string(data), ":", 6)
+				s.Equal("segment", parts[0])
+				s.Equal(strconv.Itoa(i), parts[2])
+				s.Equal(expectedData, parts[5])
+			}
+		}
 	}
 }
 
@@ -526,10 +539,13 @@ func (s *ManagerSuite) TestLongDial() {
 	for i := 0; i < 4; i++ {
 		segment, err := refill.Get(baseCtx, common.SegmentKey{ShardID: uint16(i), Segment: 0})
 		if s.NoError(err, "segment should be in refill") {
-			parts := strings.SplitN(string(segment.Bytes()), ":", 6)
-			s.Equal("segment", parts[0])
-			s.Equal(strconv.Itoa(i), parts[2])
-			s.Equal(expectedData, parts[5])
+			data, err := framestest.ReadPayload(segment)
+			if s.NoError(err) {
+				parts := strings.SplitN(string(data), ":", 6)
+				s.Equal("segment", parts[0])
+				s.Equal(strconv.Itoa(i), parts[2])
+				s.Equal(expectedData, parts[5])
+			}
 		}
 	}
 }
@@ -552,14 +568,15 @@ func (*ManagerSuite) transportWithReject(dialer delivery.Dialer, switcher *atomi
 					reject = fn
 				},
 				OnReadErrorFunc: func(fn func(error)) {},
-				SendRestoreFunc: func(ctx context.Context, snapshot delivery.Snapshot, segments []delivery.Segment) error {
-					return transport.SendRestore(ctx, snapshot, segments)
-				},
-				SendSegmentFunc: func(ctx context.Context, segment delivery.Segment) error {
+				SendFunc: func(ctx context.Context, frame *frames.WriteFrame) error {
 					if !switcher.Load() {
-						return transport.SendSegment(ctx, segment)
+						return transport.Send(ctx, frame)
 					}
-					parts := strings.SplitN(string(segment.Bytes()), ":", 6)
+					rf, err := framestest.ReadFrame(ctx, frame)
+					if err != nil {
+						return err
+					}
+					parts := strings.SplitN(string(rf.GetBody()), ":", 6)
 					segmentID, err := strconv.ParseUint(parts[4], 10, 32)
 					if err != nil {
 						return err
@@ -591,19 +608,12 @@ func (*ManagerSuite) transportWithError(dialer delivery.Dialer, switcher *atomic
 				OnAckFunc:       transport.OnAck,
 				OnRejectFunc:    transport.OnReject,
 				OnReadErrorFunc: func(fn func(error)) {},
-				SendRestoreFunc: func(ctx context.Context, snapshot delivery.Snapshot, segments []delivery.Segment) error {
+				SendFunc: func(ctx context.Context, frame *frames.WriteFrame) error {
 					if switcher.Load() {
 						time.Sleep(delay)
 						return assert.AnError
 					}
-					return transport.SendRestore(ctx, snapshot, segments)
-				},
-				SendSegmentFunc: func(ctx context.Context, segment delivery.Segment) error {
-					if switcher.Load() {
-						time.Sleep(delay)
-						return assert.AnError
-					}
-					return transport.SendSegment(ctx, segment)
+					return transport.Send(ctx, frame)
 				},
 				ListenFunc: func(ctx context.Context) {},
 				CloseFunc:  transport.Close,
@@ -628,11 +638,12 @@ func (*ManagerSuite) transportNewAutoAck(name string, delay time.Duration, dest 
 				},
 				OnRejectFunc:    func(fn func(uint32)) {},
 				OnReadErrorFunc: func(fn func(error)) {},
-				SendRestoreFunc: func(_ context.Context, _ delivery.Snapshot, _ []delivery.Segment) error {
-					return nil
-				},
-				SendSegmentFunc: func(_ context.Context, segment delivery.Segment) error {
-					parts := strings.SplitN(string(segment.Bytes()), ":", 6)
+				SendFunc: func(ctx context.Context, frame *frames.WriteFrame) error {
+					rf, err := framestest.ReadFrame(ctx, frame)
+					if err != nil {
+						return err
+					}
+					parts := strings.SplitN(string(rf.GetBody()), ":", 6)
 					shardID, err := strconv.ParseUint(parts[2], 10, 16)
 					if err != nil {
 						return err
@@ -646,15 +657,17 @@ func (*ManagerSuite) transportNewAutoAck(name string, delay time.Duration, dest 
 					if err != nil {
 						return err
 					}
-					time.AfterFunc(delay, func() {
-						m.Lock()
-						defer m.Unlock()
-						ack(uint32(segmentID))
-						select {
-						case dest <- parts[5]:
-						default:
-						}
-					})
+					if rf.GetType() == frames.SegmentType {
+						time.AfterFunc(delay, func() {
+							m.Lock()
+							defer m.Unlock()
+							ack(uint32(segmentID))
+							select {
+							case dest <- parts[5]:
+							default:
+							}
+						})
+					}
 					return nil
 				},
 				ListenFunc: func(ctx context.Context) {},
@@ -673,7 +686,7 @@ func (*ManagerSuite) transportNewAutoAck(name string, delay time.Duration, dest 
 
 //revive:disable-next-line:cyclomatic this is test
 //revive:disable-next-line:cognitive-complexity this is test
-func (*ManagerSuite) inMemoryRefill() *ManagerRefillMock {
+func (s *ManagerSuite) inMemoryRefill() *ManagerRefillMock {
 	m := new(sync.Mutex)
 	data := make(map[uint16]map[uint32]interface{})
 	rejects := make(map[common.SegmentKey]bool)
@@ -690,9 +703,7 @@ func (*ManagerSuite) inMemoryRefill() *ManagerRefillMock {
 				return nil, errNotFound
 			}
 			if segment, ok := blob.(common.Segment); ok {
-				if !strings.Contains(string(segment.Bytes()), "snapshot:") {
-					return segment, nil
-				}
+				return segment, nil
 			}
 			return nil, errNotFound
 		},
@@ -743,12 +754,14 @@ func (*ManagerSuite) inMemoryRefill() *ManagerRefillMock {
 				data[key.ShardID] = make(map[uint32]interface{})
 			}
 
-			segmentCopy := &dataTest{
-				data: make([]byte, len(segment.Bytes())),
+			buf, err := framestest.ReadPayload(segment)
+			if err != nil {
+				return err
 			}
-			copy(segmentCopy.data, segment.Bytes())
 
-			data[key.ShardID][key.Segment] = segmentCopy
+			data[key.ShardID][key.Segment] = &dataTest{
+				data: buf,
+			}
 			if lastSegment, ok := lastSegments[key.ShardID]; !ok || lastSegment < key.Segment {
 				lastSegments[key.ShardID] = key.Segment
 			}
@@ -764,12 +777,14 @@ func (*ManagerSuite) inMemoryRefill() *ManagerRefillMock {
 				data[key.ShardID] = shard
 			}
 
-			snapshotCopy := &dataTest{
-				data: make([]byte, len(snapshot.Bytes())),
+			buf, err := framestest.ReadPayload(snapshot)
+			if err != nil {
+				return err
 			}
-			copy(snapshotCopy.data, snapshot.Bytes())
 
-			shard[key.Segment-1] = snapshotCopy
+			shard[key.Segment-1] = &dataTest{
+				data: buf,
+			}
 			return nil
 		},
 		WriteAckStatusFunc: func(_ context.Context) error {

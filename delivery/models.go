@@ -9,6 +9,7 @@ import (
 
 	"github.com/jonboulle/clockwork"
 	"github.com/odarix/odarix-core-go/common"
+	"github.com/odarix/odarix-core-go/frames"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -19,14 +20,12 @@ var (
 
 // Segment is an universal interface for blob segment data
 type Segment interface {
-	Bytes() []byte
-	Destroy()
+	frames.WritePayload
 }
 
 // Snapshot is an universal interface for blob snapshot data
 type Snapshot interface {
-	Bytes() []byte
-	Destroy()
+	frames.WritePayload
 }
 
 // ProtoData is an universal interface for blob protobuf data

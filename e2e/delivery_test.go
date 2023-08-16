@@ -48,7 +48,7 @@ func (s *ManagerKeeperSuite) TestRefillSenderHappyPath() {
 	baseCtx := context.Background()
 	retCh := make(chan *prompb.WriteRequest, count)
 
-	handleStream := func(ctx context.Context, fe *frames.Frame, tcpReader *server.TCPReader) {
+	handleStream := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
 		reader := server.NewProtocolReader(server.StartWith(tcpReader, fe))
 		defer reader.Destroy()
 		for {
@@ -74,7 +74,7 @@ func (s *ManagerKeeperSuite) TestRefillSenderHappyPath() {
 		}
 	}
 
-	handleRefill := func(ctx context.Context, fe *frames.Frame, tcpReader *server.TCPReader) {
+	handleRefill := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
 		s.T().Log("not required")
 
 		s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
@@ -122,7 +122,7 @@ func (s *ManagerKeeperSuite) TestWithRotate() {
 	baseCtx := context.Background()
 	retCh := make(chan *prompb.WriteRequest, count*2)
 
-	handleStream := func(ctx context.Context, fe *frames.Frame, tcpReader *server.TCPReader) {
+	handleStream := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
 		reader := server.NewProtocolReader(server.StartWith(tcpReader, fe))
 		defer reader.Destroy()
 		for {
@@ -147,7 +147,7 @@ func (s *ManagerKeeperSuite) TestWithRotate() {
 		}
 	}
 
-	handleRefill := func(ctx context.Context, fe *frames.Frame, tcpReader *server.TCPReader) {
+	handleRefill := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
 		s.T().Log("not required")
 		s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 			Text: "OK",
@@ -216,7 +216,7 @@ func (s *ManagerKeeperSuite) TestWithReject() {
 	retCh := make(chan *prompb.WriteRequest, count*2)
 	rejectsCh := make(chan *prompb.WriteRequest, count*2)
 
-	handleStream := func(ctx context.Context, fe *frames.Frame, tcpReader *server.TCPReader) {
+	handleStream := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
 		reader := server.NewProtocolReader(server.StartWith(tcpReader, fe))
 		defer reader.Destroy()
 		for {
@@ -255,7 +255,7 @@ func (s *ManagerKeeperSuite) TestWithReject() {
 		}
 	}
 
-	handleRefill := func(ctx context.Context, fe *frames.Frame, tcpReader *server.TCPReader) {
+	handleRefill := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
 		rmsg := frames.NewRefillMsgEmpty()
 		if !s.NoError(rmsg.UnmarshalBinary(fe.GetBody()), "unmarshal binary") {
 			return
@@ -281,7 +281,7 @@ func (s *ManagerKeeperSuite) TestWithReject() {
 
 			switch fe.GetType() {
 			case frames.SnapshotType, frames.DrySegmentType, frames.SegmentType:
-				if !s.NoError(fe.Write(ctx, file), "fail write") {
+				if _, err := fe.WriteTo(file); !s.NoError(err, "fail write") {
 					return
 				}
 			default:

@@ -11,6 +11,7 @@ import (
 
 	"github.com/odarix/odarix-core-go/common"
 	"github.com/odarix/odarix-core-go/delivery"
+	"github.com/odarix/odarix-core-go/frames/framestest"
 )
 
 type RefillSuite struct {
@@ -172,8 +173,9 @@ func (s *RefillSuite) TestSegment() {
 
 	actualSeg, err := s.mr.Get(s.ctx, segKey)
 	s.NoError(err)
-
-	s.Equal(s.etalonsData.Bytes(), actualSeg.Bytes())
+	if buf, err := framestest.ReadPayload(actualSeg); s.NoError(err) {
+		s.Equal(s.etalonsData.Bytes(), buf)
+	}
 }
 
 func (s *RefillSuite) TestRestoreWithSegment() {
@@ -192,8 +194,12 @@ func (s *RefillSuite) TestRestoreWithSegment() {
 	actualSnap, actSegments, err := s.mr.Restore(s.ctx, segKey)
 	s.NoError(err)
 	s.Equal(3, len(actSegments))
-	s.Equal(s.etalonsData.Bytes(), actualSnap.Bytes())
-	s.Equal(s.etalonsData.Bytes(), actSegments[0].Bytes())
+	if buf, err := framestest.ReadPayload(actualSnap); s.NoError(err) {
+		s.Equal(s.etalonsData.Bytes(), buf)
+	}
+	if buf, err := framestest.ReadPayload(actSegments[0]); s.NoError(err) {
+		s.Equal(s.etalonsData.Bytes(), buf)
+	}
 
 	err = s.mr.Shutdown(s.ctx)
 	s.NoError(err)
@@ -217,7 +223,9 @@ func (s *RefillSuite) TestRestoreWithoutSnapshot() {
 	s.NoError(err)
 	s.Equal(4, len(actSegments))
 	s.Nil(actualSnap)
-	s.Equal(s.etalonsData.Bytes(), actSegments[0].Bytes())
+	if buf, err := framestest.ReadPayload(actSegments[0]); s.NoError(err) {
+		s.Equal(s.etalonsData.Bytes(), buf)
+	}
 
 	err = s.mr.Shutdown(s.ctx)
 	s.NoError(err)
@@ -235,7 +243,9 @@ func (s *RefillSuite) TestRestoreWithoutSegment() {
 	actualSnap, actSegments, err := s.mr.Restore(s.ctx, segKey)
 	s.NoError(err)
 	s.Equal(0, len(actSegments))
-	s.Equal(s.etalonsData.Bytes(), actualSnap.Bytes())
+	if buf, err := framestest.ReadPayload(actualSnap); s.NoError(err) {
+		s.Equal(s.etalonsData.Bytes(), buf)
+	}
 
 	err = s.mr.Shutdown(s.ctx)
 	s.NoError(err)

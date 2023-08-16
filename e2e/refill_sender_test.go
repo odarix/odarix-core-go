@@ -53,7 +53,7 @@ func (s *RefillSenderSuite) TestRefillSenderHappyPath() {
 	retCh := make(chan *prompb.WriteRequest, count*2)
 	rejectsCh := make(chan *prompb.WriteRequest, count*2)
 
-	handleStream := func(ctx context.Context, fe *frames.Frame, tcpReader *server.TCPReader) {
+	handleStream := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
 		reader := server.NewProtocolReader(server.StartWith(tcpReader, fe))
 		defer reader.Destroy()
 		for {
@@ -92,7 +92,7 @@ func (s *RefillSenderSuite) TestRefillSenderHappyPath() {
 		}
 	}
 
-	handleRefill := func(ctx context.Context, fe *frames.Frame, tcpReader *server.TCPReader) {
+	handleRefill := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
 		rmsg := frames.NewRefillMsgEmpty()
 		if !s.NoError(rmsg.UnmarshalBinary(fe.GetBody()), "unmarshal binary") {
 			return
@@ -118,7 +118,7 @@ func (s *RefillSenderSuite) TestRefillSenderHappyPath() {
 
 			switch fe.GetType() {
 			case frames.SnapshotType, frames.DrySegmentType, frames.SegmentType:
-				if !s.NoError(fe.Write(ctx, file), "fail write") {
+				if _, err := fe.WriteTo(file); !s.NoError(err, "fail write") {
 					return
 				}
 			default:
@@ -275,7 +275,7 @@ func (s *RefillSenderSuite) TestRefillSenderBreakingConnection() {
 		return false
 	}
 
-	handleStream := func(ctx context.Context, fe *frames.Frame, tcpReader *server.TCPReader) {
+	handleStream := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
 		reader := server.NewProtocolReader(server.StartWith(tcpReader, fe))
 		defer reader.Destroy()
 		for {
@@ -314,7 +314,7 @@ func (s *RefillSenderSuite) TestRefillSenderBreakingConnection() {
 		}
 	}
 
-	handleRefill := func(ctx context.Context, fe *frames.Frame, tcpReader *server.TCPReader) {
+	handleRefill := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
 		rmsg := frames.NewRefillMsgEmpty()
 		if !s.NoError(rmsg.UnmarshalBinary(fe.GetBody()), "unmarshal binary") {
 			return
@@ -345,7 +345,7 @@ func (s *RefillSenderSuite) TestRefillSenderBreakingConnection() {
 
 			switch fe.GetType() {
 			case frames.SnapshotType, frames.DrySegmentType, frames.SegmentType:
-				if !s.NoError(fe.Write(ctx, file), "fail write") {
+				if _, err := fe.WriteTo(file); !s.NoError(err, "fail write") {
 					return
 				}
 			default:

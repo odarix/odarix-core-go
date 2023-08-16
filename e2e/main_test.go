@@ -111,6 +111,7 @@ func (*MainSuite) createDialers(token, address string) []delivery.Dialer {
 					WriteTimeout: 5 * time.Second,
 				},
 			},
+			clockwork.NewFakeClock(),
 			nil,
 		),
 	}
@@ -188,8 +189,8 @@ func (s *MainSuite) runServer(
 	ctx context.Context,
 	listen, token string,
 	onAccept func() bool,
-	handleStream func(ctx context.Context, msg *frames.Frame, tcpReader *server.TCPReader),
-	handleRefill func(ctx context.Context, msg *frames.Frame, tcpReader *server.TCPReader),
+	handleStream func(ctx context.Context, msg *frames.ReadFrame, tcpReader *server.TCPReader),
+	handleRefill func(ctx context.Context, msg *frames.ReadFrame, tcpReader *server.TCPReader),
 ) net.Listener {
 	lc := net.ListenConfig{}
 	listener, err := lc.Listen(ctx, "tcp", listen)

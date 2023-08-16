@@ -18,6 +18,7 @@ import (
 	"github.com/jonboulle/clockwork"
 	"github.com/odarix/odarix-core-go/common"
 	"github.com/odarix/odarix-core-go/frames"
+	"github.com/odarix/odarix-core-go/util"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/multierr"
 )
@@ -433,7 +434,7 @@ func (rs *RefillSender) Send(ctx context.Context) error {
 		return fmt.Errorf("%s: fail prepared data: %w", rs, err)
 	}
 
-	if err = rs.transport.SendRefill(ctx, pData); err != nil {
+	if err := rs.transport.Send(ctx, rs.makeRefillFrame(pData)); err != nil {
 		return fmt.Errorf("%s: fail send frame refill: %w", rs, err)
 	}
 
@@ -452,6 +453,19 @@ func (rs *RefillSender) Send(ctx context.Context) error {
 	case err := <-rs.errs:
 		return multierr.Append(err, rs.transport.Close())
 	}
+}
+
+func (rs *RefillSender) makeRefillFrame(pData []PreparedData) *frames.WriteFrame {
+	data := make([]frames.MessageData, 0, len(pData))
+	for _, p := range pData {
+		data = append(data, frames.MessageData{
+			ID:      p.SegmentID,
+			Size:    p.Value.size,
+			Typemsg: p.MsgType,
+		})
+	}
+	msg := frames.NewRefillMsg(data)
+	return frames.NewWriteFrame(protocolVersion, frames.RefillType, rs.shardID, 0, msg)
 }
 
 // dial - dial and set respose parameter.
@@ -559,15 +573,15 @@ func (rs *RefillSender) sendData(ctx context.Context, pData []PreparedData) erro
 	for _, data := range pData {
 		switch data.MsgType {
 		case frames.SnapshotType:
-			if err := rs.sendSnapshot(ctx, data.Value); err != nil {
+			if err := rs.sendSnapshot(ctx, data.SegmentID, data.Value); err != nil {
 				return fmt.Errorf("%s: fail send snapshot: %w", rs, err)
 			}
 		case frames.DrySegmentType:
-			if err := rs.sendDrySegment(ctx, data.Value); err != nil {
+			if err := rs.sendDrySegment(ctx, data.SegmentID, data.Value); err != nil {
 				return fmt.Errorf("%s: fail send dry segment: %w", rs, err)
 			}
 		case frames.SegmentType:
-			if err := rs.sendSegment(ctx, data.Value); err != nil {
+			if err := rs.sendSegment(ctx, data.SegmentID, data.Value); err != nil {
 				return fmt.Errorf("%s: fail send segment: %w", rs, err)
 			}
 		}
@@ -577,36 +591,33 @@ func (rs *RefillSender) sendData(ctx context.Context, pData []PreparedData) erro
 }
 
 // sendSnapshot - restore and send snapshot.
-func (rs *RefillSender) sendSnapshot(ctx context.Context, mval *MarkupValue) error {
+func (rs *RefillSender) sendSnapshot(ctx context.Context, segmentID uint32, mval *MarkupValue) error {
 	snapshot, err := rs.source.Snapshot(ctx, mval)
 	if err != nil {
 		return fmt.Errorf("%s: fail get snapshot: %w", rs, err)
 	}
-	defer snapshot.Destroy()
-
-	return rs.transport.SendSnapshot(ctx, snapshot)
+	frame := frames.NewWriteFrame(protocolVersion, frames.SnapshotType, rs.shardID, segmentID, snapshot)
+	return rs.transport.Send(ctx, frame)
 }
 
 // sendDrySegment - restore and send dry segment.
-func (rs *RefillSender) sendDrySegment(ctx context.Context, mval *MarkupValue) error {
+func (rs *RefillSender) sendDrySegment(ctx context.Context, segmentID uint32, mval *MarkupValue) error {
 	segment, err := rs.source.Segment(ctx, mval)
 	if err != nil {
 		return fmt.Errorf("%s: fail get dry segment: %w", rs, err)
 	}
-	defer segment.Destroy()
-
-	return rs.transport.SendDrySegment(ctx, segment)
+	frame := frames.NewWriteFrame(protocolVersion, frames.DrySegmentType, rs.shardID, segmentID, segment)
+	return rs.transport.Send(ctx, frame)
 }
 
 // sendSegment - restore and send segment.
-func (rs *RefillSender) sendSegment(ctx context.Context, mval *MarkupValue) error {
+func (rs *RefillSender) sendSegment(ctx context.Context, segmentID uint32, mval *MarkupValue) error {
 	segment, err := rs.source.Segment(ctx, mval)
 	if err != nil {
 		return fmt.Errorf("%s: fail get segment: %w", rs, err)
 	}
-	defer segment.Destroy()
-
-	return rs.transport.SendSegment(ctx, segment)
+	frame := frames.NewWriteFrame(protocolVersion, frames.SegmentType, rs.shardID, segmentID, segment)
+	return rs.transport.Send(ctx, frame)
 }
 
 // MarkupValue - value for markup map.
@@ -790,7 +801,7 @@ func (rr *RefillReader) readMarkup(ctx context.Context) error {
 		return err
 	}
 	for {
-		h, err := frames.ReadAtHeader(ctx, rr.storage, off)
+		h, err := frames.ReadHeader(ctx, util.NewOffsetReader(rr.storage, off))
 		if errors.Is(err, io.EOF) || errors.Is(err, frames.ErrUnknownFrameType) {
 			break
 		}
@@ -1038,13 +1049,7 @@ func (rr *RefillReader) Snapshot(ctx context.Context, mval *MarkupValue) (common
 	rr.mx.RLock()
 	defer rr.mx.RUnlock()
 
-	// read frame
-	snapshotData, err := frames.ReadAtFrameSnapshot(ctx, rr.storage, mval.pos)
-	if err != nil {
-		return nil, err
-	}
-
-	return snapshotData, nil
+	return frames.ReadFrameSnapshot(ctx, util.NewOffsetReader(rr.storage, mval.pos))
 }
 
 // GetSnapshot - return snapshot from storage.
@@ -1058,13 +1063,7 @@ func (rr *RefillReader) GetSnapshot(ctx context.Context, segKey common.SegmentKe
 		return nil, ErrSnapshotNotFoundRefill
 	}
 
-	// read frame
-	snapshotData, err := frames.ReadAtFrameSnapshot(ctx, rr.storage, mval.pos)
-	if err != nil {
-		return nil, err
-	}
-
-	return snapshotData, nil
+	return frames.ReadFrameSnapshot(ctx, util.NewOffsetReader(rr.storage, mval.pos))
 }
 
 // getSnapshotPosition - return position in storage.
@@ -1086,13 +1085,7 @@ func (rr *RefillReader) Segment(ctx context.Context, mval *MarkupValue) (*frames
 	rr.mx.RLock()
 	defer rr.mx.RUnlock()
 
-	// read frame
-	segmentData, err := frames.ReadAtFrameSegment(ctx, rr.storage, mval.pos)
-	if err != nil {
-		return nil, err
-	}
-
-	return segmentData, nil
+	return frames.ReadFrameSegment(ctx, util.NewOffsetReader(rr.storage, mval.pos))
 }
 
 // SegmentPosition - return position in storage.
@@ -1114,13 +1107,7 @@ func (rr *RefillReader) GetSegment(ctx context.Context, segKey common.SegmentKey
 		return nil, SegmentNotFoundInRefill(segKey)
 	}
 
-	// read frame
-	segmentData, err := frames.ReadAtFrameSegment(ctx, rr.storage, mval.pos)
-	if err != nil {
-		return nil, err
-	}
-
-	return segmentData, nil
+	return frames.ReadFrameSegment(ctx, util.NewOffsetReader(rr.storage, mval.pos))
 }
 
 // getSegmentPosition - return position in storage.
@@ -1202,17 +1189,13 @@ func (rr *RefillReader) WriteRefillShardEOF(ctx context.Context, dname string, s
 	}
 
 	// write in storage
-	n, err := rr.storage.WriteAt(
-		ctx,
-		fe.EncodeBinary(),
-		rr.lastWriteOffset,
-	)
+	n, err := fe.WriteTo(rr.storage.Writer(ctx, rr.lastWriteOffset))
 	if err != nil {
 		return err
 	}
 
 	// move position
-	rr.lastWriteOffset += int64(n)
+	rr.lastWriteOffset += n
 
 	// set last frame
 	rr.destinationsEOF[dname][shardID] = true

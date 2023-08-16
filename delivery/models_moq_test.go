@@ -5,6 +5,7 @@ package delivery_test
 
 import (
 	"github.com/odarix/odarix-core-go/common"
+	"io"
 	"sync"
 )
 
@@ -18,12 +19,6 @@ var _ common.Segment = &SegmentMock{}
 //
 //		// make and configure a mocked common.Segment
 //		mockedSegment := &SegmentMock{
-//			BytesFunc: func() []byte {
-//				panic("mock out the Bytes method")
-//			},
-//			DestroyFunc: func()  {
-//				panic("mock out the Destroy method")
-//			},
 //			EarliestFunc: func() int64 {
 //				panic("mock out the Earliest method")
 //			},
@@ -36,6 +31,12 @@ var _ common.Segment = &SegmentMock{}
 //			SeriesFunc: func() uint32 {
 //				panic("mock out the Series method")
 //			},
+//			SizeFunc: func() int64 {
+//				panic("mock out the Size method")
+//			},
+//			WriteToFunc: func(w io.Writer) (int64, error) {
+//				panic("mock out the WriteTo method")
+//			},
 //		}
 //
 //		// use mockedSegment in code that requires common.Segment
@@ -43,12 +44,6 @@ var _ common.Segment = &SegmentMock{}
 //
 //	}
 type SegmentMock struct {
-	// BytesFunc mocks the Bytes method.
-	BytesFunc func() []byte
-
-	// DestroyFunc mocks the Destroy method.
-	DestroyFunc func()
-
 	// EarliestFunc mocks the Earliest method.
 	EarliestFunc func() int64
 
@@ -61,14 +56,14 @@ type SegmentMock struct {
 	// SeriesFunc mocks the Series method.
 	SeriesFunc func() uint32
 
+	// SizeFunc mocks the Size method.
+	SizeFunc func() int64
+
+	// WriteToFunc mocks the WriteTo method.
+	WriteToFunc func(w io.Writer) (int64, error)
+
 	// calls tracks calls to the methods.
 	calls struct {
-		// Bytes holds details about calls to the Bytes method.
-		Bytes []struct {
-		}
-		// Destroy holds details about calls to the Destroy method.
-		Destroy []struct {
-		}
 		// Earliest holds details about calls to the Earliest method.
 		Earliest []struct {
 		}
@@ -81,67 +76,21 @@ type SegmentMock struct {
 		// Series holds details about calls to the Series method.
 		Series []struct {
 		}
+		// Size holds details about calls to the Size method.
+		Size []struct {
+		}
+		// WriteTo holds details about calls to the WriteTo method.
+		WriteTo []struct {
+			// W is the w argument value.
+			W io.Writer
+		}
 	}
-	lockBytes    sync.RWMutex
-	lockDestroy  sync.RWMutex
 	lockEarliest sync.RWMutex
 	lockLatest   sync.RWMutex
 	lockSamples  sync.RWMutex
 	lockSeries   sync.RWMutex
-}
-
-// Bytes calls BytesFunc.
-func (mock *SegmentMock) Bytes() []byte {
-	if mock.BytesFunc == nil {
-		panic("SegmentMock.BytesFunc: method is nil but Segment.Bytes was just called")
-	}
-	callInfo := struct {
-	}{}
-	mock.lockBytes.Lock()
-	mock.calls.Bytes = append(mock.calls.Bytes, callInfo)
-	mock.lockBytes.Unlock()
-	return mock.BytesFunc()
-}
-
-// BytesCalls gets all the calls that were made to Bytes.
-// Check the length with:
-//
-//	len(mockedSegment.BytesCalls())
-func (mock *SegmentMock) BytesCalls() []struct {
-} {
-	var calls []struct {
-	}
-	mock.lockBytes.RLock()
-	calls = mock.calls.Bytes
-	mock.lockBytes.RUnlock()
-	return calls
-}
-
-// Destroy calls DestroyFunc.
-func (mock *SegmentMock) Destroy() {
-	if mock.DestroyFunc == nil {
-		panic("SegmentMock.DestroyFunc: method is nil but Segment.Destroy was just called")
-	}
-	callInfo := struct {
-	}{}
-	mock.lockDestroy.Lock()
-	mock.calls.Destroy = append(mock.calls.Destroy, callInfo)
-	mock.lockDestroy.Unlock()
-	mock.DestroyFunc()
-}
-
-// DestroyCalls gets all the calls that were made to Destroy.
-// Check the length with:
-//
-//	len(mockedSegment.DestroyCalls())
-func (mock *SegmentMock) DestroyCalls() []struct {
-} {
-	var calls []struct {
-	}
-	mock.lockDestroy.RLock()
-	calls = mock.calls.Destroy
-	mock.lockDestroy.RUnlock()
-	return calls
+	lockSize     sync.RWMutex
+	lockWriteTo  sync.RWMutex
 }
 
 // Earliest calls EarliestFunc.
@@ -249,5 +198,64 @@ func (mock *SegmentMock) SeriesCalls() []struct {
 	mock.lockSeries.RLock()
 	calls = mock.calls.Series
 	mock.lockSeries.RUnlock()
+	return calls
+}
+
+// Size calls SizeFunc.
+func (mock *SegmentMock) Size() int64 {
+	if mock.SizeFunc == nil {
+		panic("SegmentMock.SizeFunc: method is nil but Segment.Size was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockSize.Lock()
+	mock.calls.Size = append(mock.calls.Size, callInfo)
+	mock.lockSize.Unlock()
+	return mock.SizeFunc()
+}
+
+// SizeCalls gets all the calls that were made to Size.
+// Check the length with:
+//
+//	len(mockedSegment.SizeCalls())
+func (mock *SegmentMock) SizeCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockSize.RLock()
+	calls = mock.calls.Size
+	mock.lockSize.RUnlock()
+	return calls
+}
+
+// WriteTo calls WriteToFunc.
+func (mock *SegmentMock) WriteTo(w io.Writer) (int64, error) {
+	if mock.WriteToFunc == nil {
+		panic("SegmentMock.WriteToFunc: method is nil but Segment.WriteTo was just called")
+	}
+	callInfo := struct {
+		W io.Writer
+	}{
+		W: w,
+	}
+	mock.lockWriteTo.Lock()
+	mock.calls.WriteTo = append(mock.calls.WriteTo, callInfo)
+	mock.lockWriteTo.Unlock()
+	return mock.WriteToFunc(w)
+}
+
+// WriteToCalls gets all the calls that were made to WriteTo.
+// Check the length with:
+//
+//	len(mockedSegment.WriteToCalls())
+func (mock *SegmentMock) WriteToCalls() []struct {
+	W io.Writer
+} {
+	var calls []struct {
+		W io.Writer
+	}
+	mock.lockWriteTo.RLock()
+	calls = mock.calls.WriteTo
+	mock.lockWriteTo.RUnlock()
 	return calls
 }

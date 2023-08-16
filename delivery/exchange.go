@@ -66,7 +66,6 @@ func (ex *Exchange) deleteRecord(key any) {
 	record, ok := ex.records.LoadAndDelete(key)
 	if ok {
 		exr := record.(*exchangeRecord)
-		exr.Destroy()
 		if exr.Resolved() && !errors.Is(exr.err, ErrPromiseCanceled) {
 			ex.removes.Inc()
 		}
@@ -301,15 +300,6 @@ func (promise *segmentPromise) Segment(ctx context.Context) (common.Segment, err
 		return nil, context.Cause(ctx)
 	case <-promise.resolve:
 		return promise.segment, promise.err
-	}
-}
-
-func (promise *segmentPromise) Destroy() {
-	if promise.segment != nil {
-		promise.segment.Destroy()
-	}
-	if promise.redundant != nil {
-		promise.redundant.Destroy()
 	}
 }
 

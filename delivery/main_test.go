@@ -1,6 +1,10 @@
 package delivery_test
 
-import "github.com/odarix/odarix-core-go/common"
+import (
+	"io"
+
+	"github.com/odarix/odarix-core-go/common"
+)
 
 // dataTest - test data.
 type dataTest struct {
@@ -13,7 +17,17 @@ func newDataTest(data []byte) *dataTest {
 	}
 }
 
-// Bytes - return data byte.
+// Size returns count of bytes in data
+func (dt *dataTest) Size() int64 {
+	return int64(len(dt.data))
+}
+
+// WriteTo implements io.WriterTo interface
+func (dt *dataTest) WriteTo(w io.Writer) (int64, error) {
+	n, err := w.Write(dt.data)
+	return int64(n), err
+}
+
 func (dt *dataTest) Bytes() []byte {
 	return dt.data
 }

@@ -98,7 +98,7 @@ func (s *FileManagerSuite) TestOpenCloseFile() {
 	err = s.fm.OpenFile()
 	s.NoError(err)
 
-	n, err := s.fm.WriteAt(context.Background(), s.etalonsData, io.SeekStart)
+	n, err := s.fm.Writer(context.Background(), io.SeekStart).Write(s.etalonsData)
 	s.NoError(err)
 	s.Equal(len(s.etalonsData), n)
 
@@ -186,7 +186,7 @@ func (s *FileManagerSuite) TestFileSize() {
 	err = s.fm.OpenFile()
 	s.NoError(err)
 
-	n, err := s.fm.WriteAt(context.Background(), s.etalonsData, io.SeekStart)
+	n, err := s.fm.Writer(context.Background(), io.SeekStart).Write(s.etalonsData)
 	s.NoError(err)
 	s.Equal(len(s.etalonsData), n)
 

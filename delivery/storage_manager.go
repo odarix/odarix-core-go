@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/odarix/odarix-core-go/common"
 	"github.com/odarix/odarix-core-go/frames"
+	"github.com/odarix/odarix-core-go/util"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -219,12 +220,12 @@ func (sm *StorageManager) GetSnapshot(ctx context.Context, segKey common.Segment
 	}
 
 	// read frame
-	snapshotData, err := frames.ReadAtFrameSnapshot(ctx, sm.storage, pos)
+	snapshotData, err := frames.ReadFrameSnapshot(ctx, util.NewOffsetReader(sm.storage, pos))
 	if err != nil {
 		return nil, err
 	}
 
-	sm.readBytes.Observe(float64(snapshotData.SizeOf()))
+	sm.readBytes.Observe(float64(snapshotData.Size()))
 
 	return snapshotData, nil
 }
@@ -265,12 +266,12 @@ func (sm *StorageManager) GetSegment(ctx context.Context, segKey common.SegmentK
 	}
 
 	// read frame
-	segmentData, err := frames.ReadAtFrameSegment(ctx, sm.storage, pos)
+	segmentData, err := frames.ReadFrameSegment(ctx, util.NewOffsetReader(sm.storage, pos))
 	if err != nil {
 		return nil, err
 	}
 
-	sm.readBytes.Observe(float64(segmentData.SizeOf()))
+	sm.readBytes.Observe(float64(segmentData.Size()))
 
 	return segmentData, nil
 }
@@ -399,7 +400,7 @@ func (sm *StorageManager) restore() (bool, error) {
 	var off int64
 	for {
 		// read header frame
-		h, err := frames.ReadAtHeader(ctx, sm.storage, off)
+		h, err := frames.ReadHeader(ctx, util.NewOffsetReader(sm.storage, off))
 		if errors.Is(err, io.EOF) {
 			break
 		}
@@ -433,7 +434,7 @@ func (sm *StorageManager) writeTitle(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	n, err := sm.storage.WriteAt(ctx, fe.EncodeBinary(), sm.lastWriteOffset)
+	n, err := fe.WriteTo(sm.storage.Writer(ctx, sm.lastWriteOffset))
 	sm.writeBytes.Observe(float64(n))
 	if err != nil {
 		return err
@@ -452,7 +453,7 @@ func (sm *StorageManager) writeDestinationNames(ctx context.Context) error {
 		return err
 	}
 
-	n, err := sm.storage.WriteAt(ctx, fe.EncodeBinary(), sm.lastWriteOffset)
+	n, err := fe.WriteTo(sm.storage.Writer(ctx, sm.lastWriteOffset))
 	sm.writeBytes.Observe(float64(n))
 	if err != nil {
 		return err
@@ -517,11 +518,8 @@ func (sm *StorageManager) WriteSegment(ctx context.Context, key common.SegmentKe
 	if err != nil {
 		return err
 	}
-	fe, err := frames.NewSegmentFrame(protocolVersion, key.ShardID, key.Segment, seg.Bytes())
-	if err != nil {
-		return err
-	}
-	n, err := sm.storage.WriteAt(ctx, fe.EncodeBinary(), sm.lastWriteOffset)
+	fe := frames.NewWriteFrame(protocolVersion, frames.SegmentType, key.ShardID, key.Segment, seg)
+	n, err := fe.WriteTo(sm.storage.Writer(ctx, sm.lastWriteOffset))
 	sm.writeBytes.Observe(float64(n))
 	if err != nil {
 		return err
@@ -541,11 +539,8 @@ func (sm *StorageManager) WriteSnapshot(ctx context.Context, segKey common.Segme
 		}
 	}
 
-	fe, err := frames.NewSnapshotFrame(protocolVersion, segKey.ShardID, segKey.Segment, snapshot.Bytes())
-	if err != nil {
-		return err
-	}
-	n, err := sm.storage.WriteAt(ctx, fe.EncodeBinary(), sm.lastWriteOffset)
+	fe := frames.NewWriteFrame(protocolVersion, frames.SnapshotType, segKey.ShardID, segKey.Segment, snapshot)
+	n, err := fe.WriteTo(sm.storage.Writer(ctx, sm.lastWriteOffset))
 	sm.writeBytes.Observe(float64(n))
 	if err != nil {
 		return err
@@ -576,7 +571,7 @@ func (sm *StorageManager) WriteAckStatus(ctx context.Context) error {
 			sm.ackStatus.UnrotateRejects(rejects)
 			return err
 		}
-		n, err := sm.storage.WriteAt(ctx, fe.EncodeBinary(), sm.lastWriteOffset)
+		n, err := fe.WriteTo(sm.storage.Writer(ctx, sm.lastWriteOffset))
 		sm.writeBytes.Observe(float64(n))
 		if err != nil {
 			sm.ackStatus.UnrotateRejects(rejects)
@@ -590,7 +585,7 @@ func (sm *StorageManager) WriteAckStatus(ctx context.Context) error {
 			// TODO: unrotate
 			return err
 		}
-		n, err := sm.storage.WriteAt(ctx, fe.EncodeBinary(), sm.lastWriteOffset)
+		n, err := fe.WriteTo(sm.storage.Writer(ctx, sm.lastWriteOffset))
 		sm.writeBytes.Observe(float64(n))
 		if err != nil {
 			// TODO: unrotate

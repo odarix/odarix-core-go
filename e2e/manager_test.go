@@ -46,7 +46,7 @@ func (s *BlockManagerSuite) TestDeliveryManagerHappyPath() {
 	retCh := make(chan *prompb.WriteRequest, 30)
 	baseCtx := context.Background()
 
-	handleStream := func(ctx context.Context, fe *frames.Frame, tcpReader *server.TCPReader) {
+	handleStream := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
 		reader := server.NewProtocolReader(server.StartWith(tcpReader, fe))
 		defer reader.Destroy()
 		for {
@@ -72,7 +72,7 @@ func (s *BlockManagerSuite) TestDeliveryManagerHappyPath() {
 		}
 	}
 
-	handleRefill := func(ctx context.Context, fe *frames.Frame, tcpReader *server.TCPReader) {
+	handleRefill := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
 		s.T().Log("not required")
 		s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 			Text: "OK",
@@ -143,7 +143,7 @@ func (s *BlockManagerSuite) TestDeliveryManagerBreakingConnection() {
 		return false
 	}
 
-	handleStream := func(ctx context.Context, fe *frames.Frame, tcpReader *server.TCPReader) {
+	handleStream := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
 		reader := server.NewProtocolReader(server.StartWith(tcpReader, fe))
 		defer reader.Destroy()
 		for {
@@ -179,7 +179,7 @@ func (s *BlockManagerSuite) TestDeliveryManagerBreakingConnection() {
 		}
 	}
 
-	handleRefill := func(ctx context.Context, fe *frames.Frame, tcpReader *server.TCPReader) {
+	handleRefill := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
 		s.T().Log("not required")
 		s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 			Text: "OK",
@@ -252,7 +252,7 @@ func (s *BlockManagerSuite) TestDeliveryManagerReject() {
 	retCh := make(chan *prompb.WriteRequest, 30)
 	baseCtx := context.Background()
 
-	handleStream := func(ctx context.Context, fe *frames.Frame, tcpReader *server.TCPReader) {
+	handleStream := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
 		reader := server.NewProtocolReader(server.StartWith(tcpReader, fe))
 		defer reader.Destroy()
 		for {
@@ -290,7 +290,7 @@ func (s *BlockManagerSuite) TestDeliveryManagerReject() {
 		}
 	}
 
-	handleRefill := func(ctx context.Context, fe *frames.Frame, tcpReader *server.TCPReader) {
+	handleRefill := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
 		s.T().Log("not required")
 		s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 			Text: "OK",

@@ -15,6 +15,7 @@ import (
 	"github.com/odarix/odarix-core-go/common"
 	"github.com/odarix/odarix-core-go/delivery"
 	"github.com/odarix/odarix-core-go/frames"
+	"github.com/odarix/odarix-core-go/frames/framestest"
 )
 
 // FileBuffer - implement file.
@@ -163,50 +164,11 @@ func (s *StorageManagerSuite) SetupSuite() {
 	s.etalonShardsNumberPower = 1
 	s.etalonBlockID, err = uuid.NewRandom()
 	s.NoError(err)
-	s.etalonsData = newDataTest([]byte{
-		1,
-		2,
-		3,
-		4,
-		5,
-		6,
-		7,
-		8,
-		9,
-		10,
-		11,
-		12,
-		13,
-		14,
-		15,
-		16,
-		17,
-		18,
-		19,
-		20,
-		21,
-		22,
-		23,
-		24,
-		25,
-		26,
-		27,
-		28,
-		29,
-		30,
-		31,
-		32,
-		33,
-		34,
-		35,
-		36,
-		37,
-		38,
-		39,
-		40,
-		41,
-		42,
-	})
+	data := make([]byte, 42)
+	for i := range data {
+		data[i] = byte(i + 1)
+	}
+	s.etalonsData = newDataTest(data)
 }
 
 func (s *StorageManagerSuite) SetupTest() {
@@ -256,9 +218,11 @@ func (s *StorageManagerSuite) TestSegment() {
 	s.True(ok)
 
 	actualSeg, err := s.sm.GetSegment(s.ctx, segKey)
-	s.NoError(err)
-
-	s.ElementsMatch(s.etalonsData.Bytes(), actualSeg.Bytes())
+	if s.NoError(err) {
+		if buf, err := framestest.ReadPayload(actualSeg); s.NoError(err) {
+			s.Equal(s.etalonsData.Bytes(), buf)
+		}
+	}
 }
 
 func (s *StorageManagerSuite) TestWriteSegmentWithError() {
@@ -299,9 +263,11 @@ func (s *StorageManagerSuite) TestSnapshot() {
 	s.True(ok)
 
 	actualSnap, err := s.sm.GetSnapshot(s.ctx, segKey)
-	s.NoError(err)
-
-	s.ElementsMatch(s.etalonsData.Bytes(), actualSnap.Bytes())
+	if s.NoError(err) {
+		if buf, err := framestest.ReadPayload(actualSnap); s.NoError(err) {
+			s.Equal(s.etalonsData.Bytes(), buf)
+		}
+	}
 }
 
 func (s *StorageManagerSuite) TestAckStatus() {
@@ -391,12 +357,18 @@ func (s *StorageManagerSuite) TestRestore() {
 	s.Equal(s.etalonBlockID.String(), s.sm.BlockID().String())
 
 	actualSeg, err := s.sm.GetSegment(s.ctx, segKey)
-	s.NoError(err)
-	s.ElementsMatch(s.etalonsData.Bytes(), actualSeg.Bytes())
+	if s.NoError(err) {
+		if buf, err := framestest.ReadPayload(actualSeg); s.NoError(err) {
+			s.Equal(s.etalonsData.Bytes(), buf)
+		}
+	}
 
 	actualSnap, err := s.sm.GetSnapshot(s.ctx, segKey)
-	s.NoError(err)
-	s.ElementsMatch(s.etalonsData.Bytes(), actualSnap.Bytes())
+	if s.NoError(err) {
+		if buf, err := framestest.ReadPayload(actualSnap); s.NoError(err) {
+			s.Equal(s.etalonsData.Bytes(), buf)
+		}
+	}
 
 	actualAckStatus := s.sm.GetAckStatus()
 	index, ok := actualAckStatus.Index("www.collector.com")

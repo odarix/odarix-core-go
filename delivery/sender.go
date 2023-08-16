@@ -11,6 +11,7 @@ import (
 	"github.com/cenkalti/backoff/v4"
 	"github.com/google/uuid"
 	"github.com/odarix/odarix-core-go/common"
+	"github.com/odarix/odarix-core-go/frames"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -176,17 +177,32 @@ func (sender *Sender) dial(ctx context.Context) (transport Transport, closeFn fu
 			ShardID: sender.shardID,
 			Segment: sender.lastDelivered + 1,
 		})
-
-		err := transport.SendRestore(ctx, snapshot, segments)
+		segmentID := sender.lastDelivered + 1 - uint32(len(segments))
 		if snapshot != nil {
-			snapshot.Destroy()
-		}
-		if err != nil {
-			if ctx.Err() == nil {
-				sender.errorHandler(fmt.Sprintf("%s: fail to send restore", sender), err)
+			frame := frames.NewWriteFrame(protocolVersion, frames.SnapshotType, sender.shardID, segmentID, snapshot)
+			if err := transport.Send(ctx, frame); err != nil {
+				if ctx.Err() == nil {
+					sender.errorHandler(fmt.Sprintf("%s: fail to send restore", sender), err)
+				}
+				closeFn()
+				return nil, nil, err
 			}
-			closeFn()
-			return nil, nil, err
+		}
+		for i := range segments {
+			frame := frames.NewWriteFrame(
+				protocolVersion,
+				frames.DrySegmentType,
+				sender.shardID,
+				segmentID+uint32(i),
+				segments[i],
+			)
+			if err := transport.Send(ctx, frame); err != nil {
+				if ctx.Err() == nil {
+					sender.errorHandler(fmt.Sprintf("%s: fail to send restore", sender), err)
+				}
+				closeFn()
+				return nil, nil, err
+			}
 		}
 	}
 
@@ -200,7 +216,8 @@ func (sender *Sender) writeLoop(ctx context.Context, transport Transport, from u
 		if segment == nil {
 			return id - 1, err
 		}
-		if err = transport.SendSegment(ctx, segment); err != nil {
+		frame := frames.NewWriteFrame(protocolVersion, frames.SegmentType, sender.shardID, id, segment)
+		if err = transport.Send(ctx, frame); err != nil {
 			return id - 1, err
 		}
 		sender.sentSegment.Set(float64(id))

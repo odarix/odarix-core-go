@@ -1,6 +1,7 @@
 package delivery_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -15,6 +16,8 @@ import (
 
 	"github.com/odarix/odarix-core-go/common"
 	"github.com/odarix/odarix-core-go/delivery"
+	"github.com/odarix/odarix-core-go/frames"
+	"github.com/odarix/odarix-core-go/frames/framestest"
 )
 
 type RefillSenderSuite struct {
@@ -68,28 +71,23 @@ func (*RefillSenderSuite) createDialerHappyPath(name string) delivery.Dialer {
 				},
 				OnRejectFunc:    func(fn func(uint32)) {},
 				OnReadErrorFunc: func(fn func(error)) {},
-				SendRefillFunc: func(_ context.Context, preparedDatas []delivery.PreparedData) error {
-					numberOfMessage = uint32(len(preparedDatas))
-					return nil
-				},
-				SendSegmentFunc: func(_ context.Context, _ delivery.Segment) error {
-					numberOfMessage--
-					if numberOfMessage == 0 {
-						ack(0)
+				SendFunc: func(ctx context.Context, frame *frames.WriteFrame) error {
+					rf, err := framestest.ReadFrame(ctx, frame)
+					if err != nil {
+						return err
 					}
-					return nil
-				},
-				SendDrySegmentFunc: func(_ context.Context, _ delivery.Segment) error {
-					numberOfMessage--
-					if numberOfMessage == 0 {
-						ack(0)
-					}
-					return nil
-				},
-				SendSnapshotFunc: func(_ context.Context, _ delivery.Snapshot) error {
-					numberOfMessage--
-					if numberOfMessage == 0 {
-						ack(0)
+					if rf.GetType() == frames.RefillType {
+						br := bytes.NewReader(rf.GetBody())
+						msg, err := frames.ReadRefillMsg(ctx, br, int(rf.Header.GetSize()))
+						if err != nil {
+							return err
+						}
+						numberOfMessage = uint32(len(msg.Messages))
+					} else {
+						numberOfMessage--
+						if numberOfMessage == 0 {
+							ack(0)
+						}
 					}
 					return nil
 				},
@@ -312,43 +310,28 @@ func (*RefillSenderSuite) createDialerReject(name string) delivery.Dialer {
 					reject = fn
 				},
 				OnReadErrorFunc: func(fn func(error)) {},
-				SendRefillFunc: func(_ context.Context, preparedDatas []delivery.PreparedData) error {
-					numberOfMessage = uint32(len(preparedDatas))
-					return nil
-				},
-				SendSegmentFunc: func(_ context.Context, _ delivery.Segment) error {
-					numberOfMessage--
-					if numberOfMessage == 0 {
-						if switcher {
-							ack(0)
-							return nil
-						}
-						switcher = true
-						reject(0)
+				SendFunc: func(ctx context.Context, frame *frames.WriteFrame) error {
+					rf, err := framestest.ReadFrame(ctx, frame)
+					if err != nil {
+						return err
 					}
-					return nil
-				},
-				SendDrySegmentFunc: func(_ context.Context, _ delivery.Segment) error {
-					numberOfMessage--
-					if numberOfMessage == 0 {
-						if switcher {
-							ack(0)
-							return nil
+					if rf.GetType() == frames.RefillType {
+						br := bytes.NewReader(rf.GetBody())
+						msg, err := frames.ReadRefillMsg(ctx, br, int(rf.Header.GetSize()))
+						if err != nil {
+							return err
 						}
-						switcher = true
-						reject(0)
-					}
-					return nil
-				},
-				SendSnapshotFunc: func(_ context.Context, _ delivery.Snapshot) error {
-					numberOfMessage--
-					if numberOfMessage == 0 {
-						if switcher {
-							ack(0)
-							return nil
+						numberOfMessage = uint32(len(msg.Messages))
+					} else {
+						numberOfMessage--
+						if numberOfMessage == 0 {
+							if switcher {
+								ack(0)
+								return nil
+							}
+							switcher = true
+							reject(0)
 						}
-						switcher = true
-						reject(0)
 					}
 					return nil
 				},

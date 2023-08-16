@@ -296,7 +296,6 @@ func (mgr *Manager) Send(ctx context.Context, data ProtoData) (ack bool, err err
 	}
 
 	if mgr.haTracker.IsDrop(hx.Cluster(), hx.Replica()) {
-		hx.Destroy()
 		data.Destroy()
 		return true, nil
 	}
@@ -320,7 +319,6 @@ func (mgr *Manager) Send(ctx context.Context, data ProtoData) (ack bool, err err
 	err = group.Wait()
 	mgr.encodersLock.Unlock()
 	mgr.encodeDuration.Observe(float64(time.Since(start).Milliseconds()))
-	hx.Destroy()
 	data.Destroy()
 	if err != nil {
 		// TODO: is encoder recoverable?
@@ -340,25 +338,16 @@ func (mgr *Manager) SendOpenHead(ctx context.Context, data ProtoData) (ack bool,
 	}
 
 	if mgr.haTracker.IsDrop(hx.Cluster(), hx.Replica()) {
-		hx.Destroy()
 		data.Destroy()
 		return true, nil
 	}
 
 	mgr.encodersLock.Lock()
 	segments, err := mgr.addData(ctx, hx)
-	hx.Destroy()
 	data.Destroy()
 
 	promise := mgr.getPromise()
 	limitsReached, afterFinish := promise.Add(segments)
-	go func() {
-		for _, segment := range segments {
-			if segment != nil {
-				segment.Destroy()
-			}
-		}
-	}()
 	if limitsReached {
 		mgr.finalizePromise()
 		afterFinish()
@@ -443,7 +432,7 @@ func (mgr *Manager) finalizePromise() {
 }
 
 func (mgr *Manager) observeSegmentMetrics(segment common.Segment) {
-	mgr.segmentSize.Observe(float64(len(segment.Bytes())))
+	mgr.segmentSize.Observe(float64(segment.Size()))
 	mgr.segmentSeries.Observe(float64(segment.Series()))
 	mgr.segmentSamples.Observe(float64(segment.Samples()))
 	tsNow := time.Now().UnixMilli()
@@ -655,7 +644,6 @@ func (mgr *Manager) writeSegmentToRefill(ctx context.Context, key common.Segment
 		return err
 	}
 	err = mgr.refill.WriteSnapshot(ctx, key, snapshot)
-	snapshot.Destroy()
 	if err != nil {
 		return err
 	}
@@ -683,7 +671,7 @@ func (mgr *Manager) snapshot(ctx context.Context, key common.SegmentKey) (common
 	}
 
 	snapshot, err := mgr.encoders[key.ShardID].Snapshot(ctx, redundants)
-	mgr.snapshotSize.Observe(float64(len(snapshot.Bytes())))
+	mgr.snapshotSize.Observe(float64(snapshot.Size()))
 	return snapshot, err
 }
 

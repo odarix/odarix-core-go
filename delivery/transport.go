@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"github.com/jonboulle/clockwork"
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/odarix/odarix-core-go/frames"
@@ -30,11 +31,7 @@ type Dialer interface {
 // - authorized
 // - setted timeouts
 type Transport interface {
-	SendRestore(context.Context, Snapshot, []Segment) error
-	SendSegment(context.Context, Segment) error
-	SendRefill(context.Context, []PreparedData) error
-	SendSnapshot(context.Context, Snapshot) error
-	SendDrySegment(context.Context, Segment) error
+	Send(context.Context, *frames.WriteFrame) error
 	Listen(ctx context.Context)
 	OnAck(func(uint32))
 	OnReject(func(uint32))
@@ -68,6 +65,7 @@ type TCPDialer struct {
 	connDialer ConnDialer
 	config     TCPDialerConfig
 	backoff    backoff.BackOff
+	clock      clockwork.Clock
 	registerer prometheus.Registerer
 }
 
@@ -99,7 +97,7 @@ func (bwl backoffWithLock) Reset() {
 var _ Dialer = (*TCPDialer)(nil)
 
 // NewTCPDialer - init new TCPDialer.
-func NewTCPDialer(dialer ConnDialer, config TCPDialerConfig, registerer prometheus.Registerer) *TCPDialer {
+func NewTCPDialer(dialer ConnDialer, config TCPDialerConfig, clock clockwork.Clock, registerer prometheus.Registerer) *TCPDialer {
 	ebo := backoff.NewExponentialBackOff()
 	ebo.InitialInterval = time.Second
 	ebo.RandomizationFactor = 0.5 //revive:disable-line:add-constant it's explained in field name
@@ -114,6 +112,7 @@ func NewTCPDialer(dialer ConnDialer, config TCPDialerConfig, registerer promethe
 		// reset backoff may be called concurrent with it use
 		// so here we add mutex on this operations.
 		backoff:    BackoffWithLock(ebo),
+		clock:      clock,
 		registerer: registerer,
 	}
 }
@@ -135,7 +134,7 @@ func (dialer *TCPDialer) Dial(ctx context.Context) (Transport, error) {
 		if err != nil {
 			return nil, err
 		}
-		tr := NewTCPTransport(&dialer.config.Transport, conn, dialer, dialer.registerer)
+		tr := NewTCPTransport(&dialer.config.Transport, conn, dialer, dialer.clock, dialer.registerer)
 		if err := tr.auth(ctx, dialer.config.AuthToken, dialer.config.AgentUUID); err != nil {
 			_ = tr.Close()
 			return nil, err
@@ -158,25 +157,32 @@ var ErrCallbackNotSet = errors.New("callback not set")
 
 // TCPTransport - transport implementation.
 type TCPTransport struct {
+	// dependencies
+	clock clockwork.Clock
+	// state
 	nt              *transport.Transport
 	dialer          interface{ ResetBackoff() }
 	onAckFunc       func(id uint32)
 	onRejectFunc    func(id uint32)
 	onReadErrorFunc func(err error)
 	cancel          context.CancelFunc
-	// stat
+	// metrics
 	roundtripDuration prometheus.Histogram
 }
+
+var _ Transport = &TCPTransport{}
 
 // NewTCPTransport - init new TCPTransport.
 func NewTCPTransport(
 	cfg *transport.Config,
 	conn net.Conn,
 	dialer *TCPDialer,
+	clock clockwork.Clock,
 	registerer prometheus.Registerer,
 ) *TCPTransport {
 	factory := NewConflictRegisterer(registerer)
 	return &TCPTransport{
+		clock:  clock,
 		nt:     transport.New(cfg, conn),
 		dialer: dialer,
 		roundtripDuration: factory.NewHistogram(
@@ -233,95 +239,10 @@ func (tt *TCPTransport) auth(ctx context.Context, token, uuid string) error {
 	return nil
 }
 
-// SendRestore -  send Snapshot and Segments for restore over connection.
-func (tt *TCPTransport) SendRestore(ctx context.Context, snap Snapshot, segs []Segment) error {
-	if snap != nil {
-		fe, err := frames.NewSnapshotFrame(protocolVersion, 0, 0, snap.Bytes())
-		if err != nil {
-			return err
-		}
-
-		if err := tt.nt.Write(ctx, fe); err != nil {
-			return fmt.Errorf("failed send snapshot: %w", err)
-		}
-	}
-
-	for _, seg := range segs {
-		fe, err := frames.NewDrySegmentFrame(protocolVersion, 0, 0, seg.Bytes())
-		if err != nil {
-			return err
-		}
-
-		if err := tt.nt.Write(ctx, fe); err != nil {
-			return fmt.Errorf("failed send segment: %w", err)
-		}
-	}
-
-	return nil
-}
-
-// SendSegment - send Segment over connection.
-func (tt *TCPTransport) SendSegment(ctx context.Context, seg Segment) error {
-	fe, err := frames.NewSegmentFrame(protocolVersion, 0, 0, seg.Bytes())
-	if err != nil {
-		return err
-	}
-	if err := tt.nt.Write(ctx, fe); err != nil {
-		return fmt.Errorf("failed send segment: %w", err)
-	}
-
-	return nil
-}
-
-// SendRefill - send Refill msg over connection.
-func (tt *TCPTransport) SendRefill(ctx context.Context, pd []PreparedData) error {
-	messages := make([]frames.MessageData, 0, len(pd))
-	for _, data := range pd {
-		messages = append(
-			messages,
-			frames.MessageData{
-				ID:      data.SegmentID,
-				Size:    data.Value.size,
-				Typemsg: data.MsgType,
-			},
-		)
-	}
-	fe, err := frames.NewRefillFrameWithMsg(protocolVersion, frames.NewRefillMsg(messages))
-	if err != nil {
-		return err
-	}
-
-	if err := tt.nt.Write(ctx, fe); err != nil {
-		return fmt.Errorf("failed send refill: %w", err)
-	}
-
-	return nil
-}
-
-// SendSnapshot -  send Snapshot for restore over connection.
-func (tt *TCPTransport) SendSnapshot(ctx context.Context, snap Snapshot) error {
-	fe, err := frames.NewSnapshotFrame(protocolVersion, 0, 0, snap.Bytes())
-	if err != nil {
-		return err
-	}
-	if err := tt.nt.Write(ctx, fe); err != nil {
-		return fmt.Errorf("failed send snapshot: %w", err)
-	}
-
-	return nil
-}
-
-// SendDrySegment - send dry Segment over connection.
-func (tt *TCPTransport) SendDrySegment(ctx context.Context, seg Segment) error {
-	fe, err := frames.NewDrySegmentFrame(protocolVersion, 0, 0, seg.Bytes())
-	if err != nil {
-		return err
-	}
-	if err := tt.nt.Write(ctx, fe); err != nil {
-		return fmt.Errorf("failed send dry segment: %w", err)
-	}
-
-	return nil
+// Send frame to server
+func (tt *TCPTransport) Send(ctx context.Context, frame *frames.WriteFrame) error {
+	_, err := frame.WriteTo(tt.nt.Writer(ctx))
+	return err
 }
 
 // Listen - start listening for an incoming connection.

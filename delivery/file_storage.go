@@ -3,10 +3,13 @@ package delivery
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/odarix/odarix-core-go/util"
 )
 
 const (
@@ -59,21 +62,23 @@ func (fs *FileStorage) OpenFile() error {
 	return nil
 }
 
-// WriteAt wirtes data to file and flush it
-func (fs *FileStorage) WriteAt(ctx context.Context, b []byte, off int64) (int, error) {
-	if ctx.Err() != nil {
-		return 0, ctx.Err()
-	}
-	if deadline, ok := ctx.Deadline(); ok {
-		_ = fs.fileDescriptor.SetWriteDeadline(deadline)
-	} else {
-		_ = fs.fileDescriptor.SetWriteDeadline(time.Time{})
-	}
-	n, err := fs.fileDescriptor.WriteAt(b, off)
-	if err != nil {
-		return n, err
-	}
-	return n, fs.fileDescriptor.Sync()
+func (fs *FileStorage) Writer(ctx context.Context, off int64) io.Writer {
+	return util.FnWriter(func(p []byte) (int, error) {
+		if ctx.Err() != nil {
+			return 0, ctx.Err()
+		}
+		if deadline, ok := ctx.Deadline(); ok {
+			_ = fs.fileDescriptor.SetWriteDeadline(deadline)
+		} else {
+			_ = fs.fileDescriptor.SetWriteDeadline(time.Time{})
+		}
+		n, err := fs.fileDescriptor.WriteAt(p, off)
+		off += int64(n)
+		if err != nil {
+			return n, err
+		}
+		return n, fs.fileDescriptor.Sync()
+	})
 }
 
 // Seek - implements Seek of reader.
