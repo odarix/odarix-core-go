@@ -51,6 +51,10 @@ func (*dataTest) Latest() int64 {
 	return 0
 }
 
+func (*dataTest) RemainingTableSize() uint32 {
+	return 0
+}
+
 // Destroy - clear memory, for implements.
 func (dt *dataTest) Destroy() {
 	dt.data = nil

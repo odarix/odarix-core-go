@@ -25,6 +25,9 @@ var _ common.Segment = &SegmentMock{}
 //			LatestFunc: func() int64 {
 //				panic("mock out the Latest method")
 //			},
+//			RemainingTableSizeFunc: func() uint32 {
+//				panic("mock out the RemainingTableSize method")
+//			},
 //			SamplesFunc: func() uint32 {
 //				panic("mock out the Samples method")
 //			},
@@ -50,6 +53,9 @@ type SegmentMock struct {
 	// LatestFunc mocks the Latest method.
 	LatestFunc func() int64
 
+	// RemainingTableSizeFunc mocks the RemainingTableSize method.
+	RemainingTableSizeFunc func() uint32
+
 	// SamplesFunc mocks the Samples method.
 	SamplesFunc func() uint32
 
@@ -70,6 +76,9 @@ type SegmentMock struct {
 		// Latest holds details about calls to the Latest method.
 		Latest []struct {
 		}
+		// RemainingTableSize holds details about calls to the RemainingTableSize method.
+		RemainingTableSize []struct {
+		}
 		// Samples holds details about calls to the Samples method.
 		Samples []struct {
 		}
@@ -85,12 +94,13 @@ type SegmentMock struct {
 			W io.Writer
 		}
 	}
-	lockEarliest sync.RWMutex
-	lockLatest   sync.RWMutex
-	lockSamples  sync.RWMutex
-	lockSeries   sync.RWMutex
-	lockSize     sync.RWMutex
-	lockWriteTo  sync.RWMutex
+	lockEarliest           sync.RWMutex
+	lockLatest             sync.RWMutex
+	lockRemainingTableSize sync.RWMutex
+	lockSamples            sync.RWMutex
+	lockSeries             sync.RWMutex
+	lockSize               sync.RWMutex
+	lockWriteTo            sync.RWMutex
 }
 
 // Earliest calls EarliestFunc.
@@ -144,6 +154,33 @@ func (mock *SegmentMock) LatestCalls() []struct {
 	mock.lockLatest.RLock()
 	calls = mock.calls.Latest
 	mock.lockLatest.RUnlock()
+	return calls
+}
+
+// RemainingTableSize calls RemainingTableSizeFunc.
+func (mock *SegmentMock) RemainingTableSize() uint32 {
+	if mock.RemainingTableSizeFunc == nil {
+		panic("SegmentMock.RemainingTableSizeFunc: method is nil but Segment.RemainingTableSize was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockRemainingTableSize.Lock()
+	mock.calls.RemainingTableSize = append(mock.calls.RemainingTableSize, callInfo)
+	mock.lockRemainingTableSize.Unlock()
+	return mock.RemainingTableSizeFunc()
+}
+
+// RemainingTableSizeCalls gets all the calls that were made to RemainingTableSize.
+// Check the length with:
+//
+//	len(mockedSegment.RemainingTableSizeCalls())
+func (mock *SegmentMock) RemainingTableSizeCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockRemainingTableSize.RLock()
+	calls = mock.calls.RemainingTableSize
+	mock.lockRemainingTableSize.RUnlock()
 	return calls
 }
 
