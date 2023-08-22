@@ -56,6 +56,8 @@ type TCPDialerConfig struct {
 	Transport          transport.Config
 	AuthToken          string
 	AgentUUID          string
+	ProductName        string
+	AgentHostname      string
 	BackoffMaxInterval time.Duration
 	BackoffMaxTries    uint64
 }
@@ -135,7 +137,13 @@ func (dialer *TCPDialer) Dial(ctx context.Context) (Transport, error) {
 			return nil, err
 		}
 		tr := NewTCPTransport(&dialer.config.Transport, conn, dialer, dialer.clock, dialer.registerer)
-		if err := tr.auth(ctx, dialer.config.AuthToken, dialer.config.AgentUUID); err != nil {
+		if err := tr.auth(
+			ctx,
+			dialer.config.AuthToken,
+			dialer.config.AgentUUID,
+			dialer.config.ProductName,
+			dialer.config.AgentHostname,
+		); err != nil {
 			_ = tr.Close()
 			return nil, err
 		}
@@ -197,8 +205,8 @@ func NewTCPTransport(
 }
 
 // auth - request for authentication connection.
-func (tt *TCPTransport) auth(ctx context.Context, token, uuid string) error {
-	fe, err := frames.NewAuthFrameWithMsg(protocolVersion, frames.NewAuthMsg(token, uuid))
+func (tt *TCPTransport) auth(ctx context.Context, token, uuid, productName, agentHostname string) error {
+	fe, err := frames.NewAuthFrameWithMsg(protocolVersion, frames.NewAuthMsg(token, uuid, productName, agentHostname))
 	if err != nil {
 		return err
 	}
