@@ -2,6 +2,7 @@ package delivery
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"sync/atomic"
@@ -108,11 +109,58 @@ func (promise *SendPromise) Await(ctx context.Context) (ack bool, err error) {
 	}
 }
 
+const (
+	// DefaultMaxDuration - default max duration open head.
+	DefaultMaxDuration = 5 * time.Second
+	// DefaultMaxSamples - default max samples open head.
+	DefaultMaxSamples = 40e3
+	// DefaultLastAddTimeout - default last add timeout open head.
+	DefaultLastAddTimeout = 200 * time.Millisecond
+)
+
 // OpenHeadLimits configure how long encoder should accumulate data for one segment
 type OpenHeadLimits struct {
-	MaxDuration    time.Duration
-	MaxSamples     uint32
-	LastAddTimeout time.Duration
+	MaxDuration    time.Duration `validate:"required"`
+	LastAddTimeout time.Duration `validate:"required"`
+	MaxSamples     uint32        `validate:"min=5000"`
+}
+
+// DefaultOpenHeadLimits - generate default OpenHeadLimits.
+func DefaultOpenHeadLimits() OpenHeadLimits {
+	return OpenHeadLimits{
+		MaxDuration:    DefaultMaxDuration,
+		LastAddTimeout: DefaultLastAddTimeout,
+		MaxSamples:     DefaultMaxSamples,
+	}
+}
+
+// MarshalBinary - encoding to byte.
+func (l *OpenHeadLimits) MarshalBinary() ([]byte, error) {
+	//revive:disable-next-line:add-constant sum 8+4+8
+	buf := make([]byte, 0, 20)
+
+	buf = binary.AppendUvarint(buf, uint64(l.MaxDuration))
+	buf = binary.AppendUvarint(buf, uint64(l.LastAddTimeout))
+	buf = binary.AppendUvarint(buf, uint64(l.MaxSamples))
+	return buf, nil
+}
+
+// UnmarshalBinary - decoding from byte.
+func (l *OpenHeadLimits) UnmarshalBinary(data []byte) error {
+	var offset int
+
+	maxDuration, n := binary.Uvarint(data[offset:])
+	l.MaxDuration = time.Duration(maxDuration)
+	offset += n
+
+	lastAddTimeout, n := binary.Uvarint(data[offset:])
+	l.LastAddTimeout = time.Duration(lastAddTimeout)
+	offset += n
+
+	maxSamples, _ := binary.Uvarint(data[offset:])
+	l.MaxSamples = uint32(maxSamples)
+
+	return nil
 }
 
 // OpenHeadPromise is a SendPromise wrapper to combine several Sends in one segment
@@ -242,4 +290,27 @@ func (ErrServiceDataNotRestored) Error() string {
 // Permanent - sign of a permanent error.
 func (ErrServiceDataNotRestored) Permanent() bool {
 	return true
+}
+
+type CorruptedEncoderError struct {
+	err error
+}
+
+func isUnhandledEncoderError(err error) bool {
+	return !common.IsRemoteWriteLimitsExceedsError(err) &&
+		!common.IsRemoteWriteParsingError(err)
+}
+
+func markAsCorruptedEncoderError(err error) error {
+	return CorruptedEncoderError{err: err}
+}
+
+// Error implements error interface
+func (err CorruptedEncoderError) Error() string {
+	return err.err.Error()
+}
+
+// Unwrap implements errors.Unwrapper interface
+func (err CorruptedEncoderError) Unwrap() error {
+	return err.err
 }

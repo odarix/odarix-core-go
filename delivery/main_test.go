@@ -65,7 +65,7 @@ type shardedDataTest struct {
 	data string
 }
 
-func newByteShardedDataTest(data []byte) (common.ShardedData, error) {
+func newByteShardedDataTest(data []byte, _ common.HashdexLimits) (common.ShardedData, error) {
 	return newShardedDataTest(string(data)), nil
 }
 

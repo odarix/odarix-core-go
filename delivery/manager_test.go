@@ -64,6 +64,8 @@ func (s *ManagerSuite) TestSendWithAck() {
 		refillCtor,
 		2,
 		time.Minute,
+		"workingDir",
+		delivery.DefaultLimits(),
 		rejectNotifyer,
 		haTracker,
 		s.errorHandler,
@@ -122,6 +124,8 @@ func (s *ManagerSuite) TestRejectToRefill() {
 		refillCtor,
 		2,
 		time.Minute,
+		"workingDir",
+		delivery.DefaultLimits(),
 		rejectNotifyer,
 		haTracker,
 		s.errorHandler,
@@ -204,6 +208,8 @@ func (s *ManagerSuite) TestAckRejectRace() {
 		refillCtor,
 		2,
 		time.Minute,
+		"workingDir",
+		delivery.DefaultLimits(),
 		rejectNotifyer,
 		haTracker,
 		s.errorHandler,
@@ -307,6 +313,8 @@ func (s *ManagerSuite) TestRestoreFromRefill() {
 		refillCtor,
 		2,
 		5*time.Second,
+		"workingDir",
+		delivery.DefaultLimits(),
 		rejectNotifyer,
 		haTracker,
 		s.errorHandler,
@@ -379,6 +387,8 @@ func (s *ManagerSuite) TestRestoreWithNoRefill() {
 		refillCtor,
 		2,
 		time.Minute,
+		"workingDir",
+		delivery.DefaultLimits(),
 		rejectNotifyer,
 		haTracker,
 		s.errorHandler,
@@ -442,6 +452,8 @@ func (s *ManagerSuite) TestNotOpened() {
 		refillCtor,
 		2,
 		time.Minute,
+		"workingDir",
+		delivery.DefaultLimits(),
 		rejectNotifyer,
 		haTracker,
 		s.errorHandler,
@@ -461,7 +473,7 @@ func (s *ManagerSuite) TestNotOpened() {
 	clock.Advance(time.Minute + time.Millisecond)
 
 	s.T().Log("Shutdown manager")
-	baseCtx, cancel := context.WithTimeout(baseCtx, 11*time.Millisecond)
+	baseCtx, cancel := context.WithTimeout(baseCtx, 15*time.Millisecond)
 	defer cancel()
 	s.NoError(manager.Shutdown(baseCtx), "manager should be gracefully stopped")
 
@@ -509,6 +521,8 @@ func (s *ManagerSuite) TestLongDial() {
 		refillCtor,
 		2,
 		time.Minute,
+		"workingDir",
+		delivery.DefaultLimits(),
 		rejectNotifyer,
 		haTracker,
 		s.errorHandler,
@@ -819,7 +833,7 @@ func (*ManagerSuite) corruptedRefill() *ManagerRefillMock {
 }
 
 func (*ManagerSuite) constructorForRefill(refill *ManagerRefillMock) delivery.ManagerRefillCtor {
-	return func(_ context.Context, blockID uuid.UUID, destinations []string, shardsNumberPower uint8, registerer prometheus.Registerer) (delivery.ManagerRefill, error) {
+	return func(_ string, blockID uuid.UUID, destinations []string, shardsNumberPower uint8, registerer prometheus.Registerer) (delivery.ManagerRefill, error) {
 		if refill.BlockIDFunc == nil {
 			refill.BlockIDFunc = func() uuid.UUID { return blockID }
 		}
@@ -978,6 +992,8 @@ func (s *ManagerSuite) TestSend2WithAck() {
 		refillCtor,
 		2,
 		time.Minute,
+		"workingDir",
+		delivery.DefaultLimits(),
 		rejectNotifyer,
 		haTracker,
 		s.errorHandler,

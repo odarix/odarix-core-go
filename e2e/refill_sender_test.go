@@ -118,7 +118,7 @@ func (s *RefillSenderSuite) TestRefillSenderHappyPath() {
 
 			switch fe.GetType() {
 			case frames.SnapshotType, frames.DrySegmentType, frames.SegmentType:
-				if _, err := fe.WriteTo(file); !s.NoError(err, "fail write") {
+				if _, err = fe.WriteTo(file); !s.NoError(err, "fail write") {
 					return
 				}
 			default:
@@ -200,8 +200,7 @@ func (s *RefillSenderSuite) TestRefillSenderHappyPath() {
 	s.Require().NoError(manager.Close())
 	s.Require().NoError(manager.Shutdown(baseCtx))
 
-	rscfg := &delivery.RefillSendManagerConfig{
-		Dir:           dir,
+	rscfg := delivery.RefillSendManagerConfig{
 		ScanInterval:  2 * time.Second,
 		MaxRefillSize: 10000000, // 10mb
 	}
@@ -210,6 +209,7 @@ func (s *RefillSenderSuite) TestRefillSenderHappyPath() {
 	dialers := s.createDialers(s.token, listener.Addr().String())
 	rsmanager, err := delivery.NewRefillSendManager(
 		rscfg,
+		dir,
 		dialers,
 		s.errorHandler,
 		clockwork.NewRealClock(),
@@ -236,7 +236,7 @@ func (s *RefillSenderSuite) TestRefillSenderHappyPath() {
 	s.Require().NoError(err)
 
 	s.T().Log("client: check refill files")
-	files, err := os.ReadDir(dir)
+	files, err := os.ReadDir(filepath.Join(dir, delivery.RefillDir))
 	s.Require().NoError(err)
 	s.Equal(0, len(files))
 }
@@ -345,7 +345,7 @@ func (s *RefillSenderSuite) TestRefillSenderBreakingConnection() {
 
 			switch fe.GetType() {
 			case frames.SnapshotType, frames.DrySegmentType, frames.SegmentType:
-				if _, err := fe.WriteTo(file); !s.NoError(err, "fail write") {
+				if _, err = fe.WriteTo(file); !s.NoError(err, "fail write") {
 					return
 				}
 			default:
@@ -432,8 +432,7 @@ func (s *RefillSenderSuite) TestRefillSenderBreakingConnection() {
 	s.Require().NoError(manager.Close())
 	s.Require().NoError(manager.Shutdown(baseCtx))
 
-	rscfg := &delivery.RefillSendManagerConfig{
-		Dir:           dir,
+	rscfg := delivery.RefillSendManagerConfig{
 		ScanInterval:  1 * time.Second,
 		MaxRefillSize: 10000000, // 10mb
 	}
@@ -443,6 +442,7 @@ func (s *RefillSenderSuite) TestRefillSenderBreakingConnection() {
 	dialers := s.createDialers(s.token, listener.Addr().String())
 	rsmanager, err := delivery.NewRefillSendManager(
 		rscfg,
+		dir,
 		dialers,
 		s.errorHandler,
 		clockwork.NewRealClock(),
@@ -469,7 +469,7 @@ func (s *RefillSenderSuite) TestRefillSenderBreakingConnection() {
 	err = listener.Close()
 	s.Require().NoError(err)
 
-	files, err := os.ReadDir(dir)
+	files, err := os.ReadDir(filepath.Join(dir, delivery.RefillDir))
 	s.Require().NoError(err)
 	if !s.Equal(0, len(files)) {
 		for _, f := range files {

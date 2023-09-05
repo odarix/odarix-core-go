@@ -24,7 +24,6 @@ package internal
 // #include <stdlib.h>
 import "C"
 import (
-	"errors"
 	"unsafe"
 
 	"github.com/odarix/odarix-core-go/common/fastcgo"
@@ -55,6 +54,22 @@ type CErrorInfo C.c_api_error_info_ptr
 // call multiarch init function.
 func Init() {
 	fastcgo.UnsafeCall0(C.okdb_wal_initialize)
+}
+
+// EnableCoreDumps toggles generating coredumps from C++ Exceptions.
+// It requres GOTRACEBACK=core env variable for Go runtime.
+func EnableCoreDumps(enabled bool) {
+	var en uintptr
+	if enabled {
+		en = 1
+	} else {
+		en = 0
+	}
+
+	fastcgo.UnsafeCall1(
+		C.okdb_core_enable_coredumps_on_exception,
+		en,
+	)
 }
 
 // CByteSlice API
@@ -322,8 +337,8 @@ func CDecodedSegmentDestroy(p unsafe.Pointer) {
 }
 
 // CErrorInfo API
-func CErrorInfoGetError(errinfo CErrorInfo) error {
-	return errors.New(C.GoString(C.c_api_error_info_get_error(errinfo)))
+func CErrorInfoGetError(errinfo CErrorInfo) string {
+	return C.GoString(C.c_api_error_info_get_error(errinfo))
 }
 
 func CErrorInfoGetStacktrace(errinfo CErrorInfo) string {

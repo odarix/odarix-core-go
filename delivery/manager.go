@@ -7,6 +7,7 @@ import (
 	"math"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,6 +34,7 @@ type Manager struct {
 	// or the shutdown time must be greater than refillInterval.
 	// Otherwise, the data will be lost (not included in the refill file).
 	refillInterval time.Duration
+	limits         Limits
 	errorHandler   ErrorHandler
 	clock          clockwork.Clock
 
@@ -41,7 +43,7 @@ type Manager struct {
 	encodersLock   *sync.Mutex
 	hashdexCtor    HashdexCtor
 	encoders       []ManagerEncoder
-	ohLimits       OpenHeadLimits
+	ohCreatedAt    time.Time
 	ohPromise      *OpenHeadPromise
 	exchange       *Exchange
 	refill         ManagerRefill
@@ -51,18 +53,21 @@ type Manager struct {
 	senders        []*Sender
 	rejectNotifyer RejectNotifyer
 	haTracker      HATracker
+	walsSizes      []int64
 	// stat
-	registerer       prometheus.Registerer
-	encodeDuration   prometheus.Histogram
-	promiseDuration  prometheus.Histogram
-	segmentSize      prometheus.Histogram
-	snapshotSize     prometheus.Histogram
-	lagDuration      *prometheus.HistogramVec
-	segmentSeries    prometheus.Histogram
-	segmentSamples   prometheus.Histogram
-	rejects          prometheus.Counter
-	shutdownDuration prometheus.Histogram
-	promiseStopRace  prometheus.Counter
+	registerer        prometheus.Registerer
+	encodeDuration    prometheus.Histogram
+	promiseDuration   prometheus.Histogram
+	segmentSize       prometheus.Histogram
+	snapshotSize      prometheus.Histogram
+	lagDuration       *prometheus.HistogramVec
+	segmentSeries     prometheus.Histogram
+	segmentSamples    prometheus.Histogram
+	rejects           prometheus.Counter
+	shutdownDuration  prometheus.Histogram
+	promiseStopRace   prometheus.Counter
+	ohPromiseFinalize prometheus.Counter
+	ohPromiseDuration prometheus.Histogram
 }
 
 type (
@@ -103,7 +108,7 @@ type (
 
 	// ManagerRefillCtor - func-constuctor for ManagerRefill.
 	ManagerRefillCtor func(
-		ctx context.Context,
+		workingDir string,
 		blockID uuid.UUID,
 		destinations []string,
 		shardsNumberPower uint8,
@@ -111,7 +116,7 @@ type (
 	) (ManagerRefill, error)
 
 	// HashdexCtor - func-constuctor for Hashdex.
-	HashdexCtor func(protoData []byte) (common.ShardedData, error)
+	HashdexCtor func(protoData []byte, limits common.HashdexLimits) (common.ShardedData, error)
 
 	// HATracker - interface for High Availability Tracker.
 	HATracker interface {
@@ -137,6 +142,8 @@ func NewManager(
 	refillCtor ManagerRefillCtor,
 	shardsNumberPower uint8,
 	refillInterval time.Duration,
+	workingDir string,
+	limits Limits,
 	rejectNotifyer RejectNotifyer,
 	haTracker HATracker,
 	errorHandler ErrorHandler,
@@ -157,7 +164,7 @@ func NewManager(
 	if err != nil {
 		return nil, fmt.Errorf("generate block id: %w", err)
 	}
-	refill, err := refillCtor(ctx, blockID, destinations, shardsNumberPower, registerer)
+	refill, err := refillCtor(workingDir, blockID, destinations, shardsNumberPower, registerer)
 	if err != nil {
 		return nil, fmt.Errorf("create refill: %w", err)
 	}
@@ -166,7 +173,7 @@ func NewManager(
 			return nil, fmt.Errorf("rename refill: %w", err)
 		}
 
-		refill, err = refillCtor(ctx, blockID, destinations, shardsNumberPower, registerer)
+		refill, err = refillCtor(workingDir, blockID, destinations, shardsNumberPower, registerer)
 		if err != nil {
 			return nil, fmt.Errorf("create refill: %w", err)
 		}
@@ -190,25 +197,23 @@ func NewManager(
 	mgr := &Manager{
 		dialers:        dialersMap,
 		refillInterval: refillInterval,
-		errorHandler:   errorHandler,
-		clock:          clock,
+		limits:         limits,
 
-		destinations: destinations,
-		blockID:      blockID,
-		encodersLock: new(sync.Mutex),
-		hashdexCtor:  hashdexCtor,
-		encoders:     encoders,
-		ohLimits: OpenHeadLimits{
-			MaxDuration:    5 * time.Second,
-			MaxSamples:     40e3,
-			LastAddTimeout: 200 * time.Millisecond,
-		},
+		errorHandler: errorHandler,
+		clock:        clock,
+
+		destinations:   destinations,
+		blockID:        blockID,
+		encodersLock:   new(sync.Mutex),
+		hashdexCtor:    hashdexCtor,
+		encoders:       encoders,
 		exchange:       exchange,
 		refill:         refill,
 		refillSignal:   make(chan struct{}, 1),
 		refillDone:     make(chan struct{}),
 		rejectNotifyer: rejectNotifyer,
 		haTracker:      haTracker,
+		walsSizes:      make([]int64, 1<<shardsNumberPower),
 		registerer:     registerer,
 		encodeDuration: factory.NewHistogram(
 			prometheus.HistogramOpts{
@@ -279,6 +284,19 @@ func NewManager(
 				Help: "Counter of race error on open head promise finalization.",
 			},
 		),
+		ohPromiseFinalize: factory.NewCounter(
+			prometheus.CounterOpts{
+				Name: "odarix_core_delivery_manager_open_head_promise_finalize_total",
+				Help: "Counter of finalized segments in open head mode.",
+			},
+		),
+		ohPromiseDuration: factory.NewHistogram(
+			prometheus.HistogramOpts{
+				Name:    "odarix_core_delivery_manager_open_head_promise_duration_seconds",
+				Help:    "Duration of open head collect data before finalize.",
+				Buckets: prometheus.ExponentialBucketsRange(0.001, 1, 10),
+			},
+		),
 	}
 
 	refillCtx, cancel := context.WithCancelCause(ctx)
@@ -290,8 +308,9 @@ func NewManager(
 
 // Send - send data to encoders.
 func (mgr *Manager) Send(ctx context.Context, data ProtoData) (ack bool, err error) {
-	hx, err := mgr.hashdexCtor(data.Bytes())
+	hx, err := mgr.hashdexCtor(data.Bytes(), mgr.limits.Hashdex)
 	if err != nil {
+		data.Destroy()
 		return false, err
 	}
 
@@ -304,11 +323,16 @@ func (mgr *Manager) Send(ctx context.Context, data ProtoData) (ack bool, err err
 	group, gCtx := errgroup.WithContext(ctx)
 	mgr.encodersLock.Lock()
 	start := time.Now()
+	errs := make([]error, len(mgr.encoders))
 	for i := range mgr.encoders {
 		i := i
 		group.Go(func() error {
 			key, segment, redundant, errEnc := mgr.encoders[i].Encode(gCtx, hx)
 			if errEnc != nil {
+				if isUnhandledEncoderError(errEnc) {
+					errEnc = markAsCorruptedEncoderError(errEnc)
+				}
+				errs[i] = errEnc
 				return errEnc
 			}
 			mgr.observeSegmentMetrics(segment)
@@ -316,7 +340,8 @@ func (mgr *Manager) Send(ctx context.Context, data ProtoData) (ack bool, err err
 			return nil
 		})
 	}
-	err = group.Wait()
+	_ = group.Wait()
+	err = errors.Join(errs...)
 	mgr.encodersLock.Unlock()
 	mgr.encodeDuration.Observe(float64(time.Since(start).Milliseconds()))
 	data.Destroy()
@@ -332,8 +357,9 @@ func (mgr *Manager) Send(ctx context.Context, data ProtoData) (ack bool, err err
 
 // SendOpenHead adds data to encoders to send it later when limits reached
 func (mgr *Manager) SendOpenHead(ctx context.Context, data ProtoData) (ack bool, err error) {
-	hx, err := mgr.hashdexCtor(data.Bytes())
+	hx, err := mgr.hashdexCtor(data.Bytes(), mgr.limits.Hashdex)
 	if err != nil {
+		data.Destroy()
 		return false, err
 	}
 
@@ -370,28 +396,31 @@ func (mgr *Manager) addData(ctx context.Context, hx common.ShardedData) ([]commo
 	}(time.Now())
 
 	segments := make([]common.Segment, len(mgr.encoders))
-
+	errs := make([]error, len(mgr.encoders))
 	group, gCtx := errgroup.WithContext(ctx)
 	for i := range mgr.encoders {
 		i := i
 		group.Go(func() error {
 			segment, err := mgr.encoders[i].Add(gCtx, hx)
 			if err != nil {
-				return err
+				if isUnhandledEncoderError(err) {
+					err = markAsCorruptedEncoderError(err)
+				}
 			}
 			segments[i] = segment
-			return nil
+			errs[i] = err
+			return err
 		})
 	}
-	err := group.Wait()
+	_ = group.Wait()
 
-	return segments, err
+	return segments, errors.Join(errs...)
 }
 
 func (mgr *Manager) getPromise() *OpenHeadPromise {
 	if mgr.ohPromise == nil {
 		var promise *OpenHeadPromise
-		promise = NewOpenHeadPromise(len(mgr.encoders), mgr.ohLimits, mgr.clock, func() {
+		promise = NewOpenHeadPromise(len(mgr.encoders), mgr.limits.OpenHead, mgr.clock, func() {
 			mgr.encodersLock.Lock()
 			defer mgr.encodersLock.Unlock()
 
@@ -403,6 +432,7 @@ func (mgr *Manager) getPromise() *OpenHeadPromise {
 			}
 		}, mgr.promiseStopRace)
 
+		mgr.ohCreatedAt = mgr.clock.Now()
 		mgr.ohPromise = promise
 	}
 	return mgr.ohPromise
@@ -419,6 +449,7 @@ func (mgr *Manager) finalizePromise() {
 			if errEnc != nil {
 				return errEnc
 			}
+			atomic.AddInt64(&mgr.walsSizes[i], segment.Size())
 			mgr.observeSegmentMetrics(segment)
 			mgr.exchange.Put(key, segment, redundant, mgr.ohPromise.SendPromise, expiredAt)
 			return nil
@@ -428,6 +459,8 @@ func (mgr *Manager) finalizePromise() {
 	if err != nil {
 		mgr.ohPromise.Error(err)
 	}
+	mgr.ohPromiseFinalize.Inc()
+	mgr.ohPromiseDuration.Observe(mgr.clock.Since(mgr.ohCreatedAt).Seconds())
 	mgr.ohPromise = nil
 }
 
@@ -675,10 +708,24 @@ func (mgr *Manager) snapshot(ctx context.Context, key common.SegmentKey) (common
 	return snapshot, err
 }
 
-// DefaultShardsNumberPower - default shards number power.
-const DefaultShardsNumberPower = 0
+// MaxBlockBytes - maximum block size among all shards.
+func (mgr *Manager) MaxBlockBytes() int64 {
+	var maxSize int64
+	for i := range mgr.walsSizes {
+		s := atomic.LoadInt64(&mgr.walsSizes[i])
+		if s > maxSize {
+			maxSize = s
+		}
+	}
+	return maxSize
+}
 
-// CalculateRequiredShardsNumberPower - get need shards number power.
-func (*Manager) CalculateRequiredShardsNumberPower() uint8 {
-	return DefaultShardsNumberPower
+// OpenHeadLimits - current config for open head.
+func (mgr *Manager) OpenHeadLimits() OpenHeadLimits {
+	return mgr.limits.OpenHead
+}
+
+// Limits - current limits.
+func (mgr *Manager) Limits() Limits {
+	return mgr.limits
 }

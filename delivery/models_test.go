@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/quick"
 	"time"
 
 	"github.com/jonboulle/clockwork"
@@ -285,7 +286,7 @@ func (s *OpenHeadPromiseSuite) TestPanicOnAddToFinalized_Long() {
 	time.Sleep(10 * time.Millisecond)
 }
 
-func (s *OpenHeadPromiseSuite) getSegments(samples uint32) []common.Segment {
+func (*OpenHeadPromiseSuite) getSegments(samples uint32) []common.Segment {
 	segments := make([]common.Segment, 4)
 	for i := range segments {
 		segments[i] = &SegmentMock{
@@ -304,4 +305,47 @@ func (s *OpenHeadPromiseSuite) getPromise(shards int, limits delivery.OpenHeadLi
 		s.finalized.Store(true)
 	}, promauto.With(nil).NewCounter(prometheus.CounterOpts{}))
 	return promise
+}
+
+type OpenHeadLimitsSuite struct {
+	suite.Suite
+}
+
+func TestOpenHeadLimits(t *testing.T) {
+	suite.Run(t, new(OpenHeadLimitsSuite))
+}
+
+func (s *OpenHeadLimitsSuite) TestMarshalBinaryUnmarshalBinary() {
+	ohlm := delivery.DefaultOpenHeadLimits()
+
+	b, err := ohlm.MarshalBinary()
+	s.NoError(err)
+
+	ohlu := delivery.OpenHeadLimits{}
+	err = ohlu.UnmarshalBinary(b)
+	s.NoError(err)
+
+	s.Equal(ohlm, ohlu)
+}
+
+func (s *OpenHeadLimitsSuite) TestMarshalBinaryUnmarshalBinary_Quick() {
+	f := func(maxDuration, lastAddTimeout time.Duration, maxSamples uint32) bool {
+		ohlm := delivery.OpenHeadLimits{
+			MaxDuration:    maxDuration,
+			LastAddTimeout: lastAddTimeout,
+			MaxSamples:     maxSamples,
+		}
+
+		b, err := ohlm.MarshalBinary()
+		s.NoError(err)
+
+		ohlu := delivery.OpenHeadLimits{}
+		err = ohlu.UnmarshalBinary(b)
+		s.NoError(err)
+
+		return s.Equal(ohlm, ohlu)
+	}
+
+	err := quick.Check(f, nil)
+	s.NoError(err)
 }

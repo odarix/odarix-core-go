@@ -26,20 +26,39 @@ import (
 // errRefillLimitExceeded - error if refill limit exceeded.
 var (
 	errRefillLimitExceeded = errors.New("refill limit exceeded")
-	// errCorruptedFile - error if the file is corrupted.
-	errCorruptedFile = errors.New("corrupted file")
+	// ErrCorruptedFile - error if the file is corrupted.
+	ErrCorruptedFile = errors.New("corrupted file")
+)
+
+const (
+	// DefaultScanInterval - default scan refill file interval.
+	DefaultScanInterval = 300 * time.Second
+	// DefaultMaxRefillSize - default max refill files size in bytes.
+	DefaultMaxRefillSize = 300 << 20 // 300mb
 )
 
 // RefillSendManagerConfig - config for RefillSendManagerConfig.
+//
+// Dir - current refill dir.
+// ScanInterval - refill file scan interval.
+// MaxRefillSize - max refill files size in bytes.
 type RefillSendManagerConfig struct {
-	Dir           string
-	ScanInterval  time.Duration
-	MaxRefillSize int64
+	ScanInterval  time.Duration `validate:"required"`
+	MaxRefillSize int64         `validate:"required"`
+}
+
+// DefaultRefillSendManagerConfig - generate default RefillSendManagerConfig.
+func DefaultRefillSendManagerConfig() RefillSendManagerConfig {
+	return RefillSendManagerConfig{
+		ScanInterval:  DefaultScanInterval,
+		MaxRefillSize: DefaultMaxRefillSize,
+	}
 }
 
 // RefillSendManager - manager  for send refill to server.
 type RefillSendManager struct {
-	rsmCfg       *RefillSendManagerConfig
+	rsmCfg       RefillSendManagerConfig
+	dir          string
 	dialers      map[string]Dialer
 	errorHandler ErrorHandler
 	clock        clockwork.Clock
@@ -55,7 +74,8 @@ type RefillSendManager struct {
 
 // NewRefillSendManager - init new RefillSendManger.
 func NewRefillSendManager(
-	rsmCfg *RefillSendManagerConfig,
+	rsmCfg RefillSendManagerConfig,
+	workingDir string,
 	dialers []Dialer,
 	errorHandler ErrorHandler,
 	clock clockwork.Clock,
@@ -71,6 +91,7 @@ func NewRefillSendManager(
 	factory := NewConflictRegisterer(registerer)
 	return &RefillSendManager{
 		rsmCfg:       rsmCfg,
+		dir:          filepath.Join(workingDir, RefillDir),
 		dialers:      dialersMap,
 		errorHandler: errorHandler,
 		clock:        clock,
@@ -147,7 +168,7 @@ func (rsm *RefillSendManager) Run(ctx context.Context) {
 
 // checkTmpRefill - checks refile files with temporary extensions and renames them to stateful.
 func (rsm *RefillSendManager) checkTmpRefill() error {
-	files, err := os.ReadDir(rsm.rsmCfg.Dir)
+	files, err := os.ReadDir(rsm.dir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -163,8 +184,8 @@ func (rsm *RefillSendManager) checkTmpRefill() error {
 		oldName := file.Name()
 		newName := oldName[:len(oldName)-len(refillIntermediateFileExtension)] + refillFileExtension
 		if err := os.Rename(
-			filepath.Join(rsm.rsmCfg.Dir, oldName),
-			filepath.Join(rsm.rsmCfg.Dir, newName),
+			filepath.Join(rsm.dir, oldName),
+			filepath.Join(rsm.dir, newName),
 		); err != nil {
 			return err
 		}
@@ -177,7 +198,7 @@ func (rsm *RefillSendManager) checkTmpRefill() error {
 func (rsm *RefillSendManager) processing(ctx context.Context) error {
 	refillFiles, err := rsm.scanFolder()
 	if err != nil {
-		return fmt.Errorf("fail scan folder: %s: %w", rsm.rsmCfg.Dir, err)
+		return fmt.Errorf("fail scan folder: %s: %w", rsm.dir, err)
 	}
 
 	for _, fileInfo := range refillFiles {
@@ -193,7 +214,7 @@ func (rsm *RefillSendManager) processing(ctx context.Context) error {
 			rsm.errorHandler(fmt.Sprintf("fail send file: %s", fileInfo.Name()), err)
 			if IsPermanent(err) {
 				// delete bad refill file
-				_ = os.Remove(filepath.Join(rsm.rsmCfg.Dir, fileInfo.Name()))
+				_ = os.Remove(filepath.Join(rsm.dir, fileInfo.Name()))
 				rsm.deletedFileSize.With(prometheus.Labels{"cause": "error"}).Observe(float64(fileInfo.Size()))
 			}
 		}
@@ -204,7 +225,7 @@ func (rsm *RefillSendManager) processing(ctx context.Context) error {
 
 // scanFolder - check folder for refill files.
 func (rsm *RefillSendManager) scanFolder() ([]fs.FileInfo, error) {
-	files, err := os.ReadDir(rsm.rsmCfg.Dir)
+	files, err := os.ReadDir(rsm.dir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -215,7 +236,7 @@ func (rsm *RefillSendManager) scanFolder() ([]fs.FileInfo, error) {
 	isCompletedRefill := func(entry os.DirEntry) bool {
 		return !entry.IsDir() &&
 			strings.HasSuffix(entry.Name(), refillFileExtension) &&
-			!strings.HasPrefix(entry.Name(), "current")
+			!strings.HasPrefix(entry.Name(), RefillFileName)
 	}
 
 	var fullFileSize int64
@@ -241,8 +262,8 @@ func (rsm *RefillSendManager) scanFolder() ([]fs.FileInfo, error) {
 func (rsm *RefillSendManager) fileProcessing(ctx context.Context, fileInfo fs.FileInfo) error {
 	reader, err := NewRefillReader(
 		ctx,
-		&FileStorageConfig{
-			Dir:      rsm.rsmCfg.Dir,
+		FileStorageConfig{
+			Dir:      rsm.dir,
 			FileName: strings.TrimSuffix(fileInfo.Name(), refillFileExtension),
 		},
 		rsm.errorHandler,
@@ -251,7 +272,6 @@ func (rsm *RefillSendManager) fileProcessing(ctx context.Context, fileInfo fs.Fi
 		return err
 	}
 	defer reader.Close()
-
 	// indicator that all goroutines completed successfully
 	withError := new(atomic.Bool)
 	wg := new(sync.WaitGroup)
@@ -332,7 +352,7 @@ func (rsm *RefillSendManager) clearing() error {
 	for len(refillFiles) > 0 && fullFileSize > rsm.rsmCfg.MaxRefillSize {
 		rsm.errorHandler(fmt.Sprintf("remove file: %s", refillFiles[0].Name()), errRefillLimitExceeded)
 		rsm.deletedFileSize.With(prometheus.Labels{"cause": "limit"}).Observe(float64(refillFiles[0].Size()))
-		if err = os.Remove(filepath.Join(rsm.rsmCfg.Dir, refillFiles[0].Name())); err != nil {
+		if err = os.Remove(filepath.Join(rsm.dir, refillFiles[0].Name())); err != nil {
 			rsm.errorHandler(fmt.Sprintf("failed to delete file: %s", refillFiles[0].Name()), err)
 			refillFiles = refillFiles[1:]
 			continue
@@ -434,7 +454,7 @@ func (rs *RefillSender) Send(ctx context.Context) error {
 		return fmt.Errorf("%s: fail prepared data: %w", rs, err)
 	}
 
-	if err := rs.transport.Send(ctx, rs.makeRefillFrame(pData)); err != nil {
+	if err = rs.transport.Send(ctx, rs.makeRefillFrame(pData)); err != nil {
 		return fmt.Errorf("%s: fail send frame refill: %w", rs, err)
 	}
 
@@ -709,7 +729,7 @@ type RefillReader struct {
 }
 
 // NewRefillReader - init new RefillReader.
-func NewRefillReader(ctx context.Context, cfg *FileStorageConfig, errorHandler ErrorHandler) (*RefillReader, error) {
+func NewRefillReader(ctx context.Context, cfg FileStorageConfig, errorHandler ErrorHandler) (*RefillReader, error) {
 	storage, err := NewFileStorage(cfg)
 	if err != nil {
 		return nil, err
@@ -809,7 +829,7 @@ func (rr *RefillReader) readMarkup(ctx context.Context) error {
 			return err
 		}
 		if fsize < off+int64(h.FullSize()) {
-			rr.errorHandler("truncated file by frame", errCorruptedFile)
+			rr.errorHandler("truncated file by frame", ErrCorruptedFile)
 			if err = rr.storage.Truncate(off); err != nil {
 				return err
 			}
@@ -817,8 +837,7 @@ func (rr *RefillReader) readMarkup(ctx context.Context) error {
 		}
 		off += int64(h.SizeOf())
 		// read data from body
-		err = rr.readFromBody(ctx, h, off, int(h.GetSize()))
-		if err != nil {
+		if err = rr.readFromBody(ctx, h, off, int(h.GetSize())); err != nil {
 			return err
 		}
 		// move cursor position
@@ -827,7 +846,7 @@ func (rr *RefillReader) readMarkup(ctx context.Context) error {
 			continue
 		}
 		if fsize != off {
-			rr.errorHandler("truncated file by header", errCorruptedFile)
+			rr.errorHandler("truncated file by header", ErrCorruptedFile)
 			if err = rr.storage.Truncate(off); err != nil {
 				return err
 			}

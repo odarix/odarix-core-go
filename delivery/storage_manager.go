@@ -52,7 +52,7 @@ type StorageManager struct {
 
 // NewStorageManager - init new MarkupMap.
 func NewStorageManager(
-	cfg *FileStorageConfig,
+	cfg FileStorageConfig,
 	shardsNumberPower uint8,
 	blockID uuid.UUID,
 	registerer prometheus.Registerer,

@@ -23,7 +23,9 @@ import (
 type RefillSenderSuite struct {
 	suite.Suite
 
-	rcfg              *delivery.RefillSendManagerConfig
+	workDir           string
+	refillDir         string
+	rcfg              delivery.RefillSendManagerConfig
 	destinationsNames []string
 	baseCtx           context.Context
 }
@@ -36,8 +38,10 @@ func (s *RefillSenderSuite) SetupSuite() {
 	dir, err := os.MkdirTemp("", filepath.Clean("refill-"))
 	s.Require().NoError(err)
 
-	s.rcfg = &delivery.RefillSendManagerConfig{
-		Dir:          dir,
+	s.workDir = dir
+	s.refillDir = filepath.Join(s.workDir, delivery.RefillDir)
+
+	s.rcfg = delivery.RefillSendManagerConfig{
 		ScanInterval: 1 * time.Second,
 	}
 
@@ -59,6 +63,7 @@ func (s *RefillSenderSuite) errorHandler(msg string, err error) {
 	s.T().Logf("%s: %s", msg, err)
 }
 
+//revive:disable-next-line:cognitive-complexity this is test
 func (*RefillSenderSuite) createDialerHappyPath(name string) delivery.Dialer {
 	return &DialerMock{
 		StringFunc: func() string { return name },
@@ -107,13 +112,8 @@ func (s *RefillSenderSuite) makeRefill(destinationsNames []string) {
 	blockID, err := uuid.NewRandom()
 	s.Require().NoError(err)
 
-	fcfg := &delivery.FileStorageConfig{
-		Dir:      s.rcfg.Dir,
-		FileName: "current",
-	}
-
 	mr, err := delivery.NewRefill(
-		fcfg,
+		s.workDir,
 		1,
 		blockID,
 		nil,
@@ -150,7 +150,7 @@ func (s *RefillSenderSuite) makeRefill(destinationsNames []string) {
 	err = mr.WriteAckStatus(s.baseCtx)
 	s.Require().NoError(err)
 
-	_, err = os.Stat(filepath.Join(fcfg.Dir, fcfg.FileName+".refill"))
+	_, err = os.Stat(filepath.Join(s.refillDir, delivery.RefillFileName+".refill"))
 	s.Require().NoError(err, "file not exist")
 
 	// ack 0,1 segment, 2 - reject for all destinations
@@ -178,7 +178,7 @@ func (s *RefillSenderSuite) makeRefill(destinationsNames []string) {
 	err = mr.WriteAckStatus(s.baseCtx)
 	s.Require().NoError(err)
 
-	_, err = os.Stat(filepath.Join(fcfg.Dir, fcfg.FileName+".refill"))
+	_, err = os.Stat(filepath.Join(s.refillDir, delivery.RefillFileName+".refill"))
 	s.Require().NoError(err, "file not exist")
 
 	s.Require().NoError(mr.IntermediateRename())
@@ -189,7 +189,7 @@ func (s *RefillSenderSuite) makeRefill(destinationsNames []string) {
 func (s *RefillSenderSuite) TestHappyPath() {
 	s.T().Log("make refill file")
 	s.makeRefill(s.destinationsNames)
-	files, err := os.ReadDir(s.rcfg.Dir)
+	files, err := os.ReadDir(s.refillDir)
 	s.Require().NoError(err)
 	s.Equal(1, len(files))
 
@@ -211,6 +211,7 @@ func (s *RefillSenderSuite) TestHappyPath() {
 	clock := clockwork.NewFakeClock()
 	rsmanager, err := delivery.NewRefillSendManager(
 		s.rcfg,
+		s.workDir,
 		dialers,
 		s.errorHandler,
 		clock,
@@ -233,18 +234,18 @@ func (s *RefillSenderSuite) TestHappyPath() {
 	s.Require().NoError(err)
 
 	s.T().Log("check that all files have been sent")
-	files, err = os.ReadDir(s.rcfg.Dir)
+	files, err = os.ReadDir(s.refillDir)
 	s.Require().NoError(err)
 	s.Equal(0, len(files))
 
-	err = os.RemoveAll(filepath.Clean(s.rcfg.Dir))
+	err = os.RemoveAll(filepath.Clean(s.workDir))
 	s.Require().NoError(err)
 }
 
 func (s *RefillSenderSuite) TestHappyPathWithChangeDestinations() {
 	s.T().Log("make refill file")
 	s.makeRefill(append(s.destinationsNames[2:], "some_name"))
-	files, err := os.ReadDir(s.rcfg.Dir)
+	files, err := os.ReadDir(s.refillDir)
 	s.Require().NoError(err)
 	s.Equal(1, len(files))
 
@@ -266,6 +267,7 @@ func (s *RefillSenderSuite) TestHappyPathWithChangeDestinations() {
 	clock := clockwork.NewFakeClock()
 	rsmanager, err := delivery.NewRefillSendManager(
 		s.rcfg,
+		s.workDir,
 		dialers,
 		s.errorHandler,
 		clock,
@@ -288,9 +290,12 @@ func (s *RefillSenderSuite) TestHappyPathWithChangeDestinations() {
 	s.Require().NoError(err)
 
 	s.T().Log("check that all files have been sent")
-	files, err = os.ReadDir(s.rcfg.Dir)
+	files, err = os.ReadDir(s.refillDir)
 	s.Require().NoError(err)
 	s.Equal(0, len(files))
+
+	err = os.RemoveAll(filepath.Clean(s.workDir))
+	s.Require().NoError(err)
 }
 
 //revive:disable-next-line:cognitive-complexity this is test
@@ -351,7 +356,7 @@ func (*RefillSenderSuite) createDialerReject(name string) delivery.Dialer {
 func (s *RefillSenderSuite) TestRejectAndAck() {
 	s.T().Log("make refill file")
 	s.makeRefill(s.destinationsNames)
-	files, err := os.ReadDir(s.rcfg.Dir)
+	files, err := os.ReadDir(s.refillDir)
 	s.Require().NoError(err)
 	s.LessOrEqual(1, len(files))
 
@@ -374,6 +379,7 @@ func (s *RefillSenderSuite) TestRejectAndAck() {
 	clock := clockwork.NewFakeClock()
 	rsmanager, err := delivery.NewRefillSendManager(
 		s.rcfg,
+		s.workDir,
 		dialers,
 		s.errorHandler,
 		clock,
@@ -396,18 +402,18 @@ func (s *RefillSenderSuite) TestRejectAndAck() {
 	s.Require().NoError(err)
 
 	s.T().Log("check that all files have been sent")
-	files, err = os.ReadDir(s.rcfg.Dir)
+	files, err = os.ReadDir(s.refillDir)
 	s.Require().NoError(err)
 	s.Equal(0, len(files))
 
-	err = os.RemoveAll(filepath.Clean(s.rcfg.Dir))
+	err = os.RemoveAll(filepath.Clean(s.workDir))
 	s.Require().NoError(err)
 }
 
 func (s *RefillSenderSuite) TestClearing() {
 	s.T().Log("make refill file")
 	s.makeRefill(s.destinationsNames)
-	files, err := os.ReadDir(s.rcfg.Dir)
+	files, err := os.ReadDir(s.refillDir)
 	s.Require().NoError(err)
 	s.LessOrEqual(1, len(files))
 
@@ -430,6 +436,7 @@ func (s *RefillSenderSuite) TestClearing() {
 	clock := clockwork.NewFakeClock()
 	rsmanager, err := delivery.NewRefillSendManager(
 		s.rcfg,
+		s.workDir,
 		dialers,
 		s.errorHandler,
 		clock,
@@ -453,11 +460,11 @@ func (s *RefillSenderSuite) TestClearing() {
 	s.Require().NoError(err)
 
 	s.T().Log("check that old files have been deleted")
-	files, err = os.ReadDir(s.rcfg.Dir)
+	files, err = os.ReadDir(s.refillDir)
 	s.Require().NoError(err)
 	s.Equal(0, len(files))
 
-	err = os.RemoveAll(filepath.Clean(s.rcfg.Dir))
+	err = os.RemoveAll(filepath.Clean(s.workDir))
 	s.Require().NoError(err)
 }
 

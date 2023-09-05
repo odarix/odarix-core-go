@@ -132,20 +132,15 @@ func (s *MainSuite) createManager(
 		return common.NewEncoder(shardID, 1<<shardsNumberPower), nil
 	}
 
-	rcfg := &delivery.FileStorageConfig{
-		Dir:      dir,
-		FileName: "current",
-	}
-
 	refillCtor := func(
-		ctx context.Context,
+		workingDir string,
 		blockID uuid.UUID,
 		destinations []string,
 		shardsNumberPower uint8,
 		registerer prometheus.Registerer,
 	) (delivery.ManagerRefill, error) {
 		return delivery.NewRefill(
-			rcfg,
+			workingDir,
 			shardsNumberPower,
 			blockID,
 			registerer,
@@ -154,10 +149,12 @@ func (s *MainSuite) createManager(
 	}
 
 	shardsNumberPower := uint8(0)
-	refillInterval := time.Minute
 	clock := clockwork.NewFakeClock()
 	haTracker := delivery.NewHighAvailabilityTracker(ctx, nil, clock)
-	rejectNotifyer := delivery.NewRotateTimer(clock, time.Hour, 5*time.Minute)
+	rejectNotifyer := delivery.NewRotateTimer(
+		clock,
+		delivery.BlockLimits{DesiredBlockFormationDuration: time.Hour, DelayAfterNotify: 5 * time.Minute},
+	)
 	manager, err := delivery.NewManager(
 		ctx,
 		dialers,
@@ -165,7 +162,9 @@ func (s *MainSuite) createManager(
 		encoderCtor,
 		refillCtor,
 		shardsNumberPower,
-		refillInterval,
+		time.Minute,
+		dir,
+		delivery.DefaultLimits(),
 		rejectNotifyer,
 		haTracker,
 		errorHandler,
@@ -265,14 +264,15 @@ func (s *MainSuite) createManagerKeeper(
 ) (*delivery.ManagerKeeper, error) {
 	dialers := s.createDialers(token, address)
 
-	managerCtor := func(
-		rsmCfg *delivery.RefillSendManagerConfig,
+	rsmanagerCtor := func(
+		rsmCfg delivery.RefillSendManagerConfig,
+		workingDir string,
 		dialers []delivery.Dialer,
 		errorHandler delivery.ErrorHandler,
 		clock clockwork.Clock,
 		registerer prometheus.Registerer,
 	) (delivery.ManagerRefillSender, error) {
-		return delivery.NewRefillSendManager(rsmCfg, dialers, errorHandler, clock, registerer)
+		return delivery.NewRefillSendManager(rsmCfg, workingDir, dialers, errorHandler, clock, registerer)
 	}
 
 	encoderCtor := func(
@@ -283,20 +283,15 @@ func (s *MainSuite) createManagerKeeper(
 		return common.NewEncoder(shardID, 1<<shardsNumberPower), nil
 	}
 
-	rcfg := &delivery.FileStorageConfig{
-		Dir:      dir,
-		FileName: "current",
-	}
-
 	refillCtor := func(
-		ctx context.Context,
+		workinDir string,
 		blockID uuid.UUID,
 		destinations []string,
 		shardsNumberPower uint8,
 		registerer prometheus.Registerer,
 	) (delivery.ManagerRefill, error) {
 		return delivery.NewRefill(
-			rcfg,
+			workinDir,
 			shardsNumberPower,
 			blockID,
 			registerer,
@@ -304,13 +299,11 @@ func (s *MainSuite) createManagerKeeper(
 		)
 	}
 
-	cfg := &delivery.ManagerKeeperConfig{
-		RotateInterval:       4 * time.Second,
-		RefillInterval:       5 * time.Second,
-		RejectRotateInterval: 4 * time.Second,
-		ShutdownTimeout:      4 * time.Second,
-		RefillSenderManager: &delivery.RefillSendManagerConfig{
-			Dir:           dir,
+	cfg := delivery.ManagerKeeperConfig{
+		ShutdownTimeout: 6 * time.Second,
+		RefillInterval:  5 * time.Second,
+		WorkingDir:      dir,
+		RefillSenderManager: delivery.RefillSendManagerConfig{
 			ScanInterval:  2 * time.Second,
 			MaxRefillSize: 10000000, // 10mb
 		},
@@ -323,7 +316,7 @@ func (s *MainSuite) createManagerKeeper(
 		common.NewHashdex,
 		encoderCtor,
 		refillCtor,
-		managerCtor,
+		rsmanagerCtor,
 		clock,
 		dialers,
 		errorHandler,

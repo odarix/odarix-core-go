@@ -115,20 +115,10 @@ func (fb *FileBuffer) Seek(offset int64, whence int) (int64, error) {
 	return 0, errors.New("Seek: invalid whence")
 }
 
-type FrameSuite struct {
-	suite.Suite
-
-	etalonsNames         []string
-	etalonNumberOfShards uint8
-	etalonBlockID        uuid.UUID
-	rw                   *FileBuffer
-	ctx                  context.Context
-}
-
 type StorageManagerSuite struct {
 	suite.Suite
 
-	cfg                     *delivery.FileStorageConfig
+	cfg                     delivery.FileStorageConfig
 	etalonNewFileName       string
 	etalonsNames            []string
 	etalonShardsNumberPower uint8
@@ -150,7 +140,7 @@ func (s *StorageManagerSuite) SetupSuite() {
 	dir, err := os.MkdirTemp("", filepath.Clean("refill-"))
 	s.Require().NoError(err)
 
-	s.cfg = &delivery.FileStorageConfig{
+	s.cfg = delivery.FileStorageConfig{
 		Dir:      dir,
 		FileName: "current",
 	}

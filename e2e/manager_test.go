@@ -12,6 +12,7 @@ import (
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/odarix/odarix-core-go/delivery"
 	"github.com/odarix/odarix-core-go/frames"
 	"github.com/odarix/odarix-core-go/server"
 )
@@ -326,7 +327,7 @@ func (s *BlockManagerSuite) TestDeliveryManagerReject() {
 	}
 
 	s.T().Log("client: check exist file current.refill")
-	path := filepath.Join(dir, "current.refill")
+	path := filepath.Join(dir, delivery.RefillDir, "current.refill")
 	_, err = os.Stat(path)
 	s.Require().NoError(err)
 

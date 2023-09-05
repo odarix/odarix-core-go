@@ -17,7 +17,7 @@ type FileManagerSuite struct {
 
 	etalonNewFileName string
 	etalonsData       []byte
-	cfg               *delivery.FileStorageConfig
+	cfg               delivery.FileStorageConfig
 	fm                *delivery.FileStorage
 }
 
@@ -32,7 +32,7 @@ func (s *FileManagerSuite) SetupSuite() {
 	dir, err := os.MkdirTemp("", filepath.Clean("refill-"))
 	s.Require().NoError(err)
 
-	s.cfg = &delivery.FileStorageConfig{
+	s.cfg = delivery.FileStorageConfig{
 		Dir:      dir,
 		FileName: "current",
 	}

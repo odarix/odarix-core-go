@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -12,6 +13,13 @@ import (
 	"github.com/odarix/odarix-core-go/common"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/multierr"
+)
+
+const (
+	// RefillDir - default refill dir.
+	RefillDir = "refill"
+	// RefillFileName - default refill current file name.
+	RefillFileName = "current"
 )
 
 var (
@@ -36,7 +44,7 @@ var _ ManagerRefill = (*Refill)(nil)
 
 // NewRefill - init new RefillManager.
 func NewRefill(
-	cfg *FileStorageConfig,
+	workingDir string,
 	shardsNumberPower uint8,
 	blockID uuid.UUID,
 	registerer prometheus.Registerer,
@@ -47,7 +55,12 @@ func NewRefill(
 		mx: new(sync.RWMutex),
 	}
 
-	rm.sm, err = NewStorageManager(cfg, shardsNumberPower, blockID, registerer, names...)
+	fsCfg := FileStorageConfig{
+		Dir:      filepath.Join(workingDir, RefillDir),
+		FileName: RefillFileName,
+	}
+
+	rm.sm, err = NewStorageManager(fsCfg, shardsNumberPower, blockID, registerer, names...)
 	switch err {
 	case nil:
 		rm.isContinuable = true

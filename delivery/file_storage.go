@@ -33,7 +33,7 @@ type FileStorage struct {
 }
 
 // NewFileStorage - init new FileStorage.
-func NewFileStorage(cfg *FileStorageConfig) (*FileStorage, error) {
+func NewFileStorage(cfg FileStorageConfig) (*FileStorage, error) {
 	return &FileStorage{
 		dir:      cfg.Dir,
 		fileName: cfg.FileName + refillFileExtension,
@@ -62,6 +62,7 @@ func (fs *FileStorage) OpenFile() error {
 	return nil
 }
 
+// Writer - wrapper for write with offset.
 func (fs *FileStorage) Writer(ctx context.Context, off int64) io.Writer {
 	return util.FnWriter(func(p []byte) (int, error) {
 		if ctx.Err() != nil {

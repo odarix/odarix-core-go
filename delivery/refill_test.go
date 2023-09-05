@@ -22,7 +22,7 @@ type RefillSuite struct {
 	etalonNumberOfShards uint8
 	etalonBlockID        uuid.UUID
 	etalonsData          *dataTest
-	cfg                  *delivery.FileStorageConfig
+	workingDir           string
 	mr                   *delivery.Refill
 	ctx                  context.Context
 }
@@ -36,13 +36,9 @@ func (s *RefillSuite) SetupSuite() {
 	s.ctx = context.Background()
 	s.etalonNewFileName = "blablalblaUUID"
 
-	dir, err := os.MkdirTemp("", filepath.Clean("refill-"))
+	s.workingDir, err = os.MkdirTemp("", filepath.Clean("refill-"))
 	s.Require().NoError(err)
 
-	s.cfg = &delivery.FileStorageConfig{
-		Dir:      dir,
-		FileName: "current",
-	}
 	s.etalonsNames = []string{
 		"www.collector.com",
 		"www.collector-dev.com",
@@ -101,7 +97,7 @@ func (s *RefillSuite) SetupSuite() {
 func (s *RefillSuite) SetupTest() {
 	var err error
 	s.mr, err = delivery.NewRefill(
-		s.cfg,
+		s.workingDir,
 		s.etalonNumberOfShards,
 		s.etalonBlockID,
 		nil,
@@ -113,7 +109,7 @@ func (s *RefillSuite) SetupTest() {
 }
 
 func (s *RefillSuite) TearDownTest() {
-	s.NoError(os.RemoveAll(s.cfg.Dir))
+	s.NoError(os.RemoveAll(s.workingDir))
 }
 
 func (s *RefillSuite) TestManagerInitIsContinuable() {
@@ -130,7 +126,7 @@ func (s *RefillSuite) TestManagerInitIsContinuable() {
 	s.NoError(err)
 
 	mr1, err := delivery.NewRefill(
-		s.cfg,
+		s.workingDir,
 		2,
 		s.etalonBlockID,
 		nil,
@@ -140,7 +136,7 @@ func (s *RefillSuite) TestManagerInitIsContinuable() {
 	s.False(mr1.IsContinuable())
 
 	mr2, err := delivery.NewRefill(
-		s.cfg,
+		s.workingDir,
 		s.etalonNumberOfShards,
 		s.etalonBlockID,
 		nil,
@@ -318,7 +314,7 @@ func (s *RefillSuite) TestAckStatus() {
 	s.T().Log("write ack status and check file not exist")
 	err := s.mr.WriteAckStatus(s.ctx)
 	s.NoError(err)
-	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.cfg.FileName+".refill"))
+	_, err = os.Stat(filepath.Join(s.workingDir, delivery.RefillFileName+".refill"))
 	s.Error(err, "File not deleted")
 
 	s.T().Log("write segment, ack status and check file exist")
@@ -326,7 +322,7 @@ func (s *RefillSuite) TestAckStatus() {
 	s.NoError(err)
 	err = s.mr.WriteAckStatus(s.ctx)
 	s.NoError(err)
-	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.cfg.FileName+".refill"))
+	_, err = os.Stat(filepath.Join(s.workingDir, delivery.RefillDir, delivery.RefillFileName+".refill"))
 	s.NoError(err, "File deleted")
 
 	s.T().Log("ack segments for all name and check file deleted")
@@ -336,7 +332,7 @@ func (s *RefillSuite) TestAckStatus() {
 	}
 	err = s.mr.WriteAckStatus(s.ctx)
 	s.NoError(err)
-	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.cfg.FileName+".refill"))
+	_, err = os.Stat(filepath.Join(s.workingDir, delivery.RefillFileName+".refill"))
 	s.Error(err, "File not deleted")
 
 	err = s.mr.Shutdown(s.ctx)
@@ -347,7 +343,7 @@ func (s *RefillSuite) TestAckStatusWithReject() {
 	s.T().Log("write ack status and check file not exist")
 	err := s.mr.WriteAckStatus(s.ctx)
 	s.NoError(err)
-	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.cfg.FileName+".refill"))
+	_, err = os.Stat(filepath.Join(s.workingDir, delivery.RefillFileName+".refill"))
 	s.Error(err, "File not deleted")
 
 	s.T().Log("write segment, ack status and check file exist")
@@ -355,7 +351,7 @@ func (s *RefillSuite) TestAckStatusWithReject() {
 	s.NoError(err)
 	err = s.mr.WriteAckStatus(s.ctx)
 	s.NoError(err)
-	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.cfg.FileName+".refill"))
+	_, err = os.Stat(filepath.Join(s.workingDir, delivery.RefillDir, delivery.RefillFileName+".refill"))
 	s.NoError(err, "File deleted")
 
 	s.T().Log("ack segments for all name and 1 reject and check file not deleted")
@@ -366,7 +362,7 @@ func (s *RefillSuite) TestAckStatusWithReject() {
 	s.mr.Reject(common.SegmentKey{ShardID: 0, Segment: 3}, s.etalonsNames[0])
 	err = s.mr.WriteAckStatus(s.ctx)
 	s.NoError(err)
-	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.cfg.FileName+".refill"))
+	_, err = os.Stat(filepath.Join(s.workingDir, delivery.RefillDir, delivery.RefillFileName+".refill"))
 	s.NoError(err, "File deleted")
 
 	err = s.mr.Shutdown(s.ctx)
@@ -389,7 +385,7 @@ func (s *RefillSuite) TestAckStatusWithSnapshot() {
 	s.NoError(err)
 
 	s.T().Log("check file exist")
-	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.cfg.FileName+".refill"))
+	_, err = os.Stat(filepath.Join(s.workingDir, delivery.RefillDir, delivery.RefillFileName+".refill"))
 	s.NoError(err, "File exist")
 
 	s.T().Log("write ack status")
@@ -397,7 +393,7 @@ func (s *RefillSuite) TestAckStatusWithSnapshot() {
 	s.NoError(err)
 
 	s.T().Log("check file exist")
-	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.cfg.FileName+".refill"))
+	_, err = os.Stat(filepath.Join(s.workingDir, delivery.RefillDir, delivery.RefillFileName+".refill"))
 	s.NoError(err, "File exist")
 
 	s.T().Log("acked status for 0 shard for all name")
@@ -412,7 +408,7 @@ func (s *RefillSuite) TestAckStatusWithSnapshot() {
 	s.NoError(err)
 
 	s.T().Log("check file does not exist, file must be deleted")
-	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.cfg.FileName+".refill"))
+	_, err = os.Stat(filepath.Join(s.workingDir, delivery.RefillDir, delivery.RefillFileName+".refill"))
 	s.Error(err, "File not deleted")
 
 	s.T().Log("write again snapshot")
@@ -424,7 +420,7 @@ func (s *RefillSuite) TestAckStatusWithSnapshot() {
 	s.NoError(err)
 
 	s.T().Log("check file exist")
-	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.cfg.FileName+".refill"))
+	_, err = os.Stat(filepath.Join(s.workingDir, delivery.RefillDir, delivery.RefillFileName+".refill"))
 	s.NoError(err, "File exist")
 
 	err = s.mr.Shutdown(s.ctx)
@@ -447,6 +443,6 @@ func (s *RefillSuite) TestRename() {
 	s.NoError(s.mr.IntermediateRename())
 	s.NoError(s.mr.Shutdown(s.ctx))
 
-	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.cfg.FileName+".refill"))
+	_, err = os.Stat(filepath.Join(s.workingDir, delivery.RefillDir, delivery.RefillFileName+".refill"))
 	s.Error(err, "File not rotated")
 }
