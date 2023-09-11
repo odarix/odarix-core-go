@@ -157,7 +157,7 @@ func (sender *Sender) mainLoop(ctx context.Context) {
 }
 
 func (sender *Sender) dial(ctx context.Context) (transport Transport, closeFn func(), err error) {
-	transport, err = sender.dialer.Dial(ctx)
+	transport, err = sender.dialer.Dial(ctx, sender.blockID.String(), sender.shardID)
 	if err != nil {
 		if !errors.Is(err, ErrShutdown) && !errors.Is(err, context.Canceled) {
 			sender.errorHandler(fmt.Sprintf("%s: fail to dial", sender), err)

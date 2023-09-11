@@ -41,7 +41,7 @@ func TestManagerKeeper(t *testing.T) {
 func (*ManagerKeeperSuite) transportNewAutoAck(name string, delay time.Duration, dest chan string) delivery.Dialer {
 	return &DialerMock{
 		StringFunc: func() string { return name },
-		DialFunc: func(ctx context.Context) (delivery.Transport, error) {
+		DialFunc: func(ctx context.Context, s string, v uint16) (delivery.Transport, error) {
 			m := new(sync.Mutex)
 			var ack func(uint32)
 			var transportShard *uint64
@@ -101,7 +101,7 @@ func (*ManagerKeeperSuite) transportNewAutoAck(name string, delay time.Duration,
 func (*ManagerKeeperSuite) transportWithReject(name string, delay time.Duration, dest chan string) delivery.Dialer {
 	return &DialerMock{
 		StringFunc: func() string { return name },
-		DialFunc: func(ctx context.Context) (delivery.Transport, error) {
+		DialFunc: func(ctx context.Context, s string, v uint16) (delivery.Transport, error) {
 			m := new(sync.Mutex)
 			var ack func(uint32)
 			var reject func(uint32)

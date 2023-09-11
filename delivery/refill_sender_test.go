@@ -67,7 +67,7 @@ func (s *RefillSenderSuite) errorHandler(msg string, err error) {
 func (*RefillSenderSuite) createDialerHappyPath(name string) delivery.Dialer {
 	return &DialerMock{
 		StringFunc: func() string { return name },
-		DialFunc: func(ctx context.Context) (delivery.Transport, error) {
+		DialFunc: func(ctx context.Context, s string, v uint16) (delivery.Transport, error) {
 			var ack func(uint32)
 			var numberOfMessage uint32
 			transport := &TransportMock{
@@ -303,7 +303,7 @@ func (*RefillSenderSuite) createDialerReject(name string) delivery.Dialer {
 	switcher := false
 	return &DialerMock{
 		StringFunc: func() string { return name },
-		DialFunc: func(ctx context.Context) (delivery.Transport, error) {
+		DialFunc: func(ctx context.Context, s string, v uint16) (delivery.Transport, error) {
 			var ack func(uint32)
 			var reject func(uint32)
 			var numberOfMessage uint32

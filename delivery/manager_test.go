@@ -103,7 +103,7 @@ func (s *ManagerSuite) TestRejectToRefill() {
 	dialers := []delivery.Dialer{
 		s.transportWithReject(
 			s.transportNewAutoAck(s.T().Name(), time.Millisecond, nil),
-			transportSwitcher, time.Millisecond,
+			transportSwitcher, time.Millisecond, "blockID", 0,
 		),
 	}
 
@@ -180,7 +180,7 @@ func (s *ManagerSuite) TestAckRejectRace() {
 	dialers := []delivery.Dialer{
 		s.transportWithReject(
 			s.transportNewAutoAck(s.T().Name(), time.Millisecond, destination),
-			transportSwitcher, time.Millisecond,
+			transportSwitcher, time.Millisecond, "blockID", 0,
 		),
 	}
 
@@ -292,7 +292,7 @@ func (s *ManagerSuite) TestRestoreFromRefill() {
 	dialers := []delivery.Dialer{
 		s.transportWithError(
 			s.transportNewAutoAck(s.T().Name(), time.Millisecond, destination),
-			transportSwitcher, time.Millisecond,
+			transportSwitcher, time.Millisecond, "blockID", 0,
 		),
 	}
 
@@ -366,7 +366,7 @@ func (s *ManagerSuite) TestRestoreWithNoRefill() {
 	dialers := []delivery.Dialer{
 		s.transportWithError(
 			s.transportNewAutoAck(s.T().Name(), time.Millisecond, destination),
-			transportSwitcher, time.Millisecond,
+			transportSwitcher, time.Millisecond, "blockID", 0,
 		),
 	}
 
@@ -498,7 +498,7 @@ func (s *ManagerSuite) TestLongDial() {
 	s.T().Log("Use dialer that wait until context done")
 	dialers := []delivery.Dialer{&DialerMock{
 		StringFunc: s.T().Name,
-		DialFunc: func(ctx context.Context) (delivery.Transport, error) {
+		DialFunc: func(ctx context.Context, s string, v uint16) (delivery.Transport, error) {
 			<-ctx.Done()
 			return nil, context.Cause(ctx)
 		},
@@ -564,11 +564,11 @@ func (s *ManagerSuite) TestLongDial() {
 	}
 }
 
-func (*ManagerSuite) transportWithReject(dialer delivery.Dialer, switcher *atomic.Bool, delay time.Duration) delivery.Dialer {
+func (*ManagerSuite) transportWithReject(dialer delivery.Dialer, switcher *atomic.Bool, delay time.Duration, blockID string, shardID uint16) delivery.Dialer {
 	return &DialerMock{
 		StringFunc: dialer.String,
-		DialFunc: func(ctx context.Context) (delivery.Transport, error) {
-			transport, err := dialer.Dial(ctx)
+		DialFunc: func(ctx context.Context, s string, v uint16) (delivery.Transport, error) {
+			transport, err := dialer.Dial(ctx, blockID, shardID)
 			if err != nil {
 				return nil, err
 			}
@@ -610,11 +610,11 @@ func (*ManagerSuite) transportWithReject(dialer delivery.Dialer, switcher *atomi
 	}
 }
 
-func (*ManagerSuite) transportWithError(dialer delivery.Dialer, switcher *atomic.Bool, delay time.Duration) delivery.Dialer {
+func (*ManagerSuite) transportWithError(dialer delivery.Dialer, switcher *atomic.Bool, delay time.Duration, blockID string, shardID uint16) delivery.Dialer {
 	return &DialerMock{
 		StringFunc: dialer.String,
-		DialFunc: func(ctx context.Context) (delivery.Transport, error) {
-			transport, err := dialer.Dial(ctx)
+		DialFunc: func(ctx context.Context, s string, v uint16) (delivery.Transport, error) {
+			transport, err := dialer.Dial(ctx, blockID, shardID)
 			if err != nil {
 				return nil, err
 			}
@@ -640,7 +640,7 @@ func (*ManagerSuite) transportWithError(dialer delivery.Dialer, switcher *atomic
 func (*ManagerSuite) transportNewAutoAck(name string, delay time.Duration, dest chan string) delivery.Dialer {
 	return &DialerMock{
 		StringFunc: func() string { return name },
-		DialFunc: func(ctx context.Context) (delivery.Transport, error) {
+		DialFunc: func(ctx context.Context, s string, v uint16) (delivery.Transport, error) {
 			m := new(sync.Mutex)
 			var ack func(uint32)
 			var transportShard *uint64

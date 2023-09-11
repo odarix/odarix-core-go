@@ -22,7 +22,7 @@ import (
 // We suppose that dialer has its own backoff and returns only permanent error.
 type Dialer interface {
 	String() string
-	Dial(context.Context) (Transport, error)
+	Dial(context.Context, string, uint16) (Transport, error)
 }
 
 // Transport is a destination connection interface
@@ -125,7 +125,7 @@ func (dialer *TCPDialer) String() string {
 }
 
 // Dial - create a connection and init stream.
-func (dialer *TCPDialer) Dial(ctx context.Context) (Transport, error) {
+func (dialer *TCPDialer) Dial(ctx context.Context, blockID string, shardID uint16) (Transport, error) {
 	var bo backoff.BackOff = backoff.WithContext(dialer.backoff, ctx)
 	if dialer.config.BackoffMaxTries > 0 {
 		bo = backoff.WithMaxRetries(bo, dialer.config.BackoffMaxTries)
@@ -143,6 +143,8 @@ func (dialer *TCPDialer) Dial(ctx context.Context) (Transport, error) {
 			dialer.config.AgentUUID,
 			dialer.config.ProductName,
 			dialer.config.AgentHostname,
+			blockID,
+			shardID,
 		); err != nil {
 			_ = tr.Close()
 			return nil, err
@@ -205,8 +207,8 @@ func NewTCPTransport(
 }
 
 // auth - request for authentication connection.
-func (tt *TCPTransport) auth(ctx context.Context, token, uuid, productName, agentHostname string) error {
-	fe, err := frames.NewAuthFrameWithMsg(protocolVersion, frames.NewAuthMsg(token, uuid, productName, agentHostname))
+func (tt *TCPTransport) auth(ctx context.Context, token, uuid, productName, agentHostname, blockID string, shardID uint16) error {
+	fe, err := frames.NewAuthFrameWithMsg(protocolVersion, frames.NewAuthMsg(token, uuid, productName, agentHostname, blockID, shardID))
 	if err != nil {
 		return err
 	}

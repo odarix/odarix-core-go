@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jonboulle/clockwork"
 	"github.com/odarix/odarix-core-go/common"
 	"github.com/odarix/odarix-core-go/frames"
@@ -490,7 +491,7 @@ func (rs *RefillSender) makeRefillFrame(pData []PreparedData) *frames.WriteFrame
 
 // dial - dial and set respose parameter.
 func (rs *RefillSender) dial(ctx context.Context) (err error) {
-	rs.transport, err = rs.dialer.Dial(ctx)
+	rs.transport, err = rs.dialer.Dial(ctx, rs.source.BlockID().String(), rs.shardID)
 	if err != nil {
 		return err
 	}
@@ -753,6 +754,11 @@ func NewRefillReader(ctx context.Context, cfg FileStorageConfig, errorHandler Er
 // String - implements fmt.Stringer interface.
 func (rr *RefillReader) String() string {
 	return rr.storage.GetPath()
+}
+
+// BlockID - return if exist blockID or nil.
+func (rr *RefillReader) BlockID() uuid.UUID {
+	return rr.title.GetBlockID()
 }
 
 // MakeSendMap - distribute refill by destinations.

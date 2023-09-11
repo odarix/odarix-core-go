@@ -22,7 +22,7 @@ var _ delivery.Dialer = &DialerMock{}
 //
 //		// make and configure a mocked delivery.Dialer
 //		mockedDialer := &DialerMock{
-//			DialFunc: func(contextMoqParam context.Context) (delivery.Transport, error) {
+//			DialFunc: func(contextMoqParam context.Context, s string, v uint16) (delivery.Transport, error) {
 //				panic("mock out the Dial method")
 //			},
 //			StringFunc: func() string {
@@ -36,7 +36,7 @@ var _ delivery.Dialer = &DialerMock{}
 //	}
 type DialerMock struct {
 	// DialFunc mocks the Dial method.
-	DialFunc func(contextMoqParam context.Context) (delivery.Transport, error)
+	DialFunc func(contextMoqParam context.Context, s string, v uint16) (delivery.Transport, error)
 
 	// StringFunc mocks the String method.
 	StringFunc func() string
@@ -47,6 +47,10 @@ type DialerMock struct {
 		Dial []struct {
 			// ContextMoqParam is the contextMoqParam argument value.
 			ContextMoqParam context.Context
+			// S is the s argument value.
+			S string
+			// V is the v argument value.
+			V uint16
 		}
 		// String holds details about calls to the String method.
 		String []struct {
@@ -57,19 +61,23 @@ type DialerMock struct {
 }
 
 // Dial calls DialFunc.
-func (mock *DialerMock) Dial(contextMoqParam context.Context) (delivery.Transport, error) {
+func (mock *DialerMock) Dial(contextMoqParam context.Context, s string, v uint16) (delivery.Transport, error) {
 	if mock.DialFunc == nil {
 		panic("DialerMock.DialFunc: method is nil but Dialer.Dial was just called")
 	}
 	callInfo := struct {
 		ContextMoqParam context.Context
+		S               string
+		V               uint16
 	}{
 		ContextMoqParam: contextMoqParam,
+		S:               s,
+		V:               v,
 	}
 	mock.lockDial.Lock()
 	mock.calls.Dial = append(mock.calls.Dial, callInfo)
 	mock.lockDial.Unlock()
-	return mock.DialFunc(contextMoqParam)
+	return mock.DialFunc(contextMoqParam, s, v)
 }
 
 // DialCalls gets all the calls that were made to Dial.
@@ -78,9 +86,13 @@ func (mock *DialerMock) Dial(contextMoqParam context.Context) (delivery.Transpor
 //	len(mockedDialer.DialCalls())
 func (mock *DialerMock) DialCalls() []struct {
 	ContextMoqParam context.Context
+	S               string
+	V               uint16
 } {
 	var calls []struct {
 		ContextMoqParam context.Context
+		S               string
+		V               uint16
 	}
 	mock.lockDial.RLock()
 	calls = mock.calls.Dial
