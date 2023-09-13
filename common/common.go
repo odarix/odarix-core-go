@@ -9,3 +9,8 @@ import "github.com/odarix/odarix-core-go/common/internal"
 func init() {
 	internal.Init()
 }
+
+// EnableCoreDumps set fork-terminate on exceptions to get coredumps
+func EnableCoreDumps() {
+	internal.EnableCoreDumps(true)
+}
