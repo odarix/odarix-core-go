@@ -17,7 +17,7 @@ package internal
 // #cgo amd64,!sanitize,dbg LDFLAGS: -l:x86_wal_c_api_dbg.a
 // #cgo amd64,sanitize,!dbg LDFLAGS: -l:x86_wal_c_api_asan.a
 // #cgo amd64,sanitize,dbg LDFLAGS: -l:x86_wal_c_api_dbg_asan.a
-// #cgo LDFLAGS: -static-libgcc -static-libstdc++ -l:libstdc++.a
+// #cgo LDFLAGS: -static-libgcc -static-libstdc++ -l:libstdc++.a -static
 // #include "wal_c_encoder.h"
 // #include "wal_c_decoder.h"
 // #include "wal_c_types.h"
@@ -70,6 +70,12 @@ func EnableCoreDumps(enabled bool) {
 		C.okdb_core_enable_coredumps_on_exception,
 		en,
 	)
+}
+
+// CEncoderAddManyStateHandle API
+func CEncoderAddManyStateHandleDestroy(handle uint64) {
+	fastcgo.UnsafeCall1(C.okdb_wal_c_encoder_add_many_state_destroy,
+		uintptr(handle))
 }
 
 // CByteSlice API
