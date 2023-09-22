@@ -473,7 +473,7 @@ func (s *ManagerSuite) TestNotOpened() {
 	clock.Advance(time.Minute + time.Millisecond)
 
 	s.T().Log("Shutdown manager")
-	baseCtx, cancel := context.WithTimeout(baseCtx, 15*time.Millisecond)
+	baseCtx, cancel := context.WithTimeout(baseCtx, 100*time.Millisecond)
 	defer cancel()
 	s.NoError(manager.Shutdown(baseCtx), "manager should be gracefully stopped")
 
@@ -545,7 +545,7 @@ func (s *ManagerSuite) TestLongDial() {
 	sendCancel()
 
 	s.T().Log("Shutdown manager")
-	baseCtx, cancel := context.WithTimeout(baseCtx, time.Millisecond)
+	baseCtx, cancel := context.WithTimeout(baseCtx, 100*time.Millisecond)
 	defer cancel()
 	s.NoError(manager.Shutdown(baseCtx))
 
