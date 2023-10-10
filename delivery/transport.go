@@ -113,7 +113,8 @@ func NewTCPDialer(dialer ConnDialer, config TCPDialerConfig, clock clockwork.Clo
 		config:     config,
 		// reset backoff may be called concurrent with it use
 		// so here we add mutex on this operations.
-		backoff:    BackoffWithLock(ebo),
+		// WithStartDuration with dur=0 start immediately.
+		backoff:    BackoffWithLock(WithStartDuration(ebo, 0)),
 		clock:      clock,
 		registerer: registerer,
 	}
@@ -131,7 +132,7 @@ func (dialer *TCPDialer) Dial(ctx context.Context, blockID string, shardID uint1
 		bo = backoff.WithMaxRetries(bo, dialer.config.BackoffMaxTries)
 	}
 
-	tr, err := backoff.RetryWithData(func() (*TCPTransport, error) {
+	tr, err := PostRetryWithData(ctx, func() (*TCPTransport, error) {
 		conn, err := dialer.connDialer.Dial(ctx)
 		if err != nil {
 			return nil, err
@@ -207,8 +208,15 @@ func NewTCPTransport(
 }
 
 // auth - request for authentication connection.
-func (tt *TCPTransport) auth(ctx context.Context, token, uuid, productName, agentHostname, blockID string, shardID uint16) error {
-	fe, err := frames.NewAuthFrameWithMsg(protocolVersion, frames.NewAuthMsg(token, uuid, productName, agentHostname, blockID, shardID))
+func (tt *TCPTransport) auth(
+	ctx context.Context,
+	token, uuid, productName, agentHostname, blockID string,
+	shardID uint16,
+) error {
+	fe, err := frames.NewAuthFrameWithMsg(
+		protocolVersion,
+		frames.NewAuthMsg(token, uuid, productName, agentHostname, blockID, shardID),
+	)
 	if err != nil {
 		return err
 	}
@@ -328,4 +336,98 @@ func (tt *TCPTransport) Close() error {
 	}
 
 	return tt.nt.Close()
+}
+
+// PostRetryWithData - is like Retry but returns data in the response too. Only ExponentialBackOff.
+func PostRetryWithData[T any](ctx context.Context, op backoff.OperationWithData[T], b backoff.BackOff) (T, error) {
+	var (
+		err  error
+		next time.Duration
+		res  T
+	)
+	t := &defaultTimer{}
+	defer t.Stop()
+
+	for {
+		if next = b.NextBackOff(); next == backoff.Stop {
+			if cerr := ctx.Err(); cerr != nil {
+				return res, cerr
+			}
+
+			return res, err
+		}
+
+		t.Start(next)
+
+		select {
+		case <-ctx.Done():
+			return res, ctx.Err()
+		case <-t.C():
+		}
+
+		res, err = op()
+		if err == nil {
+			return res, nil
+		}
+
+		var permanent *backoff.PermanentError
+		if errors.As(err, &permanent) {
+			return res, permanent.Err
+		}
+	}
+}
+
+// startWithBackOff - start backoff with timeout.
+type startWithBackOff struct {
+	delegate  backoff.BackOff
+	firstNext *time.Duration
+	first     time.Duration
+}
+
+// WithStartDuration - creates a wrapper around another BackOff. Return backoff which next with first timeout.
+func WithStartDuration(b backoff.BackOff, first time.Duration) backoff.BackOff {
+	return &startWithBackOff{delegate: b, firstNext: &first, first: first}
+}
+
+// NextBackOff - returns the duration to wait before retrying the operation, or backoff.
+// Stop to indicate that no more retries should be made.
+func (b *startWithBackOff) NextBackOff() time.Duration {
+	if b.firstNext != nil {
+		next := *b.firstNext
+		b.firstNext = nil
+		return next
+	}
+	return b.delegate.NextBackOff()
+}
+
+// Reset - reset to initial state.
+func (b *startWithBackOff) Reset() {
+	b.firstNext = &b.first
+	b.delegate.Reset()
+}
+
+// defaultTimer implements Timer interface using time.Timer
+type defaultTimer struct {
+	timer *time.Timer
+}
+
+// C returns the timers channel which receives the current time when the timer fires.
+func (t *defaultTimer) C() <-chan time.Time {
+	return t.timer.C
+}
+
+// Start starts the timer to fire after the given duration
+func (t *defaultTimer) Start(duration time.Duration) {
+	if t.timer == nil {
+		t.timer = time.NewTimer(duration)
+	} else {
+		t.timer.Reset(duration)
+	}
+}
+
+// Stop is called when the timer is not used anymore and resources may be freed.
+func (t *defaultTimer) Stop() {
+	if t.timer != nil {
+		t.timer.Stop()
+	}
 }
