@@ -51,6 +51,9 @@ type StorageManager struct {
 }
 
 // NewStorageManager - init new MarkupMap.
+//
+//revive:disable-next-line:cyclomatic  but readable
+//revive:disable-next-line:function-length long but readable
 func NewStorageManager(
 	cfg FileStorageConfig,
 	shardsNumberPower uint8,
@@ -441,7 +444,7 @@ func (sm *StorageManager) writeTitle(ctx context.Context) error {
 	}
 
 	// move position
-	sm.moveLastWriteOffset(int64(n))
+	sm.moveLastWriteOffset(n)
 
 	return nil
 }
@@ -460,7 +463,7 @@ func (sm *StorageManager) writeDestinationNames(ctx context.Context) error {
 	}
 
 	// move position
-	sm.moveLastWriteOffset(int64(n))
+	sm.moveLastWriteOffset(n)
 
 	return nil
 }
@@ -526,7 +529,7 @@ func (sm *StorageManager) WriteSegment(ctx context.Context, key common.SegmentKe
 	}
 
 	sm.setSegmentPosition(key, sm.lastWriteOffset)
-	sm.moveLastWriteOffset(int64(n))
+	sm.moveLastWriteOffset(n)
 
 	return nil
 }
@@ -547,7 +550,7 @@ func (sm *StorageManager) WriteSnapshot(ctx context.Context, segKey common.Segme
 	}
 
 	sm.setSnapshotPosition(common.SegmentKey{ShardID: segKey.ShardID, Segment: segKey.Segment}, sm.lastWriteOffset)
-	sm.moveLastWriteOffset(int64(n))
+	sm.moveLastWriteOffset(n)
 
 	return nil
 }
@@ -577,7 +580,7 @@ func (sm *StorageManager) WriteAckStatus(ctx context.Context) error {
 			sm.ackStatus.UnrotateRejects(rejects)
 			return err
 		}
-		sm.moveLastWriteOffset(int64(n))
+		sm.moveLastWriteOffset(n)
 	}
 	if !sm.statuses.Equal(ss) {
 		fe, err := frames.NewStatusesFrame(ss)
@@ -591,7 +594,7 @@ func (sm *StorageManager) WriteAckStatus(ctx context.Context) error {
 			// TODO: unrotate
 			return err
 		}
-		sm.moveLastWriteOffset(int64(n))
+		sm.moveLastWriteOffset(n)
 		sm.statuses = ss
 	}
 	return nil

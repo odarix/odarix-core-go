@@ -116,6 +116,7 @@ func (s *RefillSenderSuite) makeRefill(destinationsNames []string) {
 		s.workDir,
 		1,
 		blockID,
+		false,
 		nil,
 		destinationsNames...,
 	)

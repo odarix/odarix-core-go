@@ -348,7 +348,7 @@ func (s *StorageManagerSuite) TestRestore() {
 
 	actualSeg, err := s.sm.GetSegment(s.ctx, segKey)
 	if s.NoError(err) {
-		if buf, err := framestest.ReadPayload(actualSeg); s.NoError(err) {
+		if buf, errRead := framestest.ReadPayload(actualSeg); s.NoError(errRead) {
 			s.Equal(s.etalonsData.Bytes(), buf)
 		}
 	}

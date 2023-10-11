@@ -35,9 +35,10 @@ var (
 
 // Refill - manager for refills.
 type Refill struct {
-	sm            *StorageManager
-	mx            *sync.RWMutex
-	isContinuable bool
+	sm             *StorageManager
+	mx             *sync.RWMutex
+	alwaysToRefill bool
+	isContinuable  bool
 }
 
 var _ ManagerRefill = (*Refill)(nil)
@@ -47,12 +48,14 @@ func NewRefill(
 	workingDir string,
 	shardsNumberPower uint8,
 	blockID uuid.UUID,
+	alwaysToRefill bool,
 	registerer prometheus.Registerer,
 	names ...string,
 ) (*Refill, error) {
 	var err error
 	rm := &Refill{
-		mx: new(sync.RWMutex),
+		mx:             new(sync.RWMutex),
+		alwaysToRefill: alwaysToRefill,
 	}
 
 	fsCfg := FileStorageConfig{
@@ -186,6 +189,10 @@ func (rl *Refill) WriteAckStatus(ctx context.Context) error {
 	}
 
 	if !rl.sm.CheckSegmentsSent() {
+		return nil
+	}
+
+	if rl.alwaysToRefill {
 		return nil
 	}
 

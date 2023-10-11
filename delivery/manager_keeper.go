@@ -20,10 +20,10 @@ import (
 )
 
 const (
-	// DefaultRefillInterval - default refill interval.
-	DefaultRefillInterval = 10 * time.Second
+	// DefaultUncommittedTimeWindow - default refill interval.
+	DefaultUncommittedTimeWindow = 10 * time.Second
 	// DefaultShutdownTimeout - default shutdown timeout.
-	DefaultShutdownTimeout = 15 * time.Second
+	DefaultShutdownTimeout = 20 * time.Second
 	// DefaultWorkingDir - default working dir.
 	DefaultWorkingDir = "/usr/local/odarix-core"
 	// DefaultShardsNumberPower - default shards number power.
@@ -38,7 +38,13 @@ const (
 	DefaultDelayAfterNotify = 300 * time.Second
 	// magic byte for header
 	magicByte byte = 189
+	// AlwaysToRefill - specific value for ManagerKeeperConfig.UncommittedTimeWindow parameter for scenario
+	// when all data should always be written to the refill.
+	AlwaysToRefill = -2
 )
+
+// ErrShutdownTimeout - error when value ErrShutdownTimeout less UncommittedTimeWindow*2.
+var ErrShutdownTimeout = errors.New("ShutdownTimeout must be greater than the UncommittedTimeWindow*2")
 
 // ManagerCtor - func-constructor for Manager.
 type ManagerCtor func(
@@ -78,27 +84,33 @@ type MangerRefillSenderCtor func(
 //
 // Block - config for block.
 // RefillSenderManager - config for refill sender manager.
-// ShutdownTimeout - timeout to cancel context on shutdown.
-// RefillInterval - interval for holding a segment in memory before sending it to refill.
+// ShutdownTimeout - timeout to cancel context on shutdown, must be greater than the value UncommittedTimeWindow*2.
+// UncommittedTimeWindow - interval for holding a segment in memory before
+// sending it to refill (-2 always save to refill).
 type ManagerKeeperConfig struct {
-	RefillSenderManager RefillSendManagerConfig
-	WorkingDir          string        `validate:"required"`
-	ShutdownTimeout     time.Duration `validate:"gtefield=RefillInterval,required"`
-	RefillInterval      time.Duration `validate:"ltefield=ShutdownTimeout,required"`
+	RefillSenderManager   RefillSendManagerConfig
+	WorkingDir            string        `validate:"required"`
+	ShutdownTimeout       time.Duration `validate:"required"`
+	UncommittedTimeWindow time.Duration `validate:"eq=-2|gte=20ms"`
 }
 
 // DefaultManagerKeeperConfig - generate default ManagerKeeperConfig.
 func DefaultManagerKeeperConfig() ManagerKeeperConfig {
 	return ManagerKeeperConfig{
-		RefillSenderManager: DefaultRefillSendManagerConfig(),
-		WorkingDir:          DefaultWorkingDir,
-		ShutdownTimeout:     DefaultShutdownTimeout,
-		RefillInterval:      DefaultRefillInterval,
+		RefillSenderManager:   DefaultRefillSendManagerConfig(),
+		WorkingDir:            DefaultWorkingDir,
+		ShutdownTimeout:       DefaultShutdownTimeout,
+		UncommittedTimeWindow: DefaultUncommittedTimeWindow,
 	}
 }
 
 // Validate - check the config for correct parameters.
 func (c *ManagerKeeperConfig) Validate() error {
+	//revive:disable-next-line:add-constant x2 value
+	if c.ShutdownTimeout < c.UncommittedTimeWindow*2 {
+		return fmt.Errorf("%w: %s < %s", ErrShutdownTimeout, c.ShutdownTimeout, c.UncommittedTimeWindow*2)
+	}
+
 	validate := validator.New()
 	return validate.Struct(c)
 }
@@ -133,6 +145,7 @@ type ManagerKeeper struct {
 // NewManagerKeeper - init new DeliveryKeeper.
 //
 //revive:disable-next-line:function-length long but readable
+//revive:disable-next-line:argument-limit  but readable and convenient
 func NewManagerKeeper(
 	ctx context.Context,
 	cfg ManagerKeeperConfig,
@@ -198,7 +211,7 @@ func NewManagerKeeper(
 		dk.managerEncoderCtor,
 		dk.managerRefillCtor,
 		snp,
-		cfg.RefillInterval,
+		cfg.UncommittedTimeWindow,
 		cfg.WorkingDir,
 		cs.Limits(),
 		dk.rotateTimer,
@@ -276,7 +289,7 @@ func (dk *ManagerKeeper) rotate() error {
 		dk.managerEncoderCtor,
 		dk.managerRefillCtor,
 		snp,
-		dk.cfg.RefillInterval,
+		dk.cfg.UncommittedTimeWindow,
 		dk.cfg.WorkingDir,
 		limits,
 		dk.rotateTimer,
@@ -547,7 +560,7 @@ type CurrentState struct {
 func NewCurrentState(dir string) *CurrentState {
 	return &CurrentState{
 		dir:      dir,
-		fileName: "state.db",
+		fileName: "delivery_state.db",
 		validate: validator.New(),
 	}
 }
@@ -590,6 +603,8 @@ func (cs *CurrentState) Read() error {
 	}
 
 	if err = cs.unmarshal(b); err != nil {
+		cs.limits = nil
+		cs.shardsNumberPower = nil
 		return fmt.Errorf("unmarshal: %w", err)
 	}
 
@@ -666,8 +681,8 @@ func (cs *CurrentState) unmarshal(data []byte) error {
 	offset += int(length)
 
 	// read checksum file
-	chksm, _ = binary.Uvarint(data[offset:])
-	if uint32(chksm) != crc32.ChecksumIEEE(data[:len(data)-5]) {
+	chksm, n = binary.Uvarint(data[offset:])
+	if uint32(chksm) != crc32.ChecksumIEEE(data[:len(data)-n]) {
 		return fmt.Errorf("%w: check sum not equal", ErrCorruptedFile)
 	}
 	return nil

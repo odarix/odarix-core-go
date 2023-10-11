@@ -292,6 +292,7 @@ func (ErrServiceDataNotRestored) Permanent() bool {
 	return true
 }
 
+// CorruptedEncoderError - error for currepted error.
 type CorruptedEncoderError struct {
 	err error
 }

@@ -100,6 +100,7 @@ func (s *RefillSuite) SetupTest() {
 		s.workingDir,
 		s.etalonNumberOfShards,
 		s.etalonBlockID,
+		false,
 		nil,
 		s.etalonsNames...,
 	)
@@ -129,6 +130,7 @@ func (s *RefillSuite) TestManagerInitIsContinuable() {
 		s.workingDir,
 		2,
 		s.etalonBlockID,
+		false,
 		nil,
 		s.etalonsNames...,
 	)
@@ -139,6 +141,7 @@ func (s *RefillSuite) TestManagerInitIsContinuable() {
 		s.workingDir,
 		s.etalonNumberOfShards,
 		s.etalonBlockID,
+		false,
 		nil,
 		s.etalonsNames[:2]...,
 	)
@@ -190,10 +193,10 @@ func (s *RefillSuite) TestRestoreWithSegment() {
 	actualSnap, actSegments, err := s.mr.Restore(s.ctx, segKey)
 	s.NoError(err)
 	s.Equal(3, len(actSegments))
-	if buf, err := framestest.ReadPayload(actualSnap); s.NoError(err) {
+	if buf, errRead := framestest.ReadPayload(actualSnap); s.NoError(errRead) {
 		s.Equal(s.etalonsData.Bytes(), buf)
 	}
-	if buf, err := framestest.ReadPayload(actSegments[0]); s.NoError(err) {
+	if buf, errRead := framestest.ReadPayload(actSegments[0]); s.NoError(errRead) {
 		s.Equal(s.etalonsData.Bytes(), buf)
 	}
 
@@ -219,7 +222,7 @@ func (s *RefillSuite) TestRestoreWithoutSnapshot() {
 	s.NoError(err)
 	s.Equal(4, len(actSegments))
 	s.Nil(actualSnap)
-	if buf, err := framestest.ReadPayload(actSegments[0]); s.NoError(err) {
+	if buf, errRead := framestest.ReadPayload(actSegments[0]); s.NoError(errRead) {
 		s.Equal(s.etalonsData.Bytes(), buf)
 	}
 
@@ -239,7 +242,7 @@ func (s *RefillSuite) TestRestoreWithoutSegment() {
 	actualSnap, actSegments, err := s.mr.Restore(s.ctx, segKey)
 	s.NoError(err)
 	s.Equal(0, len(actSegments))
-	if buf, err := framestest.ReadPayload(actualSnap); s.NoError(err) {
+	if buf, errBuf := framestest.ReadPayload(actualSnap); s.NoError(errBuf) {
 		s.Equal(s.etalonsData.Bytes(), buf)
 	}
 

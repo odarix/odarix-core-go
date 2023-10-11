@@ -30,13 +30,13 @@ var (
 // Manager - general circuit manager.
 type Manager struct {
 	dialers map[string]Dialer
-	// refillInterval must not exceed the shutdown timeout,
-	// or the shutdown time must be greater than refillInterval.
+	// uncommittedTimeWindow must not exceed the shutdown timeout,
+	// or the shutdown time must be greater than uncommittedTimeWindow.
 	// Otherwise, the data will be lost (not included in the refill file).
-	refillInterval time.Duration
-	limits         Limits
-	errorHandler   ErrorHandler
-	clock          clockwork.Clock
+	uncommittedTimeWindow time.Duration
+	limits                Limits
+	errorHandler          ErrorHandler
+	clock                 clockwork.Clock
 
 	destinations   []string
 	blockID        uuid.UUID
@@ -55,19 +55,20 @@ type Manager struct {
 	haTracker      HATracker
 	walsSizes      []int64
 	// stat
-	registerer        prometheus.Registerer
-	encodeDuration    prometheus.Histogram
-	promiseDuration   prometheus.Histogram
-	segmentSize       prometheus.Histogram
-	snapshotSize      prometheus.Histogram
-	lagDuration       *prometheus.HistogramVec
-	segmentSeries     prometheus.Histogram
-	segmentSamples    prometheus.Histogram
-	rejects           prometheus.Counter
-	shutdownDuration  prometheus.Histogram
-	promiseStopRace   prometheus.Counter
-	ohPromiseFinalize prometheus.Counter
-	ohPromiseDuration prometheus.Histogram
+	registerer               prometheus.Registerer
+	encodeDuration           prometheus.Histogram
+	promiseDuration          prometheus.Histogram
+	segmentSize              prometheus.Histogram
+	snapshotSize             prometheus.Histogram
+	lagDuration              *prometheus.HistogramVec
+	segmentSeries            prometheus.Histogram
+	segmentSamples           prometheus.Histogram
+	rejects                  prometheus.Counter
+	shutdownDuration         prometheus.Histogram
+	promiseStopRace          prometheus.Counter
+	ohPromiseFinalize        prometheus.Counter
+	ohPromiseDuration        prometheus.Histogram
+	currentShardsNumberPower prometheus.Gauge
 }
 
 type (
@@ -112,6 +113,7 @@ type (
 		blockID uuid.UUID,
 		destinations []string,
 		shardsNumberPower uint8,
+		alwaysToRefill bool,
 		registerer prometheus.Registerer,
 	) (ManagerRefill, error)
 
@@ -134,6 +136,7 @@ type (
 //
 //revive:disable-next-line:function-length long but readable
 //revive:disable-next-line:cyclomatic  but readable
+//revive:disable-next-line:argument-limit  but readable and convenient
 func NewManager(
 	ctx context.Context,
 	dialers []Dialer,
@@ -141,7 +144,7 @@ func NewManager(
 	encoderCtor ManagerEncoderCtor,
 	refillCtor ManagerRefillCtor,
 	shardsNumberPower uint8,
-	refillInterval time.Duration,
+	uncommittedTimeWindow time.Duration,
 	workingDir string,
 	limits Limits,
 	rejectNotifyer RejectNotifyer,
@@ -164,7 +167,8 @@ func NewManager(
 	if err != nil {
 		return nil, fmt.Errorf("generate block id: %w", err)
 	}
-	refill, err := refillCtor(workingDir, blockID, destinations, shardsNumberPower, registerer)
+	alwaysToRefill := uncommittedTimeWindow == AlwaysToRefill
+	refill, err := refillCtor(workingDir, blockID, destinations, shardsNumberPower, alwaysToRefill, registerer)
 	if err != nil {
 		return nil, fmt.Errorf("create refill: %w", err)
 	}
@@ -173,13 +177,13 @@ func NewManager(
 			return nil, fmt.Errorf("rename refill: %w", err)
 		}
 
-		refill, err = refillCtor(workingDir, blockID, destinations, shardsNumberPower, registerer)
+		refill, err = refillCtor(workingDir, blockID, destinations, shardsNumberPower, alwaysToRefill, registerer)
 		if err != nil {
 			return nil, fmt.Errorf("create refill: %w", err)
 		}
 	}
 	blockID = refill.BlockID()
-	exchange := NewExchange(refill.Shards(), refill.Destinations(), registerer)
+	exchange := NewExchange(refill.Shards(), refill.Destinations(), alwaysToRefill, registerer)
 
 	encoders := make([]ManagerEncoder, refill.Shards())
 	for i := range encoders {
@@ -195,9 +199,9 @@ func NewManager(
 
 	factory := NewConflictRegisterer(registerer)
 	mgr := &Manager{
-		dialers:        dialersMap,
-		refillInterval: refillInterval,
-		limits:         limits,
+		dialers:               dialersMap,
+		uncommittedTimeWindow: uncommittedTimeWindow,
+		limits:                limits,
 
 		errorHandler: errorHandler,
 		clock:        clock,
@@ -297,7 +301,14 @@ func NewManager(
 				Buckets: prometheus.ExponentialBucketsRange(0.001, 1, 10),
 			},
 		),
+		currentShardsNumberPower: factory.NewGauge(
+			prometheus.GaugeOpts{
+				Name: "odarix_core_delivery_manager_shards_number_power",
+				Help: "Current value shards number power.",
+			},
+		),
 	}
+	mgr.currentShardsNumberPower.Set(float64(shardsNumberPower))
 
 	refillCtx, cancel := context.WithCancelCause(ctx)
 	mgr.cancelRefill = cancel
@@ -319,7 +330,7 @@ func (mgr *Manager) Send(ctx context.Context, data ProtoData) (ack bool, err err
 		return true, nil
 	}
 	result := NewSendPromise(len(mgr.encoders))
-	expiredAt := mgr.clock.Now().Add(mgr.refillInterval)
+	expiredAt := mgr.clock.Now().Add(mgr.uncommittedTimeWindow / 2)
 	group, gCtx := errgroup.WithContext(ctx)
 	mgr.encodersLock.Lock()
 	start := time.Now()
@@ -337,6 +348,9 @@ func (mgr *Manager) Send(ctx context.Context, data ProtoData) (ack bool, err err
 			}
 			mgr.observeSegmentMetrics(segment)
 			mgr.exchange.Put(key, segment, redundant, result, expiredAt)
+			if mgr.uncommittedTimeWindow == AlwaysToRefill {
+				mgr.triggeredRefill()
+			}
 			return nil
 		})
 	}
@@ -441,7 +455,7 @@ func (mgr *Manager) getPromise() *OpenHeadPromise {
 func (mgr *Manager) finalizePromise() {
 	ctx := context.Background()
 	group, gCtx := errgroup.WithContext(ctx)
-	expiredAt := mgr.clock.Now().Add(mgr.refillInterval)
+	expiredAt := mgr.clock.Now().Add(mgr.uncommittedTimeWindow / 2)
 	for i := range mgr.encoders {
 		i := i
 		group.Go(func() error {
@@ -452,6 +466,9 @@ func (mgr *Manager) finalizePromise() {
 			atomic.AddInt64(&mgr.walsSizes[i], segment.Size())
 			mgr.observeSegmentMetrics(segment)
 			mgr.exchange.Put(key, segment, redundant, mgr.ohPromise.SendPromise, expiredAt)
+			if mgr.uncommittedTimeWindow == AlwaysToRefill {
+				mgr.triggeredRefill()
+			}
 			return nil
 		})
 	}
@@ -523,13 +540,17 @@ func (mgr *Manager) Ack(key common.SegmentKey, dest string) {
 func (mgr *Manager) Reject(key common.SegmentKey, dest string) {
 	mgr.refill.Reject(key, dest)
 	if mgr.exchange.Reject(key) {
-		select {
-		case mgr.refillSignal <- struct{}{}:
-		default:
-		}
+		mgr.triggeredRefill()
 	}
 	mgr.rejectNotifyer.NotifyOnReject()
 	mgr.rejects.Inc()
+}
+
+func (mgr *Manager) triggeredRefill() {
+	select {
+	case mgr.refillSignal <- struct{}{}:
+	default:
+	}
 }
 
 // Restore - get data for restore state from refill.
@@ -560,9 +581,11 @@ func (mgr *Manager) Close() error {
 
 // Shutdown - safe shutdown manager with clearing queue and shutdown senders.
 //
-// refillInterval must not exceed the shutdown timeout,
-// or the shutdown time must be greater than refillInterval.
+// uncommittedTimeWindow must not exceed the shutdown timeout,
+// or the shutdown time must be greater than uncommittedTimeWindow.
 // Otherwise, the data will be lost (not included in the refill file).
+//
+//revive:disable-next-line:function-length long but readable
 func (mgr *Manager) Shutdown(ctx context.Context) error {
 	defer func(start time.Time) {
 		mgr.shutdownDuration.Observe(time.Since(start).Seconds())
@@ -611,7 +634,13 @@ func (mgr *Manager) Shutdown(ctx context.Context) error {
 }
 
 func (mgr *Manager) refillLoop(ctx context.Context) {
-	ticker := mgr.clock.NewTicker(mgr.refillInterval)
+	var ticker clockwork.Ticker
+	if mgr.uncommittedTimeWindow != AlwaysToRefill {
+		ticker = mgr.clock.NewTicker(mgr.uncommittedTimeWindow / 2)
+	} else {
+		ticker = NewDoNothingTicker()
+	}
+
 	defer ticker.Stop()
 	defer close(mgr.refillDone)
 	for {
@@ -729,3 +758,24 @@ func (mgr *Manager) OpenHeadLimits() OpenHeadLimits {
 func (mgr *Manager) Limits() Limits {
 	return mgr.limits
 }
+
+// DoNothingTicker - imitation of a ticker, but only one that does nothing
+type DoNothingTicker struct {
+	c chan time.Time
+}
+
+// NewDoNothingTicker - init new DoNothingTicker.
+func NewDoNothingTicker() *DoNothingTicker {
+	return &DoNothingTicker{c: make(chan time.Time)}
+}
+
+// Chan - implement clockwork.Ticker.
+func (t *DoNothingTicker) Chan() <-chan time.Time {
+	return t.c
+}
+
+// Reset - implement clockwork.Ticker.
+func (*DoNothingTicker) Reset(_ time.Duration) {}
+
+// Stop - implement clockwork.Ticker.
+func (*DoNothingTicker) Stop() {}

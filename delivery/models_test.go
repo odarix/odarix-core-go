@@ -272,7 +272,6 @@ func (s *OpenHeadPromiseSuite) TestPanicOnAddToFinalized_Long() {
 	}, clockwork.NewRealClock(), func() {
 		s.encodersLock.Lock()
 		s.encodersLock.Unlock()
-
 		s.finalized.Store(true)
 	}, promauto.With(nil).NewCounter(prometheus.CounterOpts{}))
 	s.encodersLock.Lock()
@@ -297,8 +296,7 @@ func (*OpenHeadPromiseSuite) getSegments(samples uint32) []common.Segment {
 }
 
 func (s *OpenHeadPromiseSuite) getPromise(shards int, limits delivery.OpenHeadLimits) *delivery.OpenHeadPromise {
-	var promise *delivery.OpenHeadPromise
-	promise = delivery.NewOpenHeadPromise(shards, limits, s.clock, func() {
+	promise := delivery.NewOpenHeadPromise(shards, limits, s.clock, func() {
 		s.encodersLock.Lock()
 		defer s.encodersLock.Unlock()
 

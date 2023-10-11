@@ -262,7 +262,7 @@ func (s *ManagerSuite) TestAckRejectRace() {
 	refillWriteLock.Unlock()
 
 	s.T().Log("Shutdown manager")
-	shutdownCtx, shutdownCancel := context.WithTimeout(baseCtx, time.Second)
+	shutdownCtx, shutdownCancel := context.WithTimeout(baseCtx, 20*time.Second)
 	defer shutdownCancel()
 	s.NoError(manager.Shutdown(shutdownCtx), "manager should be gracefully stopped")
 
@@ -564,6 +564,77 @@ func (s *ManagerSuite) TestLongDial() {
 	}
 }
 
+func (s *ManagerSuite) TestAlwaysToRefill() {
+	baseCtx := context.Background()
+
+	s.T().Log("Use auto-ack transport (ack segements after ms delay)")
+	destination := make(chan string, 4)
+	dialers := []delivery.Dialer{s.transportNewAutoAck(s.T().Name(), 10*time.Millisecond, destination)}
+
+	s.T().Log("Use full-implemented refill in memory")
+	refill := s.inMemoryRefill()
+	refillCtor := s.constructorForRefill(refill)
+
+	s.T().Log("Instance and open manager")
+	clock := clockwork.NewFakeClock()
+	rejectNotifyer := &RejectNotifyerMock{NotifyOnRejectFunc: func() {}}
+	haTracker := delivery.NewHighAvailabilityTracker(baseCtx, nil, clock)
+	defer haTracker.Destroy()
+	var uncommittedTimeWindow time.Duration = delivery.AlwaysToRefill
+	manager, err := delivery.NewManager(
+		baseCtx,
+		dialers,
+		newByteShardedDataTest,
+		s.simpleEncoder(),
+		refillCtor,
+		2,
+		uncommittedTimeWindow,
+		"workingDir",
+		delivery.DefaultLimits(),
+		rejectNotifyer,
+		haTracker,
+		s.errorHandler,
+		clock,
+		nil,
+	)
+	s.Require().NoError(err)
+	manager.Open(baseCtx)
+
+	s.T().Log("Send and check a few parts of data")
+	for i := 0; i < 10; i++ {
+		expectedData := faker.Paragraph()
+		data := newShardedDataTest(expectedData)
+		sendCtx, sendCancel := context.WithTimeout(baseCtx, 100*time.Millisecond)
+		delivered, err := manager.Send(sendCtx, data)
+		s.NoError(err, "data should be delivered in 100 ms")
+		s.False(delivered, "data should be delivered in 100 ms")
+		sendCancel()
+		for j := 0; j < 4; j++ {
+			s.Equal(expectedData, <-destination, "data should be delivered 4 times")
+		}
+	}
+
+	s.T().Log("Shutdown manager")
+	shutdownCtx, shutdownCancel := context.WithTimeout(baseCtx, time.Second)
+	defer shutdownCancel()
+	s.NoError(manager.Shutdown(shutdownCtx), "manager should be gracefully stopped")
+
+	s.T().Log("Check that rejected and followed data is in refill")
+	for i := 0; i < 3; i++ {
+		for j := 0; j < 4; j++ {
+			segment, err := refill.Get(baseCtx, common.SegmentKey{ShardID: uint16(j), Segment: uint32(i)})
+			if s.NoError(err, "segment should be in refill") {
+				data, err := framestest.ReadPayload(segment)
+				if s.NoError(err) {
+					parts := strings.SplitN(string(data), ":", 6)
+					s.Equal("segment", parts[0], "%q")
+					s.Equal(strconv.Itoa(j), parts[2])
+				}
+			}
+		}
+	}
+}
+
 func (*ManagerSuite) transportWithReject(dialer delivery.Dialer, switcher *atomic.Bool, delay time.Duration, blockID string, shardID uint16) delivery.Dialer {
 	return &DialerMock{
 		StringFunc: dialer.String,
@@ -700,7 +771,7 @@ func (*ManagerSuite) transportNewAutoAck(name string, delay time.Duration, dest 
 
 //revive:disable-next-line:cyclomatic this is test
 //revive:disable-next-line:cognitive-complexity this is test
-func (s *ManagerSuite) inMemoryRefill() *ManagerRefillMock {
+func (*ManagerSuite) inMemoryRefill() *ManagerRefillMock {
 	m := new(sync.Mutex)
 	data := make(map[uint16]map[uint32]interface{})
 	rejects := make(map[common.SegmentKey]bool)
@@ -833,7 +904,7 @@ func (*ManagerSuite) corruptedRefill() *ManagerRefillMock {
 }
 
 func (*ManagerSuite) constructorForRefill(refill *ManagerRefillMock) delivery.ManagerRefillCtor {
-	return func(_ string, blockID uuid.UUID, destinations []string, shardsNumberPower uint8, registerer prometheus.Registerer) (delivery.ManagerRefill, error) {
+	return func(_ string, blockID uuid.UUID, destinations []string, shardsNumberPower uint8, alwaysToRefill bool, registerer prometheus.Registerer) (delivery.ManagerRefill, error) {
 		if refill.BlockIDFunc == nil {
 			refill.BlockIDFunc = func() uuid.UUID { return blockID }
 		}

@@ -172,7 +172,7 @@ func (*ManagerKeeperSuite) transportWithReject(name string, delay time.Duration,
 }
 
 func (*ManagerKeeperSuite) constructorForRefill(refill *ManagerRefillMock) delivery.ManagerRefillCtor {
-	return func(_ string, blockID uuid.UUID, destinations []string, shardsNumberPower uint8, registerer prometheus.Registerer) (delivery.ManagerRefill, error) {
+	return func(_ string, blockID uuid.UUID, destinations []string, shardsNumberPower uint8, alwaysToRefill bool, registerer prometheus.Registerer) (delivery.ManagerRefill, error) {
 		if refill.BlockIDFunc == nil {
 			refill.BlockIDFunc = func() uuid.UUID { return blockID }
 		}
@@ -422,9 +422,9 @@ func (s *ManagerKeeperSuite) TestSendHappyPath() {
 	s.Require().NoError(err)
 
 	cfg := delivery.ManagerKeeperConfig{
-		ShutdownTimeout: 6 * time.Second,
-		RefillInterval:  5 * time.Second,
-		WorkingDir:      dir,
+		ShutdownTimeout:       10 * time.Second,
+		UncommittedTimeWindow: 5 * time.Second,
+		WorkingDir:            dir,
 		RefillSenderManager: delivery.RefillSendManagerConfig{
 			ScanInterval:  3 * time.Second,
 			MaxRefillSize: 10000,
@@ -493,9 +493,9 @@ func (s *ManagerKeeperSuite) TestSendWithRotate() {
 	s.Require().NoError(err)
 
 	cfg := delivery.ManagerKeeperConfig{
-		ShutdownTimeout: 6 * time.Second,
-		RefillInterval:  5 * time.Second,
-		WorkingDir:      dir,
+		ShutdownTimeout:       10 * time.Second,
+		UncommittedTimeWindow: 5 * time.Second,
+		WorkingDir:            dir,
 		RefillSenderManager: delivery.RefillSendManagerConfig{
 			ScanInterval:  3 * time.Second,
 			MaxRefillSize: 10000,
@@ -577,9 +577,9 @@ func (s *ManagerKeeperSuite) TestSendWithReject() {
 	s.Require().NoError(err)
 
 	cfg := delivery.ManagerKeeperConfig{
-		ShutdownTimeout: 6 * time.Second,
-		RefillInterval:  5 * time.Second,
-		WorkingDir:      dir,
+		ShutdownTimeout:       10 * time.Second,
+		UncommittedTimeWindow: 5 * time.Second,
+		WorkingDir:            dir,
 		RefillSenderManager: delivery.RefillSendManagerConfig{
 			ScanInterval:  3 * time.Second,
 			MaxRefillSize: 10000,
@@ -814,43 +814,41 @@ func (s *CurrentStateSuite) TestError() {
 	err := cs.Write(2, &limits)
 	s.Require().NoError(err)
 
-	s.T().Log(cs.Limits().Hashdex)
-
-	fi, err := os.Stat(filepath.Join(s.dir, "state.db"))
+	fi, err := os.Stat(filepath.Join(s.dir, "delivery_state.db"))
 	s.Require().NoError(err)
 
 	s.T().Log("check sum on file")
-	err = os.Truncate(filepath.Join(s.dir, "state.db"), fi.Size()-1)
+	err = os.Truncate(filepath.Join(s.dir, "delivery_state.db"), fi.Size()-1)
 	s.Require().NoError(err)
 	err = cs.Read()
 	s.Require().ErrorIs(err, delivery.ErrCorruptedFile)
 
 	s.T().Log("check sum on hashdex limits")
-	err = os.Truncate(filepath.Join(s.dir, "state.db"), fi.Size()-7)
+	err = os.Truncate(filepath.Join(s.dir, "delivery_state.db"), fi.Size()-7)
 	s.Require().NoError(err)
 	err = cs.Read()
 	s.Require().ErrorIs(err, delivery.ErrCorruptedFile)
 
 	s.T().Log("check sum on block limits")
-	err = os.Truncate(filepath.Join(s.dir, "state.db"), fi.Size()-25)
+	err = os.Truncate(filepath.Join(s.dir, "delivery_state.db"), fi.Size()-25)
 	s.Require().NoError(err)
 	err = cs.Read()
 	s.Require().ErrorIs(err, delivery.ErrCorruptedFile)
 
 	s.T().Log("check sum on open head limits")
-	err = os.Truncate(filepath.Join(s.dir, "state.db"), fi.Size()-48)
+	err = os.Truncate(filepath.Join(s.dir, "delivery_state.db"), fi.Size()-48)
 	s.Require().NoError(err)
 	err = cs.Read()
 	s.Require().ErrorIs(err, delivery.ErrCorruptedFile)
 
 	s.T().Log("check sum on shards number power")
-	err = os.Truncate(filepath.Join(s.dir, "state.db"), fi.Size()-66)
+	err = os.Truncate(filepath.Join(s.dir, "delivery_state.db"), fi.Size()-66)
 	s.Require().NoError(err)
 	err = cs.Read()
 	s.Require().ErrorIs(err, delivery.ErrCorruptedFile)
 
 	s.T().Log("check magic byte")
-	err = os.Truncate(filepath.Join(s.dir, "state.db"), 0)
+	err = os.Truncate(filepath.Join(s.dir, "delivery_state.db"), 0)
 	s.Require().NoError(err)
 	err = cs.Read()
 	s.Require().ErrorIs(err, delivery.ErrCorruptedFile)
@@ -996,20 +994,29 @@ func (s *ManagerKeeperConfigSuite) TestShutdownTimeoutNil() {
 	s.Error(err)
 }
 
-func (s *ManagerKeeperConfigSuite) TestShutdownTimeoutOverRefillInterval() {
+func (s *ManagerKeeperConfigSuite) TestShutdownTimeoutOverUncommittedTimeWindow() {
 	cfg := delivery.DefaultManagerKeeperConfig()
-	cfg.ShutdownTimeout = 10
+	cfg.ShutdownTimeout = 19 * time.Second
+
+	err := cfg.Validate()
+	s.ErrorIs(err, delivery.ErrShutdownTimeout)
+	s.Error(err)
+}
+
+func (s *ManagerKeeperConfigSuite) TestUncommittedTimeWindowZero() {
+	cfg := delivery.DefaultManagerKeeperConfig()
+	cfg.UncommittedTimeWindow = 0
 
 	err := cfg.Validate()
 	s.Error(err)
 }
 
-func (s *ManagerKeeperConfigSuite) TestRefillIntervalNil() {
+func (s *ManagerKeeperConfigSuite) TestUncommittedTimeWindowNegative() {
 	cfg := delivery.DefaultManagerKeeperConfig()
-	cfg.RefillInterval = 0
+	cfg.UncommittedTimeWindow = delivery.AlwaysToRefill
 
 	err := cfg.Validate()
-	s.Error(err)
+	s.NoError(err)
 }
 
 func (s *ManagerKeeperConfigSuite) TestRefillSenderManager_ScanInterval_Nil() {

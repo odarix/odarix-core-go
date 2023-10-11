@@ -21,11 +21,12 @@ var (
 
 // Exchange holds and coordinate segment-redundants flow
 type Exchange struct {
-	locked       uint32
-	destinations int
-	records      *sync.Map // map[common.SegmentKey]*exchangeRecord
-	lastSegments []uint32  // max segment id per shard
-	rejects      []uint32  // 0-1 marks that shard has rejected segment
+	locked         uint32
+	destinations   int
+	records        *sync.Map // map[common.SegmentKey]*exchangeRecord
+	lastSegments   []uint32  // max segment id per shard
+	rejects        []uint32  // 0-1 marks that shard has rejected segment
+	alwaysToRefill bool
 	// stat
 	puts    prometheus.Counter
 	removes prometheus.Counter
@@ -34,18 +35,19 @@ type Exchange struct {
 // NewExchange is a constructor
 //
 // We rely on the fact that destinations is a correct index name-serial.
-func NewExchange(shards, destinations int, registerer prometheus.Registerer) *Exchange {
+func NewExchange(shards, destinations int, alwaysToRefill bool, registerer prometheus.Registerer) *Exchange {
 	lastSegments := make([]uint32, shards)
 	for i := range lastSegments {
 		lastSegments[i] = math.MaxUint32
 	}
 	factory := NewConflictRegisterer(registerer)
 	return &Exchange{
-		locked:       0,
-		destinations: destinations,
-		records:      new(sync.Map),
-		lastSegments: lastSegments,
-		rejects:      make([]uint32, shards),
+		locked:         0,
+		destinations:   destinations,
+		records:        new(sync.Map),
+		lastSegments:   lastSegments,
+		rejects:        make([]uint32, shards),
+		alwaysToRefill: alwaysToRefill,
 		puts: factory.NewCounter(
 			prometheus.CounterOpts{
 				Name: "odarix_core_delivery_exchange_puts",
@@ -138,7 +140,7 @@ func (ex *Exchange) Ack(key common.SegmentKey) {
 // If shard has any rejected segment, than we should preserve all segments in this shard
 // for minimize snapshots count.
 func (ex *Exchange) isSafeForDelete(key common.SegmentKey) bool {
-	return atomic.LoadUint32(&ex.rejects[key.ShardID]) == 0
+	return atomic.LoadUint32(&ex.rejects[key.ShardID]) == 0 && !ex.alwaysToRefill
 }
 
 // Reject segment by key

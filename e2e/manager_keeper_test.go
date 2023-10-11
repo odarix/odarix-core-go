@@ -118,6 +118,8 @@ func (s *ManagerKeeperSuite) TestRefillSenderHappyPath() {
 	s.Require().NoError(err)
 }
 
+//revive:disable-next-line:cyclomatic this is test
+//revive:disable-next-line:cognitive-complexity this is test
 func (s *ManagerKeeperSuite) TestWithRotate() {
 	count := 10
 	baseCtx := context.Background()
@@ -137,6 +139,7 @@ func (s *ManagerKeeperSuite) TestWithRotate() {
 
 			// process data
 			retCh <- rq.Message
+
 			if !s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 				Text:      "OK",
 				Code:      200,
@@ -169,19 +172,19 @@ func (s *ManagerKeeperSuite) TestWithRotate() {
 
 	s.T().Log("client: run time shift")
 	advanceCtx, advanceCancel := context.WithCancel(baseCtx)
-	defer advanceCancel()
 	go func(ctx context.Context) {
-		ticker := time.NewTicker(400 * time.Millisecond)
+		timer := time.NewTimer(500 * time.Millisecond)
 		l := 0
-		defer ticker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
+				timer.Stop()
 				return
-			case <-ticker.C:
+			case <-timer.C:
 				l++
 				s.T().Log("client: rotate loop:", l)
-				clock.Advance(4 * time.Second)
+				clock.Advance(2 * time.Second)
+				timer.Reset(500 * time.Millisecond)
 			}
 		}
 	}(advanceCtx)
@@ -194,11 +197,11 @@ func (s *ManagerKeeperSuite) TestWithRotate() {
 
 		delivered, errLoop := managerKeeper.Send(baseCtx, newProtoDataTest(data))
 		s.Require().NoError(errLoop)
-		s.Require().True(delivered)
-
+		s.True(delivered)
 		wrMsg := <-retCh
 		s.Equal(wr.String(), wrMsg.String())
 	}
+	advanceCancel()
 
 	s.T().Log("client: shutdown manager")
 	err = managerKeeper.Shutdown(baseCtx)

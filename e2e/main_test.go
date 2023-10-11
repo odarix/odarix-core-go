@@ -137,12 +137,14 @@ func (s *MainSuite) createManager(
 		blockID uuid.UUID,
 		destinations []string,
 		shardsNumberPower uint8,
+		alwaysToRefill bool,
 		registerer prometheus.Registerer,
 	) (delivery.ManagerRefill, error) {
 		return delivery.NewRefill(
 			workingDir,
 			shardsNumberPower,
 			blockID,
+			alwaysToRefill,
 			registerer,
 			destinations...,
 		)
@@ -288,21 +290,23 @@ func (s *MainSuite) createManagerKeeper(
 		blockID uuid.UUID,
 		destinations []string,
 		shardsNumberPower uint8,
+		alwaysToRefill bool,
 		registerer prometheus.Registerer,
 	) (delivery.ManagerRefill, error) {
 		return delivery.NewRefill(
 			workinDir,
 			shardsNumberPower,
 			blockID,
+			alwaysToRefill,
 			registerer,
 			destinations...,
 		)
 	}
 
 	cfg := delivery.ManagerKeeperConfig{
-		ShutdownTimeout: 6 * time.Second,
-		RefillInterval:  5 * time.Second,
-		WorkingDir:      dir,
+		ShutdownTimeout:       12 * time.Second,
+		UncommittedTimeWindow: 6 * time.Second,
+		WorkingDir:            dir,
 		RefillSenderManager: delivery.RefillSendManagerConfig{
 			ScanInterval:  2 * time.Second,
 			MaxRefillSize: 10000000, // 10mb
