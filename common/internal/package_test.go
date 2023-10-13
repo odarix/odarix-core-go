@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCBindingsInitCleanEncoderSmoke(*testing.T) {
+func TestCBindingsInitCleanEncoderSmoke(t *testing.T) {
 	var encoder = common.NewEncoder(0, 0)
 	encoder.Destroy()
 }

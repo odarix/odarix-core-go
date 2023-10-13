@@ -3,7 +3,6 @@
  *  Contains C API bindings from C++ classes to CGO types.
  */
 #pragma once
-#include <jemalloc/jemalloc.h>
 #include <stddef.h>  // size_t
 #include <stdint.h>
 
@@ -104,24 +103,6 @@ int okdb_wal_initialize();
 /// \brief Use it for enabling coredumps on any \ref BareBones::Exception.
 /// \param enable Enables if != 0, disables otherwise.
 void okdb_core_enable_coredumps_on_exception(int enable);
-
-// Memory Info
-
-// mem_info_result - result check memory.
-typedef struct {
-  size_t in_use;
-} mem_info_result;
-
-// memstat - get memory usage stats.
-void mem_info(go_ptr result) {
-  uint64_t epoch = 1;
-  size_t sz = sizeof(epoch);
-  mallctl("epoch", &epoch, &sz, &epoch, sz);
-  size_t size;
-  size_t size_len = sizeof(size);
-  mallctl("stats.allocated", &size, &size_len, NULL, 0);
-  ((mem_info_result*)(result))->in_use = size;
-}
 
 #ifdef __cplusplus
 }  // extern "C"

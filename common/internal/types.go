@@ -10,13 +10,9 @@ package internal
 import (
 	"fmt"
 	"io"
-	"os"
-	"os/signal"
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
-	"time"
 	"unsafe"
 
 	"github.com/gogo/protobuf/proto"
@@ -43,19 +39,19 @@ func NewGoSegment() *GoSegment {
 		data: CSlice{},
 	}
 	runtime.SetFinalizer(gs, func(gs *GoSegment) {
-		CSegmentDestroy(unsafe.Pointer(gs)) //nolint:gosec // this is memory optimisation
+		CSegmentDestroy(unsafe.Pointer(gs))
 	})
 	return gs
 }
 
 // Size returns len of bytes
 func (gs *GoSegment) Size() int64 {
-	return int64(len(*(*[]byte)(unsafe.Pointer(&gs.data)))) //nolint:gosec // this is memory optimisation
+	return int64(len(*(*[]byte)(unsafe.Pointer(&gs.data))))
 }
 
 // WriteTo implements io.WriterTo inerface
 func (gs *GoSegment) WriteTo(w io.Writer) (int64, error) {
-	n, err := w.Write(*(*[]byte)(unsafe.Pointer(&gs.data))) //nolint:gosec // this is memory optimisation
+	n, err := w.Write(*(*[]byte)(unsafe.Pointer(&gs.data)))
 	runtime.KeepAlive(gs)
 	return int64(n), err
 }
@@ -80,7 +76,6 @@ func (gs *GoSegment) Latest() int64 {
 	return gs.latest
 }
 
-// RemainingTableSize - remaining table size in encoders.
 func (gs *GoSegment) RemainingTableSize() uint32 {
 	return gs.remainingTableSize
 }
@@ -99,19 +94,19 @@ func NewGoDecodedSegment() *GoDecodedSegment {
 		data: CSlice{},
 	}
 	runtime.SetFinalizer(ds, func(ds *GoDecodedSegment) {
-		CDecodedSegmentDestroy(unsafe.Pointer(ds)) //nolint:gosec // this is memory optimisation
+		CDecodedSegmentDestroy(unsafe.Pointer(ds))
 	})
 	return ds
 }
 
 // Size returns len of bytes
 func (ds *GoDecodedSegment) Size() int64 {
-	return int64(len(*(*[]byte)(unsafe.Pointer(&ds.data)))) //nolint:gosec // this is memory optimisation
+	return int64(len(*(*[]byte)(unsafe.Pointer(&ds.data))))
 }
 
 // WriteTo implements io.WriterTo interface
 func (ds *GoDecodedSegment) WriteTo(w io.Writer) (int64, error) {
-	n, err := w.Write(*(*[]byte)(unsafe.Pointer(&ds.data))) //nolint:gosec // this is memory optimisation
+	n, err := w.Write(*(*[]byte)(unsafe.Pointer(&ds.data)))
 	runtime.KeepAlive(ds)
 	return int64(n), err
 }
@@ -128,7 +123,7 @@ func (ds *GoDecodedSegment) EncodedAt() int64 {
 
 // UnmarshalTo unmarshals data to given protobuf message
 func (ds *GoDecodedSegment) UnmarshalTo(v proto.Unmarshaler) error {
-	err := v.Unmarshal(*(*[]byte)(unsafe.Pointer(&ds.data))) //nolint:gosec // this is memory optimisation
+	err := v.Unmarshal(*(*[]byte)(unsafe.Pointer(&ds.data)))
 	runtime.KeepAlive(ds)
 	return err
 }
@@ -145,7 +140,7 @@ type GoRedundant struct {
 func NewGoRedundant() *GoRedundant {
 	gr := &GoRedundant{}
 	runtime.SetFinalizer(gr, func(gr *GoRedundant) {
-		CRedundantDestroy(unsafe.Pointer(gr)) //nolint:gosec // this is memory optimisation
+		CRedundantDestroy(unsafe.Pointer(gr))
 	})
 	return gr
 }
@@ -169,19 +164,19 @@ func NewGoSnapshot() *GoSnapshot {
 		data: CSlice{},
 	}
 	runtime.SetFinalizer(gs, func(gs *GoSnapshot) {
-		CSnapshotDestroy(unsafe.Pointer(gs)) //nolint:gosec // this is memory optimisation
+		CSnapshotDestroy(unsafe.Pointer(gs))
 	})
 	return gs
 }
 
 // Size returns count of bytes in snapshot
 func (gs *GoSnapshot) Size() int64 {
-	return int64(len(*(*[]byte)(unsafe.Pointer(&gs.data)))) //nolint:gosec // this is memory optimisation
+	return int64(len(*(*[]byte)(unsafe.Pointer(&gs.data))))
 }
 
 // WriteTo implements io.WriterTo interface
 func (gs *GoSnapshot) WriteTo(w io.Writer) (int64, error) {
-	n, err := w.Write(*(*[]byte)(unsafe.Pointer(&gs.data))) //nolint:gosec // this is memory optimisation
+	n, err := w.Write(*(*[]byte)(unsafe.Pointer(&gs.data)))
 	runtime.KeepAlive(gs)
 	return int64(n), err
 }
@@ -255,7 +250,6 @@ func getCodeFromMsg(msg string) uint64 {
 		return 0
 	}
 	codeStr, _, _ := strings.Cut(msgStartedWithCode, ":")
-	//revive:disable-next-line:add-constant this not constant
 	code, _ := strconv.ParseUint(codeStr, 16, 64)
 	return code
 }
@@ -288,121 +282,4 @@ func (grr *GoRestoredResult) RequiredSegmentID() uint32 {
 // RestoredSegmentID - get restored segmentID.
 func (grr *GoRestoredResult) RestoredSegmentID() uint32 {
 	return grr.restoredSegmentID
-}
-
-// GoMemInfoResult - go-type wrapper for c-type, result meminfo usage.
-type GoMemInfoResult struct {
-	inUse uint64
-}
-
-// NewGoMemstatResult - int new GoMemInfoResult.
-func NewGoMemstatResult() *GoMemInfoResult {
-	return &GoMemInfoResult{}
-}
-
-// InUse - return current c-memory in use.
-func (gmr *GoMemInfoResult) InUse() uint64 {
-	return gmr.inUse
-}
-
-// garbage collector for objects initiated in GO but filled in C/C++,
-// because native GC knows nothing about the used memory and starts cleaning up memory too late.
-var cgogc *CGOGC
-
-func init() {
-	cgogc = NewCGOGC()
-}
-
-const (
-	defaultGCDecay       float64       = 1.0 / 3.0
-	defaultGCWarmupValue float64       = 90 << 20 // 50mb
-	gcDelayThreshold     time.Duration = 2 * time.Second
-)
-
-// CGOGC - implement wise garbage collector for c/c++ objects.
-type CGOGC struct {
-	threshold   float64
-	decay       float64
-	multiplier  float64
-	value       float64
-	warmupValue float64
-}
-
-// NewCGOGC - init new CGOGC.
-func NewCGOGC() *CGOGC {
-	cgc := &CGOGC{
-		//revive:disable-next-line:add-constant for exponential decay
-		decay:       defaultGCDecay,
-		threshold:   defaultGCWarmupValue,
-		warmupValue: defaultGCWarmupValue,
-	}
-	cgc.multiplier = 1 - cgc.decay
-	go cgc.Run()
-	return cgc
-}
-
-// add - adds a value to the series and updates the moving average.
-func (cgc *CGOGC) add(value float64) {
-	if cgc.value == 0 {
-		cgc.value = value
-		return
-	}
-	cgc.value = (value * cgc.decay) + (cgc.value * cgc.multiplier)
-}
-
-// calcThreshold - return max expotential threshold value.
-func (cgc *CGOGC) calcThreshold() float64 {
-	if cgc.value <= cgc.warmupValue {
-		return cgc.warmupValue
-	}
-
-	return cgc.value + (cgc.value * cgc.multiplier)
-}
-
-// isOverThreshold - check and adjustment threshold.
-func (cgc *CGOGC) isOverThreshold(value float64) bool {
-	cgc.add(value)
-	if value >= cgc.threshold {
-		cgc.threshold = cgc.calcThreshold()
-		return true
-	}
-
-	if value < cgc.value {
-		cgc.threshold = cgc.calcThreshold()
-	}
-	return false
-}
-
-// Run - run gc if the number of objects initiated more threshold.
-func (cgc *CGOGC) Run() {
-	c := make(chan os.Signal, 1)
-	signal.Notify(
-		c,
-		syscall.SIGINT,
-		syscall.SIGTERM,
-	)
-	timer := time.NewTimer(gcDelayThreshold)
-
-	for {
-		select {
-		case <-c:
-			if !timer.Stop() {
-				<-timer.C
-			}
-			return
-		case <-timer.C:
-			cgc.gc()
-			timer.Reset(gcDelayThreshold)
-		}
-	}
-}
-
-func (cgc *CGOGC) gc() {
-	memInfo := NewGoMemstatResult()
-	CMemInfo(memInfo)
-
-	if !cgc.isOverThreshold(float64(memInfo.InUse())) {
-		return
-	}
-	runtime.GC()
 }
