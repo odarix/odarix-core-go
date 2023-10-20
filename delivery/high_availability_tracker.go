@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jonboulle/clockwork"
+	"github.com/odarix/odarix-core-go/util"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -35,7 +36,7 @@ func NewHighAvailabilityTracker(
 	registerer prometheus.Registerer,
 	clock clockwork.Clock,
 ) *HighAvailabilityTracker {
-	factory := NewConflictRegisterer(registerer)
+	factory := util.NewUnconflictRegisterer(registerer)
 	ha := &HighAvailabilityTracker{
 		storage:  new(sync.Map),
 		overTime: int64(defaultHAOverTime.Seconds()),

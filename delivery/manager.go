@@ -13,8 +13,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jonboulle/clockwork"
 	"github.com/odarix/odarix-core-go/common"
+	"github.com/odarix/odarix-core-go/util"
 	"github.com/prometheus/client_golang/prometheus"
-	"go.uber.org/multierr"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -197,7 +197,7 @@ func NewManager(
 		errorHandler = func(string, error) {}
 	}
 
-	factory := NewConflictRegisterer(registerer)
+	factory := util.NewUnconflictRegisterer(registerer)
 	mgr := &Manager{
 		dialers:               dialersMap,
 		uncommittedTimeWindow: uncommittedTimeWindow,
@@ -616,7 +616,7 @@ func (mgr *Manager) Shutdown(ctx context.Context) error {
 			defer wg.Done()
 			if err := sender.Shutdown(ctx); err != nil {
 				m.Lock()
-				errs = multierr.Append(errs, fmt.Errorf("%s: %w", sender, err))
+				errs = errors.Join(errs, fmt.Errorf("%s: %w", sender, err))
 				m.Unlock()
 			}
 		}(sender)
@@ -630,7 +630,7 @@ func (mgr *Manager) Shutdown(ctx context.Context) error {
 	}
 	mgr.encodersLock.Unlock()
 
-	return multierr.Append(errs, mgr.refill.Shutdown(ctx))
+	return errors.Join(errs, mgr.refill.Shutdown(ctx))
 }
 
 func (mgr *Manager) refillLoop(ctx context.Context) {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/odarix/odarix-core-go/common"
+	"github.com/odarix/odarix-core-go/util"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -40,7 +41,7 @@ func NewExchange(shards, destinations int, alwaysToRefill bool, registerer prome
 	for i := range lastSegments {
 		lastSegments[i] = math.MaxUint32
 	}
-	factory := NewConflictRegisterer(registerer)
+	factory := util.NewUnconflictRegisterer(registerer)
 	return &Exchange{
 		locked:         0,
 		destinations:   destinations,

@@ -62,7 +62,7 @@ func NewStorageManager(
 	names ...string,
 ) (*StorageManager, error) {
 	var err error
-	factory := NewConflictRegisterer(registerer)
+	factory := util.NewUnconflictRegisterer(registerer)
 	sm := &StorageManager{
 		markupMap:  make(map[MarkupKey]int64),
 		hasRejects: atomic.Bool{},

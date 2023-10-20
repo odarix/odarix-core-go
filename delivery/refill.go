@@ -12,7 +12,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/odarix/odarix-core-go/common"
 	"github.com/prometheus/client_golang/prometheus"
-	"go.uber.org/multierr"
 )
 
 const (
@@ -220,7 +219,7 @@ func (rl *Refill) Shutdown(_ context.Context) error {
 		name = rl.makeCompleteFileName()
 	}
 
-	return multierr.Append(rl.sm.Rename(name), rl.sm.Close())
+	return errors.Join(rl.sm.Rename(name), rl.sm.Close())
 }
 
 func (rl *Refill) makeCompleteFileName() string {

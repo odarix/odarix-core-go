@@ -21,7 +21,6 @@ import (
 	"github.com/odarix/odarix-core-go/frames"
 	"github.com/odarix/odarix-core-go/util"
 	"github.com/prometheus/client_golang/prometheus"
-	"go.uber.org/multierr"
 )
 
 // errRefillLimitExceeded - error if refill limit exceeded.
@@ -89,7 +88,7 @@ func NewRefillSendManager(
 	for _, dialer := range dialers {
 		dialersMap[dialer.String()] = dialer
 	}
-	factory := NewConflictRegisterer(registerer)
+	factory := util.NewUnconflictRegisterer(registerer)
 	return &RefillSendManager{
 		rsmCfg:       rsmCfg,
 		dir:          filepath.Join(workingDir, RefillDir),
@@ -410,7 +409,7 @@ func NewRefillSender(
 	data []uint32,
 	registerer prometheus.Registerer,
 ) *RefillSender {
-	factory := NewConflictRegisterer(registerer)
+	factory := util.NewUnconflictRegisterer(registerer)
 	return &RefillSender{
 		dialer:          dialer,
 		source:          source,
@@ -468,11 +467,11 @@ func (rs *RefillSender) Send(ctx context.Context) error {
 		if errors.Is(context.Cause(ctx), ErrShutdown) {
 			return rs.transport.Close()
 		}
-		return multierr.Append(context.Cause(ctx), rs.transport.Close())
+		return errors.Join(context.Cause(ctx), rs.transport.Close())
 	case <-rs.done:
 		return rs.transport.Close()
 	case err := <-rs.errs:
-		return multierr.Append(err, rs.transport.Close())
+		return errors.Join(err, rs.transport.Close())
 	}
 }
 

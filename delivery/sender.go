@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/odarix/odarix-core-go/common"
 	"github.com/odarix/odarix-core-go/frames"
+	"github.com/odarix/odarix-core-go/util"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -49,7 +50,7 @@ func NewSender(
 	errorHandler ErrorHandler,
 	registerer prometheus.Registerer,
 ) *Sender {
-	factory := NewConflictRegisterer(registerer)
+	factory := util.NewUnconflictRegisterer(registerer)
 	sender := &Sender{
 		dialer:        dialer,
 		source:        source,

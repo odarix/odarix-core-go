@@ -15,6 +15,7 @@ import (
 
 	"github.com/odarix/odarix-core-go/frames"
 	"github.com/odarix/odarix-core-go/transport"
+	"github.com/odarix/odarix-core-go/util"
 )
 
 // Dialer used for connect to backend
@@ -191,7 +192,7 @@ func NewTCPTransport(
 	clock clockwork.Clock,
 	registerer prometheus.Registerer,
 ) *TCPTransport {
-	factory := NewConflictRegisterer(registerer)
+	factory := util.NewUnconflictRegisterer(registerer)
 	return &TCPTransport{
 		clock:  clock,
 		nt:     transport.New(cfg, conn),

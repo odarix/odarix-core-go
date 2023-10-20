@@ -15,8 +15,8 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/jonboulle/clockwork"
 	"github.com/odarix/odarix-core-go/common"
+	"github.com/odarix/odarix-core-go/util"
 	"github.com/prometheus/client_golang/prometheus"
-	"go.uber.org/multierr"
 )
 
 const (
@@ -136,6 +136,7 @@ type ManagerKeeper struct {
 	limitTrigger       chan struct{}
 	stop               chan struct{}
 	done               chan struct{}
+	cgogc              *common.CGOGC
 	registerer         prometheus.Registerer
 	// stat
 	sendDuration *prometheus.HistogramVec
@@ -163,7 +164,7 @@ func NewManagerKeeper(
 	if err = cfg.Validate(); err != nil {
 		return nil, err
 	}
-	factory := NewConflictRegisterer(registerer)
+	factory := util.NewUnconflictRegisterer(registerer)
 	haTracker := NewHighAvailabilityTracker(ctx, registerer, clock)
 	cs := NewCurrentState(cfg.WorkingDir)
 	if err = cs.Read(); err != nil {
@@ -186,6 +187,7 @@ func NewManagerKeeper(
 		limitTrigger:       make(chan struct{}),
 		stop:               make(chan struct{}),
 		done:               make(chan struct{}),
+		cgogc:              common.NewCGOGC(registerer),
 		registerer:         registerer,
 		sendDuration: factory.NewHistogramVec(
 			prometheus.HistogramOpts{
@@ -401,10 +403,10 @@ func (dk *ManagerKeeper) Shutdown(ctx context.Context) error {
 
 	var errs error
 	dk.rwm.RLock()
-	errs = multierr.Append(errs, dk.manager.Shutdown(ctx))
+	errs = errors.Join(errs, dk.manager.Shutdown(ctx))
 	dk.rwm.RUnlock()
 
-	return multierr.Append(errs, dk.mangerRefillSender.Shutdown(ctx))
+	return errors.Join(errs, dk.mangerRefillSender.Shutdown(ctx), dk.cgogc.Shutdown(ctx))
 }
 
 // RotateTimer - custom timer with reset the timer for the delay time.
