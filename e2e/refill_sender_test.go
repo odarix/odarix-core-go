@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/jonboulle/clockwork"
-	"github.com/prometheus/prometheus/prompb"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/odarix/odarix-core-go/delivery"
@@ -50,8 +49,8 @@ func (s *RefillSenderSuite) errorHandler(msg string, err error) {
 func (s *RefillSenderSuite) TestRefillSenderHappyPath() {
 	count := 10
 	baseCtx := context.Background()
-	retCh := make(chan *prompb.WriteRequest, count*2)
-	rejectsCh := make(chan *prompb.WriteRequest, count*2)
+	retCh := make(chan *server.Request, count*2)
+	rejectsCh := make(chan *server.Request, count*2)
 
 	handleStream := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
 		reader := server.NewProtocolReader(server.StartWith(tcpReader, fe))
@@ -65,8 +64,14 @@ func (s *RefillSenderSuite) TestRefillSenderHappyPath() {
 				return
 			}
 
+			if rq.Finalized {
+				// something doing
+				retCh <- rq
+				return
+			}
+
 			// process data
-			retCh <- rq.Message
+			retCh <- rq
 
 			if rq.SegmentID%2 == 0 {
 				if !s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
@@ -77,7 +82,7 @@ func (s *RefillSenderSuite) TestRefillSenderHappyPath() {
 				}), "fail to send response") {
 					return
 				}
-				rejectsCh <- rq.Message
+				rejectsCh <- rq
 				continue
 			}
 
@@ -159,7 +164,7 @@ func (s *RefillSenderSuite) TestRefillSenderHappyPath() {
 
 			s.Require().NotEqual(0, len(rejectsCh))
 			ewr := <-rejectsCh
-			s.Equal(ewr.String(), rq.Message.String())
+			s.Equal(ewr.Message.String(), rq.Message.String())
 		}
 
 		s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
@@ -192,8 +197,8 @@ func (s *RefillSenderSuite) TestRefillSenderHappyPath() {
 			s.Require().True(delivered)
 		}
 
-		wrMsg := <-retCh
-		s.Equal(wr.String(), wrMsg.String())
+		rq := <-retCh
+		s.Equal(wr.String(), rq.Message.String())
 	}
 
 	s.T().Log("client: shutdown manager")
@@ -231,6 +236,9 @@ func (s *RefillSenderSuite) TestRefillSenderHappyPath() {
 	err = rsmanager.Shutdown(shutdownCtx)
 	s.Require().NoError(err)
 
+	rq := <-retCh
+	s.True(rq.Finalized)
+
 	s.T().Log("client: shutdown listener")
 	err = listener.Close()
 	s.Require().NoError(err)
@@ -246,8 +254,8 @@ func (s *RefillSenderSuite) TestRefillSenderHappyPath() {
 func (s *RefillSenderSuite) TestRefillSenderBreakingConnection() {
 	count := 10
 	baseCtx := context.Background()
-	retCh := make(chan *prompb.WriteRequest, count*2)
-	rejectsCh := make(chan *prompb.WriteRequest, count*2)
+	retCh := make(chan *server.Request, count*2)
+	rejectsCh := make(chan *server.Request, count*2)
 
 	var (
 		breaker int32 = 10
@@ -287,8 +295,14 @@ func (s *RefillSenderSuite) TestRefillSenderBreakingConnection() {
 				return
 			}
 
+			if rq.Finalized {
+				// something doing
+				retCh <- rq
+				return
+			}
+
 			// process data
-			retCh <- rq.Message
+			retCh <- rq
 
 			if rq.SegmentID%2 == 0 {
 				if !s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
@@ -299,7 +313,7 @@ func (s *RefillSenderSuite) TestRefillSenderBreakingConnection() {
 				}), "fail to send response") {
 					return
 				}
-				rejectsCh <- rq.Message
+				rejectsCh <- rq
 				continue
 			}
 
@@ -391,7 +405,7 @@ func (s *RefillSenderSuite) TestRefillSenderBreakingConnection() {
 
 			s.Require().NotEqual(0, len(rejectsCh))
 			ewr := <-rejectsCh
-			s.Equal(ewr.String(), rq.Message.String())
+			s.Equal(ewr.Message.String(), rq.Message.String())
 		}
 
 		tcpReader.SendResponse(ctx, &frames.ResponseMsg{
@@ -424,8 +438,8 @@ func (s *RefillSenderSuite) TestRefillSenderBreakingConnection() {
 			s.Require().True(delivered)
 		}
 
-		wrMsg := <-retCh
-		s.Equal(wr.String(), wrMsg.String())
+		rq := <-retCh
+		s.Equal(wr.String(), rq.Message.String())
 	}
 
 	s.T().Log("client: shutdown manager")
@@ -464,6 +478,9 @@ func (s *RefillSenderSuite) TestRefillSenderBreakingConnection() {
 	defer shutdownCancel()
 	err = rsmanager.Shutdown(shutdownCtx)
 	s.Require().NoError(err)
+
+	rq := <-retCh
+	s.True(rq.Finalized)
 
 	s.T().Log("client: shutdown listener")
 	err = listener.Close()

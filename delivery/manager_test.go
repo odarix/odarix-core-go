@@ -92,6 +92,7 @@ func (s *ManagerSuite) TestSendWithAck() {
 	s.T().Log("Shutdown manager")
 	shutdownCtx, shutdownCancel := context.WithTimeout(baseCtx, time.Second)
 	defer shutdownCancel()
+	s.NoError(manager.Close(), "manager should be gracefully close")
 	s.NoError(manager.Shutdown(shutdownCtx), "manager should be gracefully stopped")
 }
 
@@ -154,6 +155,7 @@ func (s *ManagerSuite) TestRejectToRefill() {
 	s.T().Log("Shutdown manager")
 	shutdownCtx, shutdownCancel := context.WithTimeout(baseCtx, time.Second)
 	defer shutdownCancel()
+	s.NoError(manager.Close(), "manager should be gracefully close")
 	s.NoError(manager.Shutdown(shutdownCtx), "manager should be gracefully stopped")
 
 	s.T().Log("Check that rejected data is in refill")
@@ -264,7 +266,10 @@ func (s *ManagerSuite) TestAckRejectRace() {
 	s.T().Log("Shutdown manager")
 	shutdownCtx, shutdownCancel := context.WithTimeout(baseCtx, 20*time.Second)
 	defer shutdownCancel()
+	s.NoError(manager.Close(), "manager should be gracefully close")
 	s.NoError(manager.Shutdown(shutdownCtx), "manager should be gracefully stopped")
+
+	s.Equal("final", <-destination, "failed final frame")
 
 	s.T().Log("Check that rejected and followed data is in refill")
 	for i := 1; i < 3; i++ {
@@ -354,7 +359,10 @@ func (s *ManagerSuite) TestRestoreFromRefill() {
 	s.T().Log("Shutdown manager")
 	shutdownCtx, shutdownCancel := context.WithTimeout(baseCtx, time.Second)
 	defer shutdownCancel()
+	s.NoError(manager.Close(), "manager should be gracefully close")
 	s.NoError(manager.Shutdown(shutdownCtx), "manager should be gracefully stopped")
+
+	s.Equal("final", <-destination, "failed final frame")
 }
 
 func (s *ManagerSuite) TestRestoreWithNoRefill() {
@@ -426,7 +434,10 @@ func (s *ManagerSuite) TestRestoreWithNoRefill() {
 	s.T().Log("Shutdown manager")
 	shutdownCtx, shutdownCancel := context.WithTimeout(baseCtx, time.Second)
 	defer shutdownCancel()
+	s.NoError(manager.Close(), "manager should be gracefully close")
 	s.NoError(manager.Shutdown(shutdownCtx), "manager should be gracefully stopped")
+
+	s.Equal("final", <-destination, "failed final frame")
 }
 
 func (s *ManagerSuite) TestNotOpened() {
@@ -475,6 +486,7 @@ func (s *ManagerSuite) TestNotOpened() {
 	s.T().Log("Shutdown manager")
 	baseCtx, cancel := context.WithTimeout(baseCtx, 100*time.Millisecond)
 	defer cancel()
+	s.NoError(manager.Close(), "manager should be gracefully close")
 	s.NoError(manager.Shutdown(baseCtx), "manager should be gracefully stopped")
 
 	s.T().Log("Check that rejected data is in refill")
@@ -547,6 +559,7 @@ func (s *ManagerSuite) TestLongDial() {
 	s.T().Log("Shutdown manager")
 	baseCtx, cancel := context.WithTimeout(baseCtx, 100*time.Millisecond)
 	defer cancel()
+	s.NoError(manager.Close(), "manager should be gracefully close")
 	s.NoError(manager.Shutdown(baseCtx))
 
 	s.T().Log("Check that rejected data is in refill")
@@ -617,7 +630,10 @@ func (s *ManagerSuite) TestAlwaysToRefill() {
 	s.T().Log("Shutdown manager")
 	shutdownCtx, shutdownCancel := context.WithTimeout(baseCtx, time.Second)
 	defer shutdownCancel()
+	s.NoError(manager.Close(), "manager should be gracefully close")
 	s.NoError(manager.Shutdown(shutdownCtx), "manager should be gracefully stopped")
+
+	s.Equal("final", <-destination, "failed final frame")
 
 	s.T().Log("Check that rejected and followed data is in refill")
 	for i := 0; i < 3; i++ {
@@ -660,6 +676,9 @@ func (*ManagerSuite) transportWithReject(dialer delivery.Dialer, switcher *atomi
 					rf, err := framestest.ReadFrame(ctx, frame)
 					if err != nil {
 						return err
+					}
+					if rf.GetType() == frames.FinalType {
+						return nil
 					}
 					parts := strings.SplitN(string(rf.GetBody()), ":", 6)
 					segmentID, err := strconv.ParseUint(parts[4], 10, 32)
@@ -727,6 +746,10 @@ func (*ManagerSuite) transportNewAutoAck(name string, delay time.Duration, dest 
 					rf, err := framestest.ReadFrame(ctx, frame)
 					if err != nil {
 						return err
+					}
+					if rf.GetType() == frames.FinalType {
+						dest <- "final"
+						return nil
 					}
 					parts := strings.SplitN(string(rf.GetBody()), ":", 6)
 					shardID, err := strconv.ParseUint(parts[2], 10, 16)
@@ -875,7 +898,8 @@ func (*ManagerSuite) inMemoryRefill() *ManagerRefillMock {
 		WriteAckStatusFunc: func(_ context.Context) error {
 			return nil
 		},
-		ShutdownFunc: context.Cause,
+		IntermediateRenameFunc: func() error { return nil },
+		ShutdownFunc:           context.Cause,
 	}
 }
 
@@ -903,6 +927,7 @@ func (*ManagerSuite) corruptedRefill() *ManagerRefillMock {
 	}
 }
 
+//revive:disable-next-line:cognitive-complexity this is test
 func (*ManagerSuite) constructorForRefill(refill *ManagerRefillMock) delivery.ManagerRefillCtor {
 	return func(_ string, blockID uuid.UUID, destinations []string, shardsNumberPower uint8, alwaysToRefill bool, registerer prometheus.Registerer) (delivery.ManagerRefill, error) {
 		if refill.BlockIDFunc == nil {
@@ -919,6 +944,9 @@ func (*ManagerSuite) constructorForRefill(refill *ManagerRefillMock) delivery.Ma
 		}
 		if refill.IsContinuableFunc == nil {
 			refill.IsContinuableFunc = func() bool { return true }
+		}
+		if refill.IntermediateRenameFunc == nil {
+			refill.IntermediateRenameFunc = func() error { return nil }
 		}
 		return refill, nil
 	}
@@ -1108,5 +1136,6 @@ func (s *ManagerSuite) TestSend2WithAck() {
 	s.T().Log("Shutdown manager")
 	shutdownCtx, shutdownCancel := context.WithTimeout(baseCtx, time.Second)
 	defer shutdownCancel()
+	s.NoError(manager.Close(), "manager should be gracefully close")
 	s.NoError(manager.Shutdown(shutdownCtx), "manager should be gracefully stopped")
 }

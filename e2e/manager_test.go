@@ -9,7 +9,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/prometheus/prometheus/prompb"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/odarix/odarix-core-go/delivery"
@@ -44,7 +43,7 @@ func (s *BlockManagerSuite) errorHandler(msg string, err error) {
 }
 
 func (s *BlockManagerSuite) TestDeliveryManagerHappyPath() {
-	retCh := make(chan *prompb.WriteRequest, 30)
+	retCh := make(chan *server.Request, 30)
 	baseCtx := context.Background()
 
 	handleStream := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
@@ -59,8 +58,14 @@ func (s *BlockManagerSuite) TestDeliveryManagerHappyPath() {
 				return
 			}
 
+			if rq.Finalized {
+				// something doing
+				retCh <- rq
+				return
+			}
+
 			// process data
-			retCh <- rq.Message
+			retCh <- rq
 
 			if !s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 				Text:      "OK",
@@ -100,13 +105,16 @@ func (s *BlockManagerSuite) TestDeliveryManagerHappyPath() {
 		delivered, errLoop := manager.Send(baseCtx, newProtoDataTest(data))
 		s.Require().NoError(errLoop)
 		s.Require().True(delivered)
-		wrMsg := <-retCh
-		s.Equal(wr.String(), wrMsg.String())
+		rq := <-retCh
+		s.Equal(wr.String(), rq.Message.String())
 	}
 
 	s.T().Log("client: shutdown manager")
 	s.Require().NoError(manager.Close())
 	s.Require().NoError(manager.Shutdown(baseCtx))
+
+	rq := <-retCh
+	s.True(rq.Finalized)
 
 	s.T().Log("client: shutdown listener")
 	err = listener.Close()
@@ -117,7 +125,7 @@ func (s *BlockManagerSuite) TestDeliveryManagerHappyPath() {
 //revive:disable-next-line:cognitive-complexity this is test
 func (s *BlockManagerSuite) TestDeliveryManagerBreakingConnection() {
 	var (
-		retCh   = make(chan *prompb.WriteRequest, 30)
+		retCh   = make(chan *server.Request, 30)
 		breaker int32
 	)
 	const (
@@ -161,13 +169,19 @@ func (s *BlockManagerSuite) TestDeliveryManagerBreakingConnection() {
 				return
 			}
 
+			if rq.Finalized {
+				// something doing
+				retCh <- rq
+				return
+			}
+
 			if onAccept != nil && !onAccept() {
 				s.T().Log("handleStream: disconnect after read")
 				return
 			}
 
 			// process data
-			retCh <- rq.Message
+			retCh <- rq
 
 			if !s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 				Text:      "OK",
@@ -207,8 +221,8 @@ func (s *BlockManagerSuite) TestDeliveryManagerBreakingConnection() {
 		delivered, errLoop := manager.Send(baseCtx, newProtoDataTest(data))
 		s.Require().NoError(errLoop)
 		s.Require().True(delivered)
-		wrMsg := <-retCh
-		s.Equal(wr.String(), wrMsg.String())
+		rq := <-retCh
+		s.Equal(wr.String(), rq.Message.String())
 	}
 
 	s.T().Log("client: break connection before read")
@@ -219,8 +233,8 @@ func (s *BlockManagerSuite) TestDeliveryManagerBreakingConnection() {
 		delivered, errLoop := manager.Send(baseCtx, newProtoDataTest(data))
 		s.Require().NoError(errLoop)
 		s.Require().True(delivered)
-		wrMsg := <-retCh
-		s.Equal(wr.String(), wrMsg.String())
+		rq := <-retCh
+		s.Equal(wr.String(), rq.Message.String())
 	}
 
 	s.T().Log("client: break connection after read")
@@ -231,13 +245,16 @@ func (s *BlockManagerSuite) TestDeliveryManagerBreakingConnection() {
 		delivered, errLoop := manager.Send(baseCtx, newProtoDataTest(data))
 		s.Require().NoError(errLoop)
 		s.Require().True(delivered)
-		wrMsg := <-retCh
-		s.Equal(wr.String(), wrMsg.String())
+		rq := <-retCh
+		s.Equal(wr.String(), rq.Message.String())
 	}
 
 	s.T().Log("client: shutdown manager")
 	s.Require().NoError(manager.Close())
 	s.Require().NoError(manager.Shutdown(baseCtx))
+
+	rq := <-retCh
+	s.True(rq.Finalized)
 
 	s.T().Log("client: shutdown listener")
 	err = listener.Close()
@@ -250,7 +267,7 @@ func (s *BlockManagerSuite) TestDeliveryManagerReject() {
 	var (
 		rejectSegment uint32 = 5
 	)
-	retCh := make(chan *prompb.WriteRequest, 30)
+	retCh := make(chan *server.Request, 30)
 	baseCtx := context.Background()
 
 	handleStream := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
@@ -265,8 +282,14 @@ func (s *BlockManagerSuite) TestDeliveryManagerReject() {
 				return
 			}
 
+			if rq.Finalized {
+				// something doing
+				retCh <- rq
+				return
+			}
+
 			// process data
-			retCh <- rq.Message
+			retCh <- rq
 
 			if rq.SegmentID == rejectSegment {
 				if !s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
@@ -322,8 +345,8 @@ func (s *BlockManagerSuite) TestDeliveryManagerReject() {
 		} else {
 			s.Require().True(delivered)
 		}
-		wrMsg := <-retCh
-		s.Equal(wr.String(), wrMsg.String())
+		rq := <-retCh
+		s.Equal(wr.String(), rq.Message.String())
 	}
 
 	s.T().Log("client: check exist file current.refill")
@@ -334,6 +357,9 @@ func (s *BlockManagerSuite) TestDeliveryManagerReject() {
 	s.T().Log("client: shutdown manager")
 	s.Require().NoError(manager.Close())
 	s.Require().NoError(manager.Shutdown(baseCtx))
+
+	rq := <-retCh
+	s.True(rq.Finalized)
 
 	s.T().Log("client: shutdown listener")
 	err = listener.Close()

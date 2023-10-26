@@ -7,6 +7,7 @@ import (
 	"io"
 	"math"
 	"sync/atomic"
+	"time"
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/google/uuid"
@@ -34,6 +35,7 @@ type Sender struct {
 	done          chan struct{}
 	errorHandler  ErrorHandler
 	cancelCause   context.CancelCauseFunc
+	hasRejects    atomic.Bool
 	// stat
 	sentSegment      prometheus.Gauge
 	responsedSegment *prometheus.GaugeVec
@@ -59,6 +61,7 @@ func NewSender(
 		lastDelivered: lastAck,
 		done:          make(chan struct{}),
 		errorHandler:  errorHandler,
+		hasRejects:    atomic.Bool{},
 		sentSegment: factory.NewGauge(
 			prometheus.GaugeOpts{
 				Name:        "odarix_core_delivery_sender_sent_segment",
@@ -126,6 +129,7 @@ func (sender *Sender) mainLoop(ctx context.Context) {
 			onResponse(id)
 		})
 		transport.OnReject(func(id uint32) {
+			sender.hasRejects.Store(true)
 			sender.responsedSegment.With(prometheus.Labels{"state": "reject"}).Set(float64(id))
 			sender.source.Reject(common.SegmentKey{ShardID: sender.shardID, Segment: id}, sender.String())
 			onResponse(id)
@@ -214,6 +218,24 @@ func (sender *Sender) writeLoop(ctx context.Context, transport Transport, from u
 	id := from + 1
 	for ; ctx.Err() == nil; id++ {
 		segment, err := sender.getSegment(ctx, id)
+		if err != nil && errors.Is(err, ErrBlockFinalization) {
+			ctxt, cancel := context.WithTimeout(
+				context.Background(),
+				100*time.Millisecond,
+			)
+			errFinal := transport.Send(
+				ctxt,
+				frames.NewWriteFrame(
+					protocolVersion,
+					frames.FinalType,
+					sender.shardID,
+					id,
+					frames.NewFinalMsg(sender.hasRejects.Load()),
+				),
+			)
+			cancel()
+			return id - 1, errFinal
+		}
 		if segment == nil {
 			return id - 1, err
 		}
@@ -245,7 +267,7 @@ func (sender *Sender) getSegment(ctx context.Context, id uint32) (Segment, error
 	segment, err := backoff.RetryWithData(func() (Segment, error) {
 		segment, err := sender.source.Get(ctx, key)
 		if errors.Is(err, ErrPromiseCanceled) {
-			return nil, nil
+			return nil, backoff.Permanent(ErrBlockFinalization)
 		}
 		return segment, err
 	}, bo)
@@ -254,3 +276,6 @@ func (sender *Sender) getSegment(ctx context.Context, id uint32) (Segment, error
 	}
 	return segment, err
 }
+
+// ErrBlockFinalization - signal if the current block is finalized.
+var ErrBlockFinalization = errors.New("block finalization")

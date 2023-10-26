@@ -403,7 +403,7 @@ func (dk *ManagerKeeper) Shutdown(ctx context.Context) error {
 
 	var errs error
 	dk.rwm.RLock()
-	errs = errors.Join(errs, dk.manager.Shutdown(ctx))
+	errs = errors.Join(errs, dk.manager.Close(), dk.manager.Shutdown(ctx))
 	dk.rwm.RUnlock()
 
 	return errors.Join(errs, dk.mangerRefillSender.Shutdown(ctx), dk.cgogc.Shutdown(ctx))

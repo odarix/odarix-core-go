@@ -58,6 +58,10 @@ func (*ManagerKeeperSuite) transportNewAutoAck(name string, delay time.Duration,
 					if err != nil {
 						return err
 					}
+					if rf.GetType() == frames.FinalType {
+						dest <- "final"
+						return nil
+					}
 					parts := strings.SplitN(string(rf.GetBody()), ":", 6)
 					shardID, err := strconv.ParseUint(parts[2], 10, 16)
 					if err != nil {
@@ -130,6 +134,10 @@ func (*ManagerKeeperSuite) transportWithReject(name string, delay time.Duration,
 					rf, err := framestest.ReadFrame(ctx, frame)
 					if err != nil {
 						return err
+					}
+					if rf.GetType() == frames.FinalType {
+						dest <- "final"
+						return nil
 					}
 					parts := strings.SplitN(string(rf.GetBody()), ":", 6)
 					shardID, err := strconv.ParseUint(parts[2], 10, 16)
@@ -469,6 +477,8 @@ func (s *ManagerKeeperSuite) TestSendHappyPath() {
 	err = managerKeeper.Shutdown(shutdownCtx)
 	s.NoError(err)
 
+	s.Equal("final", <-destination, "failed final frame")
+
 	err = os.RemoveAll(filepath.Clean(dir))
 	s.Require().NoError(err)
 }
@@ -558,6 +568,8 @@ func (s *ManagerKeeperSuite) TestSendWithRotate() {
 	err = managerKeeper.Shutdown(shutdownCtx)
 	s.NoError(err)
 
+	s.Equal("final", <-destination, "failed final frame")
+
 	err = os.RemoveAll(filepath.Clean(dir))
 	s.Require().NoError(err)
 }
@@ -637,6 +649,8 @@ func (s *ManagerKeeperSuite) TestSendWithReject() {
 
 	err = managerKeeper.Shutdown(shutdownCtx)
 	s.NoError(err)
+
+	s.Equal("final", <-destination, "failed final frame")
 
 	err = os.RemoveAll(filepath.Clean(dir))
 	s.Require().NoError(err)

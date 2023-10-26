@@ -576,6 +576,14 @@ func (mgr *Manager) Restore(ctx context.Context, key common.SegmentKey) (Snapsho
 
 // Close - rename refill file for close file and shutdown manager.
 func (mgr *Manager) Close() error {
+	mgr.encodersLock.Lock()
+	promise := mgr.ohPromise
+	mgr.encodersLock.Unlock()
+	if promise != nil {
+		<-promise.Finalized()
+	}
+
+	mgr.exchange.Shutdown(context.Background())
 	return mgr.refill.IntermediateRename()
 }
 
@@ -590,23 +598,16 @@ func (mgr *Manager) Shutdown(ctx context.Context) error {
 	defer func(start time.Time) {
 		mgr.shutdownDuration.Observe(time.Since(start).Seconds())
 	}(time.Now())
-	mgr.encodersLock.Lock()
-	promise := mgr.ohPromise
-	mgr.encodersLock.Unlock()
-	if promise != nil {
-		<-promise.Finalized()
-	}
 
-	mgr.exchange.Shutdown(ctx)
 	mgr.cancelRefill(ErrShutdown)
 	<-mgr.refillDone
 	// very dangerous solution, can send the CPU into space
 	//revive:disable-next-line:empty-block work performed in condition
 	tick := time.NewTicker(10 * time.Millisecond)
-	defer tick.Stop()
 	for ctx.Err() == nil && mgr.collectSegmentsToRefill(ctx) {
 		<-tick.C
 	}
+	tick.Stop()
 	wg := new(sync.WaitGroup)
 	wg.Add(len(mgr.senders))
 	var errs error

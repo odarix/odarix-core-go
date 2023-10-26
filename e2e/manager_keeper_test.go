@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/jonboulle/clockwork"
-	"github.com/prometheus/prometheus/prompb"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/odarix/odarix-core-go/delivery"
@@ -47,7 +46,7 @@ func (s *ManagerKeeperSuite) errorHandler(msg string, err error) {
 func (s *ManagerKeeperSuite) TestRefillSenderHappyPath() {
 	count := 10
 	baseCtx := context.Background()
-	retCh := make(chan *prompb.WriteRequest, count)
+	retCh := make(chan *server.Request, count)
 
 	handleStream := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
 		reader := server.NewProtocolReader(server.StartWith(tcpReader, fe))
@@ -61,8 +60,14 @@ func (s *ManagerKeeperSuite) TestRefillSenderHappyPath() {
 				return
 			}
 
+			if rq.Finalized {
+				// something doing
+				retCh <- rq
+				return
+			}
+
 			// process data
-			retCh <- rq.Message
+			retCh <- rq
 
 			if !s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 				Text:      "OK",
@@ -105,13 +110,16 @@ func (s *ManagerKeeperSuite) TestRefillSenderHappyPath() {
 		s.Require().NoError(errLoop)
 		s.Require().True(delivered)
 
-		wrMsg := <-retCh
-		s.Equal(wr.String(), wrMsg.String())
+		rq := <-retCh
+		s.Equal(wr.String(), rq.Message.String())
 	}
 
 	s.T().Log("client: shutdown manager")
 	err = managerKeeper.Shutdown(baseCtx)
 	s.Require().NoError(err)
+
+	rq := <-retCh
+	s.True(rq.Finalized)
 
 	s.T().Log("client: shutdown listener")
 	err = listener.Close()
@@ -123,7 +131,7 @@ func (s *ManagerKeeperSuite) TestRefillSenderHappyPath() {
 func (s *ManagerKeeperSuite) TestWithRotate() {
 	count := 10
 	baseCtx := context.Background()
-	retCh := make(chan *prompb.WriteRequest, count*2)
+	retCh := make(chan *server.Request, count*2)
 
 	handleStream := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
 		reader := server.NewProtocolReader(server.StartWith(tcpReader, fe))
@@ -137,8 +145,14 @@ func (s *ManagerKeeperSuite) TestWithRotate() {
 				return
 			}
 
+			if rq.Finalized {
+				// something doing
+				retCh <- rq
+				return
+			}
+
 			// process data
-			retCh <- rq.Message
+			retCh <- rq
 
 			if !s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 				Text:      "OK",
@@ -198,14 +212,17 @@ func (s *ManagerKeeperSuite) TestWithRotate() {
 		delivered, errLoop := managerKeeper.Send(baseCtx, newProtoDataTest(data))
 		s.Require().NoError(errLoop)
 		s.True(delivered)
-		wrMsg := <-retCh
-		s.Equal(wr.String(), wrMsg.String())
+		rq := <-retCh
+		s.Equal(wr.String(), rq.Message.String())
 	}
 	advanceCancel()
 
 	s.T().Log("client: shutdown manager")
 	err = managerKeeper.Shutdown(baseCtx)
 	s.Require().NoError(err)
+
+	rq := <-retCh
+	s.True(rq.Finalized)
 
 	s.T().Log("client: shutdown listener")
 	err = listener.Close()
@@ -217,8 +234,8 @@ func (s *ManagerKeeperSuite) TestWithRotate() {
 func (s *ManagerKeeperSuite) TestWithReject() {
 	count := 10
 	baseCtx := context.Background()
-	retCh := make(chan *prompb.WriteRequest, count*2)
-	rejectsCh := make(chan *prompb.WriteRequest, count*2)
+	retCh := make(chan *server.Request, count*2)
+	rejectsCh := make(chan *server.Request, count*2)
 
 	handleStream := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
 		reader := server.NewProtocolReader(server.StartWith(tcpReader, fe))
@@ -232,8 +249,14 @@ func (s *ManagerKeeperSuite) TestWithReject() {
 				return
 			}
 
+			if rq.Finalized {
+				// something doing
+				retCh <- rq
+				return
+			}
+
 			// process data
-			retCh <- rq.Message
+			retCh <- rq
 
 			if rq.SegmentID%2 == 0 {
 				if !s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
@@ -244,7 +267,7 @@ func (s *ManagerKeeperSuite) TestWithReject() {
 				}), "fail to send response") {
 					return
 				}
-				rejectsCh <- rq.Message
+				rejectsCh <- rq
 				continue
 			}
 
@@ -326,7 +349,7 @@ func (s *ManagerKeeperSuite) TestWithReject() {
 
 			s.Require().NotEqual(0, len(rejectsCh))
 			ewr := <-rejectsCh
-			s.Equal(ewr.String(), rq.Message.String())
+			s.Equal(ewr.Message.String(), rq.Message.String())
 		}
 
 		_ = tcpReader.SendResponse(ctx, &frames.ResponseMsg{
@@ -374,8 +397,8 @@ func (s *ManagerKeeperSuite) TestWithReject() {
 		_, errLoop = managerKeeper.Send(baseCtx, newProtoDataTest(data))
 		s.Require().NoError(errLoop)
 
-		wrMsg := <-retCh
-		s.Equal(wr.String(), wrMsg.String())
+		rq := <-retCh
+		s.Equal(wr.String(), rq.Message.String())
 	}
 
 	s.T().Log("client: start refil sender loop")
@@ -385,6 +408,9 @@ func (s *ManagerKeeperSuite) TestWithReject() {
 	s.T().Log("client: shutdown manager")
 	err = managerKeeper.Shutdown(baseCtx)
 	s.Require().NoError(err)
+
+	rq := <-retCh
+	s.True(rq.Finalized)
 
 	files, err := os.ReadDir(filepath.Join(dir, delivery.RefillDir))
 	s.Require().NoError(err)
