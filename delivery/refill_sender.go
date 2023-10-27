@@ -490,7 +490,9 @@ func (rs *RefillSender) makeRefillFrame(pData []PreparedData) *frames.WriteFrame
 
 // dial - dial and set respose parameter.
 func (rs *RefillSender) dial(ctx context.Context) (err error) {
-	rs.transport, err = rs.dialer.Dial(ctx, rs.source.BlockID().String(), rs.shardID)
+	ctxDial, cancel := context.WithTimeout(ctx, 10*time.Second)
+	rs.transport, err = rs.dialer.Dial(ctxDial, rs.source.BlockID().String(), rs.shardID)
+	cancel()
 	if err != nil {
 		return err
 	}
