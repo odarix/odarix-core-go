@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -151,6 +152,7 @@ func (rl *Refill) Restore(ctx context.Context, key common.SegmentKey) (Snapshot,
 
 		snapshot, err := rl.sm.GetSnapshot(ctx, key)
 		if err == nil {
+			slices.Reverse(segments)
 			return snapshot, segments, nil
 		}
 		if err != ErrSnapshotNotFoundRefill {
@@ -159,6 +161,7 @@ func (rl *Refill) Restore(ctx context.Context, key common.SegmentKey) (Snapshot,
 
 		key.Segment--
 	}
+	slices.Reverse(segments)
 	return nil, segments, nil
 }
 

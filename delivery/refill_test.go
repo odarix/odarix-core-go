@@ -184,11 +184,14 @@ func (s *RefillSuite) TestRestoreWithSegment() {
 	}
 
 	s.mr.WriteSnapshot(s.ctx, segKey, s.etalonsData)
-	s.mr.WriteSegment(s.ctx, segKey, s.etalonsData)
+
+	etalonsSegs := []string{"first", "second", "third"}
+	s.mr.WriteSegment(s.ctx, segKey, newDataTest([]byte(etalonsSegs[0])))
 	segKey.Segment++
-	s.mr.WriteSegment(s.ctx, segKey, s.etalonsData)
+
+	s.mr.WriteSegment(s.ctx, segKey, newDataTest([]byte(etalonsSegs[1])))
 	segKey.Segment++
-	s.mr.WriteSegment(s.ctx, segKey, s.etalonsData)
+	s.mr.WriteSegment(s.ctx, segKey, newDataTest([]byte(etalonsSegs[2])))
 
 	actualSnap, actSegments, err := s.mr.Restore(s.ctx, segKey)
 	s.NoError(err)
@@ -196,8 +199,17 @@ func (s *RefillSuite) TestRestoreWithSegment() {
 	if buf, errRead := framestest.ReadPayload(actualSnap); s.NoError(errRead) {
 		s.Equal(s.etalonsData.Bytes(), buf)
 	}
+
 	if buf, errRead := framestest.ReadPayload(actSegments[0]); s.NoError(errRead) {
-		s.Equal(s.etalonsData.Bytes(), buf)
+		s.Equal([]byte(etalonsSegs[0]), buf)
+	}
+
+	if buf, errRead := framestest.ReadPayload(actSegments[1]); s.NoError(errRead) {
+		s.Equal([]byte(etalonsSegs[1]), buf)
+	}
+
+	if buf, errRead := framestest.ReadPayload(actSegments[2]); s.NoError(errRead) {
+		s.Equal([]byte(etalonsSegs[2]), buf)
 	}
 
 	err = s.mr.Shutdown(s.ctx)

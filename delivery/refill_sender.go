@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -1152,18 +1153,11 @@ func (rr *RefillReader) getSegmentPosition(segKey common.SegmentKey) *MarkupValu
 
 // Restore - get data for restore.
 func (rr *RefillReader) Restore(key common.SegmentKey, lastSendSegment uint32, pData *[]PreparedData) error {
-	reverse := func(s []PreparedData) {
-		r := len(s) - 1
-		//revive:disable-next-line:add-constant take half length
-		for i := 0; i < len(s)/2; i++ {
-			s[i], s[r-i] = s[r-i], s[i]
-		}
-	}
 	rr.mx.RLock()
 	defer rr.mx.RUnlock()
 	rlen := len(*pData)
 	defer func() {
-		reverse((*pData)[rlen:])
+		slices.Reverse((*pData)[rlen:])
 	}()
 	for key.Segment > lastSendSegment+1 {
 		if mval := rr.getSnapshotPosition(key); mval != nil {
