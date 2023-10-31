@@ -17,6 +17,16 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+// defaultRTT - default value RTT.
+const defaultRTT = 120 * time.Second
+
+var (
+	// ErrBlockFinalization - signal if the current block is finalized.
+	ErrBlockFinalization = errors.New("block finalization")
+	// ErrExceededRTT - error when exceeded round trip time.
+	ErrExceededRTT = errors.New("exceeded round trip time")
+)
+
 // Source is a manager
 type Source interface {
 	Get(ctx context.Context, key common.SegmentKey) (Segment, error)
@@ -35,10 +45,13 @@ type Sender struct {
 	done          chan struct{}
 	errorHandler  ErrorHandler
 	cancelCause   context.CancelCauseFunc
-	hasRejects    atomic.Bool
+	readAt        *atomic.Int64
+	writeAt       *atomic.Int64
+	hasRejects    *atomic.Bool
 	// stat
 	sentSegment      prometheus.Gauge
 	responsedSegment *prometheus.GaugeVec
+	exceededRTT      prometheus.Counter
 }
 
 // NewSender is a constructor
@@ -61,7 +74,9 @@ func NewSender(
 		lastDelivered: lastAck,
 		done:          make(chan struct{}),
 		errorHandler:  errorHandler,
-		hasRejects:    atomic.Bool{},
+		readAt:        new(atomic.Int64),
+		writeAt:       new(atomic.Int64),
+		hasRejects:    new(atomic.Bool),
 		sentSegment: factory.NewGauge(
 			prometheus.GaugeOpts{
 				Name:        "odarix_core_delivery_sender_sent_segment",
@@ -76,6 +91,12 @@ func NewSender(
 				ConstLabels: prometheus.Labels{"host": dialer.String()},
 			},
 			[]string{"state"},
+		),
+		exceededRTT: factory.NewCounter(
+			prometheus.CounterOpts{
+				Name: "odarix_core_delivery_sender_exceeded_rtt",
+				Help: "Number of reconect on exceeded rtt.",
+			},
 		),
 	}
 	sender.sentSegment.Set(0)
@@ -115,6 +136,7 @@ func (sender *Sender) mainLoop(ctx context.Context) {
 		}
 		lastSent := sender.lastDelivered
 		onResponse := func(id uint32) {
+			sender.readAt.Store(time.Now().UnixMilli())
 			if !atomic.CompareAndSwapUint32(&sender.lastDelivered, id-1, id) {
 				panic(fmt.Sprintf("%s: unexpected segment %d (lastDelivered %d)", sender, id, sender.lastDelivered))
 			}
@@ -141,6 +163,7 @@ func (sender *Sender) mainLoop(ctx context.Context) {
 			}
 			cancel(errRead)
 		})
+		sender.readAt.Store(time.Now().UnixMilli())
 		transport.Listen(ctx)
 		lastSent, err = sender.writeLoop(writeCtx, transport, lastSent)
 		if err != nil {
@@ -239,10 +262,15 @@ func (sender *Sender) writeLoop(ctx context.Context, transport Transport, from u
 		if segment == nil {
 			return id - 1, err
 		}
+		if sender.writeAt.Load()-sender.readAt.Load() > defaultRTT.Milliseconds() {
+			sender.exceededRTT.Inc()
+			return id - 1, ErrExceededRTT
+		}
 		frame := frames.NewWriteFrame(protocolVersion, frames.SegmentType, sender.shardID, id, segment)
 		if err = transport.Send(ctx, frame); err != nil {
 			return id - 1, err
 		}
+		sender.writeAt.Store(time.Now().UnixMilli())
 		sender.sentSegment.Set(float64(id))
 	}
 	return id - 1, context.Cause(ctx)
@@ -276,6 +304,3 @@ func (sender *Sender) getSegment(ctx context.Context, id uint32) (Segment, error
 	}
 	return segment, err
 }
-
-// ErrBlockFinalization - signal if the current block is finalized.
-var ErrBlockFinalization = errors.New("block finalization")
