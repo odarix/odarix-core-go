@@ -139,6 +139,7 @@ func (rl *Refill) Restore(ctx context.Context, key common.SegmentKey) (Snapshot,
 		return nil, nil, err
 	}
 
+	key.Segment--
 	for key.Segment != math.MaxUint32 {
 		seg, err := rl.sm.GetSegment(ctx, key)
 		if err != nil {

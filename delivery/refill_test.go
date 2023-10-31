@@ -185,12 +185,16 @@ func (s *RefillSuite) TestRestoreWithSegment() {
 
 	s.mr.WriteSnapshot(s.ctx, segKey, s.etalonsData)
 
-	etalonsSegs := []string{"first", "second", "third"}
+	etalonsSegs := []string{"first", "second", "third", "requiredSegment"}
 	s.mr.WriteSegment(s.ctx, segKey, newDataTest([]byte(etalonsSegs[0])))
 	segKey.Segment++
 
 	s.mr.WriteSegment(s.ctx, segKey, newDataTest([]byte(etalonsSegs[1])))
 	segKey.Segment++
+
+	s.mr.WriteSegment(s.ctx, segKey, newDataTest([]byte(etalonsSegs[2])))
+	segKey.Segment++
+
 	s.mr.WriteSegment(s.ctx, segKey, newDataTest([]byte(etalonsSegs[2])))
 
 	actualSnap, actSegments, err := s.mr.Restore(s.ctx, segKey)
@@ -232,7 +236,7 @@ func (s *RefillSuite) TestRestoreWithoutSnapshot() {
 
 	actualSnap, actSegments, err := s.mr.Restore(s.ctx, segKey)
 	s.NoError(err)
-	s.Equal(4, len(actSegments))
+	s.Equal(3, len(actSegments))
 	s.Nil(actualSnap)
 	if buf, errRead := framestest.ReadPayload(actSegments[0]); s.NoError(errRead) {
 		s.Equal(s.etalonsData.Bytes(), buf)
