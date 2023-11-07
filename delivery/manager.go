@@ -582,7 +582,8 @@ func (mgr *Manager) Close() error {
 	if promise != nil {
 		<-promise.Finalized()
 	}
-
+	mgr.cancelRefill(ErrShutdown)
+	<-mgr.refillDone
 	mgr.exchange.Shutdown(context.Background())
 	return mgr.refill.IntermediateRename()
 }
@@ -599,8 +600,6 @@ func (mgr *Manager) Shutdown(ctx context.Context) error {
 		mgr.shutdownDuration.Observe(time.Since(start).Seconds())
 	}(time.Now())
 
-	mgr.cancelRefill(ErrShutdown)
-	<-mgr.refillDone
 	// very dangerous solution, can send the CPU into space
 	//revive:disable-next-line:empty-block work performed in condition
 	tick := time.NewTicker(10 * time.Millisecond)

@@ -167,10 +167,6 @@ func (ex *Exchange) RejectedOrExpired(now time.Time) (keys []common.SegmentKey, 
 		}
 		if record.Rejected() || record.Expired(now) || atomic.LoadUint32(&ex.rejects[key.ShardID]) != 0 {
 			keys = append(keys, key)
-			return true
-		}
-		if record.Rejected() || record.Expired(now) {
-			keys = append(keys, key)
 		}
 		return true
 	})
@@ -368,5 +364,5 @@ func (status *sendStatus) Delivered() bool {
 }
 
 func (status *sendStatus) Rejected() bool {
-	return atomic.LoadInt32(&status.rejects) > 0
+	return status != nil && atomic.LoadInt32(&status.rejects) > 0
 }
