@@ -125,7 +125,7 @@ func (s *BlockManagerSuite) TestDeliveryManagerHappyPath() {
 //revive:disable-next-line:cognitive-complexity this is test
 func (s *BlockManagerSuite) TestDeliveryManagerBreakingConnection() {
 	var (
-		retCh   = make(chan *server.Request, 30)
+		retCh   = make(chan *frames.ReadFrame, 30)
 		breaker int32
 	)
 	const (
@@ -153,15 +153,14 @@ func (s *BlockManagerSuite) TestDeliveryManagerBreakingConnection() {
 	}
 
 	handleStream := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
-		reader := server.NewProtocolReader(server.StartWith(tcpReader, fe))
-		defer reader.Destroy()
+		reader := server.StartWith(tcpReader, fe)
 		for {
 			if onAccept != nil && !onAccept() {
 				s.T().Log("handleStream: disconnect before read")
 				return
 			}
 
-			rq, err := reader.Next(ctx)
+			fe, err := reader.Next(ctx)
 			if err != nil {
 				if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
 					s.NoError(err, "fail to read next message")
@@ -169,9 +168,9 @@ func (s *BlockManagerSuite) TestDeliveryManagerBreakingConnection() {
 				return
 			}
 
-			if rq.Finalized {
+			if fe.GetType() == frames.FinalType {
 				// something doing
-				retCh <- rq
+				retCh <- fe
 				return
 			}
 
@@ -181,13 +180,13 @@ func (s *BlockManagerSuite) TestDeliveryManagerBreakingConnection() {
 			}
 
 			// process data
-			retCh <- rq
+			retCh <- fe
 
 			if !s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 				Text:      "OK",
 				Code:      200,
-				SegmentID: rq.SegmentID,
-				SendAt:    rq.SentAt,
+				SegmentID: fe.GetSegmentID(),
+				SendAt:    fe.GetCreatedAt(),
 			}), "fail to send response") {
 				return
 			}
@@ -221,8 +220,8 @@ func (s *BlockManagerSuite) TestDeliveryManagerBreakingConnection() {
 		delivered, errLoop := manager.Send(baseCtx, newProtoDataTest(data))
 		s.Require().NoError(errLoop)
 		s.Require().True(delivered)
-		rq := <-retCh
-		s.Equal(wr.String(), rq.Message.String())
+		fe := <-retCh
+		s.EqualValues(i, fe.GetSegmentID())
 	}
 
 	s.T().Log("client: break connection before read")
@@ -233,8 +232,8 @@ func (s *BlockManagerSuite) TestDeliveryManagerBreakingConnection() {
 		delivered, errLoop := manager.Send(baseCtx, newProtoDataTest(data))
 		s.Require().NoError(errLoop)
 		s.Require().True(delivered)
-		rq := <-retCh
-		s.Equal(wr.String(), rq.Message.String())
+		fe := <-retCh
+		s.EqualValues(i, fe.GetSegmentID())
 	}
 
 	s.T().Log("client: break connection after read")
@@ -245,16 +244,16 @@ func (s *BlockManagerSuite) TestDeliveryManagerBreakingConnection() {
 		delivered, errLoop := manager.Send(baseCtx, newProtoDataTest(data))
 		s.Require().NoError(errLoop)
 		s.Require().True(delivered)
-		rq := <-retCh
-		s.Equal(wr.String(), rq.Message.String())
+		fe := <-retCh
+		s.EqualValues(i, fe.GetSegmentID())
 	}
 
 	s.T().Log("client: shutdown manager")
 	s.Require().NoError(manager.Close())
 	s.Require().NoError(manager.Shutdown(baseCtx))
 
-	rq := <-retCh
-	s.True(rq.Finalized)
+	fe := <-retCh
+	s.True(fe.GetType() == frames.FinalType)
 
 	s.T().Log("client: shutdown listener")
 	err = listener.Close()
@@ -267,14 +266,13 @@ func (s *BlockManagerSuite) TestDeliveryManagerReject() {
 	var (
 		rejectSegment uint32 = 5
 	)
-	retCh := make(chan *server.Request, 30)
+	retCh := make(chan *frames.ReadFrame, 30)
 	baseCtx := context.Background()
 
 	handleStream := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
-		reader := server.NewProtocolReader(server.StartWith(tcpReader, fe))
-		defer reader.Destroy()
+		reader := server.StartWith(tcpReader, fe)
 		for {
-			rq, err := reader.Next(ctx)
+			fe, err := reader.Next(ctx)
 			if err != nil {
 				if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
 					s.NoError(err, "fail to read next message")
@@ -282,21 +280,21 @@ func (s *BlockManagerSuite) TestDeliveryManagerReject() {
 				return
 			}
 
-			if rq.Finalized {
+			if fe.GetType() == frames.FinalType {
 				// something doing
-				retCh <- rq
+				retCh <- fe
 				return
 			}
 
 			// process data
-			retCh <- rq
+			retCh <- fe
 
-			if rq.SegmentID == rejectSegment {
+			if fe.GetSegmentID() == rejectSegment {
 				if !s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 					Text:      "reject",
 					Code:      400,
-					SegmentID: rq.SegmentID,
-					SendAt:    rq.SentAt,
+					SegmentID: fe.GetSegmentID(),
+					SendAt:    fe.GetCreatedAt(),
 				}), "fail to send response") {
 					return
 				}
@@ -306,8 +304,8 @@ func (s *BlockManagerSuite) TestDeliveryManagerReject() {
 			if !s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 				Text:      "OK",
 				Code:      200,
-				SegmentID: rq.SegmentID,
-				SendAt:    rq.SentAt,
+				SegmentID: fe.GetSegmentID(),
+				SendAt:    fe.GetCreatedAt(),
 			}), "fail to send response") {
 				return
 			}
@@ -345,8 +343,8 @@ func (s *BlockManagerSuite) TestDeliveryManagerReject() {
 		} else {
 			s.Require().True(delivered)
 		}
-		rq := <-retCh
-		s.Equal(wr.String(), rq.Message.String())
+		fe := <-retCh
+		s.EqualValues(i, fe.GetSegmentID())
 	}
 
 	s.T().Log("client: check exist file current.refill")
@@ -358,8 +356,8 @@ func (s *BlockManagerSuite) TestDeliveryManagerReject() {
 	s.Require().NoError(manager.Close())
 	s.Require().NoError(manager.Shutdown(baseCtx))
 
-	rq := <-retCh
-	s.True(rq.Finalized)
+	fe := <-retCh
+	s.True(fe.GetType() == frames.FinalType)
 
 	s.T().Log("client: shutdown listener")
 	err = listener.Close()

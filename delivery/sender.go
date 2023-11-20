@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"sync/atomic"
 	"time"
 
@@ -196,41 +195,6 @@ func (sender *Sender) dial(ctx context.Context) (transport Transport, closeFn fu
 	closeFn = func() {
 		if err := transport.Close(); err != nil {
 			sender.errorHandler(fmt.Sprintf("%s: fail to close transport", sender), err)
-		}
-	}
-
-	// restore connection state
-	if sender.lastDelivered != math.MaxUint32 {
-		snapshot, segments := sender.source.Restore(ctx, common.SegmentKey{
-			ShardID: sender.shardID,
-			Segment: sender.lastDelivered + 1,
-		})
-		segmentID := sender.lastDelivered + 1 - uint32(len(segments))
-		if snapshot != nil {
-			frame := frames.NewWriteFrame(protocolVersion, frames.SnapshotType, sender.shardID, segmentID, snapshot)
-			if err := transport.Send(ctx, frame); err != nil {
-				if ctx.Err() == nil {
-					sender.errorHandler(fmt.Sprintf("%s: fail to send restore", sender), err)
-				}
-				closeFn()
-				return nil, nil, err
-			}
-		}
-		for i := range segments {
-			frame := frames.NewWriteFrame(
-				protocolVersion,
-				frames.DrySegmentType,
-				sender.shardID,
-				segmentID+uint32(i),
-				segments[i],
-			)
-			if err := transport.Send(ctx, frame); err != nil {
-				if ctx.Err() == nil {
-					sender.errorHandler(fmt.Sprintf("%s: fail to send restore", sender), err)
-				}
-				closeFn()
-				return nil, nil, err
-			}
 		}
 	}
 
