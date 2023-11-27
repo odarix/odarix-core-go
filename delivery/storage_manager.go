@@ -28,7 +28,7 @@ type MarkupKey struct {
 type StorageManager struct {
 	// title frame
 	title *frames.Title
-	// marking positions of Segments and Snapshots
+	// marking positions of Segments
 	markupMap map[MarkupKey]int64
 	// last status of writers
 	ackStatus *AckStatus
@@ -187,52 +187,6 @@ func (sm *StorageManager) Reject(segKey common.SegmentKey, dest string) {
 	sm.ackStatus.Reject(segKey, dest)
 }
 
-// getSnapshotPosition - return position in storage.
-func (sm *StorageManager) getSnapshotPosition(segKey common.SegmentKey) int64 {
-	mk := MarkupKey{
-		typeFrame:  frames.SnapshotType,
-		SegmentKey: segKey,
-	}
-	pos, ok := sm.markupMap[mk]
-	if ok {
-		return pos
-	}
-
-	return posNotFound
-}
-
-// setSnapshotPosition - set segment position in storage.
-func (sm *StorageManager) setSnapshotPosition(segKey common.SegmentKey, position int64) {
-	mk := MarkupKey{
-		typeFrame:  frames.SnapshotType,
-		SegmentKey: segKey,
-	}
-	sm.markupMap[mk] = position
-
-	if sm.lastWriteSegment[segKey.ShardID] == math.MaxUint32 || segKey.Segment > sm.lastWriteSegment[segKey.ShardID] {
-		sm.lastWriteSegment[segKey.ShardID] = segKey.Segment
-	}
-}
-
-// GetSnapshot - return snapshot from storage.
-func (sm *StorageManager) GetSnapshot(ctx context.Context, segKey common.SegmentKey) (common.Snapshot, error) {
-	// get position
-	pos := sm.getSnapshotPosition(segKey)
-	if pos == posNotFound {
-		return nil, ErrSnapshotNotFoundRefill
-	}
-
-	// read frame
-	snapshotData, err := frames.ReadFrameSnapshot(ctx, util.NewOffsetReader(sm.storage, pos))
-	if err != nil {
-		return nil, err
-	}
-
-	sm.readBytes.Observe(float64(snapshotData.Size()))
-
-	return snapshotData, nil
-}
-
 // getSegmentPosition - return position in storage.
 func (sm *StorageManager) getSegmentPosition(segKey common.SegmentKey) int64 {
 	mk := MarkupKey{
@@ -292,8 +246,6 @@ func (sm *StorageManager) restoreFromBody(ctx context.Context, h *frames.Header,
 		return sm.restoreTitle(ctx, off, size)
 	case frames.DestinationNamesType:
 		return sm.restoreDestinationsNames(ctx, off, size)
-	case frames.SnapshotType:
-		return sm.restoreSnapshot(h, off)
 	case frames.SegmentType:
 		return sm.restoreSegment(h, off)
 	case frames.StatusType:
@@ -333,23 +285,6 @@ func (sm *StorageManager) restoreDestinationsNames(ctx context.Context, off int6
 // these data are required to be restored, without them you cant read the rest
 func (sm *StorageManager) checkRestoredServiceData() bool {
 	return sm.title != nil && sm.ackStatus != nil
-}
-
-// restore - restore Snapshot from frame.
-func (sm *StorageManager) restoreSnapshot(h *frames.Header, off int64) error {
-	if !sm.checkRestoredServiceData() {
-		return ErrServiceDataNotRestored{}
-	}
-
-	sm.setSnapshotPosition(
-		common.SegmentKey{
-			ShardID: h.GetShardID(),
-			Segment: h.GetSegmentID(),
-		},
-		off-int64(h.SizeOf()),
-	)
-
-	return nil
 }
 
 // restore - restore Segment from frame.
@@ -491,23 +426,6 @@ func (sm *StorageManager) openNewFile(ctx context.Context) error {
 	return nil
 }
 
-// checkSegment - check for consistency segment.
-func (sm *StorageManager) checkSegment(key common.SegmentKey) error {
-	if key.IsFirst() {
-		return nil
-	}
-
-	if sm.getSnapshotPosition(key) != posNotFound {
-		return nil
-	}
-
-	if sm.getSegmentPosition(key.Prev()) != posNotFound {
-		return nil
-	}
-
-	return ErrSnapshotRequired
-}
-
 // WriteSegment - write Segment in storage.
 func (sm *StorageManager) WriteSegment(ctx context.Context, key common.SegmentKey, seg Segment) error {
 	if !sm.isOpenFile {
@@ -516,11 +434,6 @@ func (sm *StorageManager) WriteSegment(ctx context.Context, key common.SegmentKe
 		}
 	}
 
-	// check for consistency segment
-	err := sm.checkSegment(key)
-	if err != nil {
-		return err
-	}
 	fe := frames.NewWriteFrame(protocolVersion, frames.SegmentType, key.ShardID, key.Segment, seg)
 	n, err := fe.WriteTo(sm.storage.Writer(ctx, sm.lastWriteOffset))
 	sm.writeBytes.Observe(float64(n))
@@ -529,27 +442,6 @@ func (sm *StorageManager) WriteSegment(ctx context.Context, key common.SegmentKe
 	}
 
 	sm.setSegmentPosition(key, sm.lastWriteOffset)
-	sm.moveLastWriteOffset(n)
-
-	return nil
-}
-
-// WriteSnapshot - write Snapshot in storage.
-func (sm *StorageManager) WriteSnapshot(ctx context.Context, segKey common.SegmentKey, snapshot Snapshot) error {
-	if !sm.isOpenFile {
-		if err := sm.openNewFile(ctx); err != nil {
-			return err
-		}
-	}
-
-	fe := frames.NewWriteFrame(protocolVersion, frames.SnapshotType, segKey.ShardID, segKey.Segment, snapshot)
-	n, err := fe.WriteTo(sm.storage.Writer(ctx, sm.lastWriteOffset))
-	sm.writeBytes.Observe(float64(n))
-	if err != nil {
-		return err
-	}
-
-	sm.setSnapshotPosition(common.SegmentKey{ShardID: segKey.ShardID, Segment: segKey.Segment}, sm.lastWriteOffset)
 	sm.moveLastWriteOffset(n)
 
 	return nil

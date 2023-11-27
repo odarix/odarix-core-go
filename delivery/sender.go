@@ -31,7 +31,6 @@ type Source interface {
 	Get(ctx context.Context, key common.SegmentKey) (Segment, error)
 	Ack(key common.SegmentKey, dest string)
 	Reject(key common.SegmentKey, dest string)
-	Restore(ctx context.Context, key common.SegmentKey) (Snapshot, []Segment)
 }
 
 // Sender is a transport adapter for manager
@@ -125,6 +124,7 @@ func (sender *Sender) Shutdown(ctx context.Context) error {
 }
 
 //revive:disable-next-line:cognitive-complexity function is not complicated
+//revive:disable-next-line:function-length long but readable
 func (sender *Sender) mainLoop(ctx context.Context) {
 	writeDone := new(atomic.Bool)
 	errRead := errors.New("read error")

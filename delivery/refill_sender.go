@@ -9,7 +9,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -545,20 +544,9 @@ func (rs *RefillSender) safeError(err error) {
 //
 //revive:disable-next-line:cyclomatic  but readable
 func (rs *RefillSender) collectedData() ([]PreparedData, error) {
-	var lastSendSegment uint32 = math.MaxUint32
 	pData := make([]PreparedData, 0, len(rs.dataToSend))
 
 	for _, segment := range rs.dataToSend {
-		if lastSendSegment+1 != segment {
-			if err := rs.source.Restore(
-				common.SegmentKey{ShardID: rs.shardID, Segment: segment},
-				lastSendSegment,
-				&pData,
-			); err != nil {
-				return nil, err
-			}
-		}
-
 		key := common.SegmentKey{ShardID: rs.shardID, Segment: segment}
 		mval := rs.source.SegmentPosition(key)
 		if mval == nil {
@@ -573,19 +561,7 @@ func (rs *RefillSender) collectedData() ([]PreparedData, error) {
 				Value:     mval,
 			},
 		)
-
-		lastSendSegment = segment
-	}
-
-	for _, pd := range pData {
-		switch pd.MsgType {
-		case frames.DrySegmentType:
-			rs.needSend.With(prometheus.Labels{"type": "dry_put"}).Observe(float64(pd.Value.size))
-		case frames.SegmentType:
-			rs.needSend.With(prometheus.Labels{"type": "put"}).Observe(float64(pd.Value.size))
-		case frames.SnapshotType:
-			rs.needSend.With(prometheus.Labels{"type": "snapshot"}).Observe(float64(pd.Value.size))
-		}
+		rs.needSend.With(prometheus.Labels{"type": "put"}).Observe(float64(mval.size))
 	}
 
 	return pData, nil
@@ -594,43 +570,15 @@ func (rs *RefillSender) collectedData() ([]PreparedData, error) {
 // sendData - sending prepared data.
 func (rs *RefillSender) sendData(ctx context.Context, pData []PreparedData) error {
 	for _, data := range pData {
-		switch data.MsgType {
-		case frames.SnapshotType:
-			if err := rs.sendSnapshot(ctx, data.SegmentID, data.Value); err != nil {
-				return fmt.Errorf("%s: fail send snapshot: %w", rs, err)
-			}
-		case frames.DrySegmentType:
-			if err := rs.sendDrySegment(ctx, data.SegmentID, data.Value); err != nil {
-				return fmt.Errorf("%s: fail send dry segment: %w", rs, err)
-			}
-		case frames.SegmentType:
-			if err := rs.sendSegment(ctx, data.SegmentID, data.Value); err != nil {
-				return fmt.Errorf("%s: fail send segment: %w", rs, err)
-			}
+		if data.MsgType != frames.SegmentType {
+			continue
+		}
+		if err := rs.sendSegment(ctx, data.SegmentID, data.Value); err != nil {
+			return fmt.Errorf("%s: fail send segment: %w", rs, err)
 		}
 	}
 
 	return nil
-}
-
-// sendSnapshot - restore and send snapshot.
-func (rs *RefillSender) sendSnapshot(ctx context.Context, segmentID uint32, mval *MarkupValue) error {
-	snapshot, err := rs.source.Snapshot(ctx, mval)
-	if err != nil {
-		return fmt.Errorf("%s: fail get snapshot: %w", rs, err)
-	}
-	frame := frames.NewWriteFrame(protocolVersion, frames.SnapshotType, rs.shardID, segmentID, snapshot)
-	return rs.transport.Send(ctx, frame)
-}
-
-// sendDrySegment - restore and send dry segment.
-func (rs *RefillSender) sendDrySegment(ctx context.Context, segmentID uint32, mval *MarkupValue) error {
-	segment, err := rs.source.Segment(ctx, mval)
-	if err != nil {
-		return fmt.Errorf("%s: fail get dry segment: %w", rs, err)
-	}
-	frame := frames.NewWriteFrame(protocolVersion, frames.DrySegmentType, rs.shardID, segmentID, segment)
-	return rs.transport.Send(ctx, frame)
 }
 
 // sendSegment - restore and send segment.
@@ -715,7 +663,7 @@ type RefillReader struct {
 	storage *FileStorage
 	// mutex for parallel writing
 	mx *sync.RWMutex
-	// marking positions of Segments and Snapshots
+	// marking positions of Segments
 	markupMap map[MarkupKey]*MarkupValue
 	// last frame for all segment send for shard
 	destinationsEOF map[string][]bool
@@ -889,8 +837,6 @@ func (rr *RefillReader) readFromBody(ctx context.Context, h *frames.Header, off 
 		return rr.readTitle(ctx, off, size)
 	case frames.DestinationNamesType:
 		return rr.readDestinationsNames(ctx, off, size)
-	case frames.SnapshotType:
-		return rr.setMarkupSnapshot(h, off)
 	case frames.SegmentType:
 		return rr.setMarkupSegment(h, off)
 	case frames.StatusType:
@@ -942,27 +888,6 @@ func (rr *RefillReader) makeDestinationsEOF() {
 	for _, dname := range dnames.ToString() {
 		rr.destinationsEOF[dname] = make([]bool, shards)
 	}
-}
-
-// setMarkupSnapshot - fill position and size Snapshot.
-func (rr *RefillReader) setMarkupSnapshot(h *frames.Header, off int64) error {
-	if !rr.checkRestoredServiceData() {
-		return ErrServiceDataNotRestored{}
-	}
-
-	mk := MarkupKey{
-		typeFrame: frames.SnapshotType,
-		SegmentKey: common.SegmentKey{
-			ShardID: h.GetShardID(),
-			Segment: h.GetSegmentID(),
-		},
-	}
-	rr.markupMap[mk] = &MarkupValue{
-		pos:  off - int64(h.SizeOf()),
-		size: h.GetSize(),
-	}
-
-	return nil
 }
 
 // setMarkupSegment - fill position and size Segment
@@ -1071,42 +996,6 @@ func (rr *RefillReader) checkRestoredServiceData() bool {
 	return rr.title != nil && rr.ackStatus != nil
 }
 
-// Snapshot - return snapshot from storage.
-func (rr *RefillReader) Snapshot(ctx context.Context, mval *MarkupValue) (common.Snapshot, error) {
-	rr.mx.RLock()
-	defer rr.mx.RUnlock()
-
-	return frames.ReadFrameSnapshot(ctx, util.NewOffsetReader(rr.storage, mval.pos))
-}
-
-// GetSnapshot - return snapshot from storage.
-func (rr *RefillReader) GetSnapshot(ctx context.Context, segKey common.SegmentKey) (common.Snapshot, error) {
-	rr.mx.RLock()
-	defer rr.mx.RUnlock()
-
-	// get position
-	mval := rr.getSnapshotPosition(segKey)
-	if mval == nil {
-		return nil, ErrSnapshotNotFoundRefill
-	}
-
-	return frames.ReadFrameSnapshot(ctx, util.NewOffsetReader(rr.storage, mval.pos))
-}
-
-// getSnapshotPosition - return position in storage.
-func (rr *RefillReader) getSnapshotPosition(segKey common.SegmentKey) *MarkupValue {
-	mk := MarkupKey{
-		typeFrame:  frames.SnapshotType,
-		SegmentKey: segKey,
-	}
-	mval, ok := rr.markupMap[mk]
-	if ok {
-		return mval
-	}
-
-	return nil
-}
-
 // Segment - return segment from storage.
 func (rr *RefillReader) Segment(ctx context.Context, mval *MarkupValue) (*frames.BinaryBody, error) {
 	rr.mx.RLock()
@@ -1148,37 +1037,6 @@ func (rr *RefillReader) getSegmentPosition(segKey common.SegmentKey) *MarkupValu
 		return mval
 	}
 
-	return nil
-}
-
-// Restore - get data for restore.
-func (rr *RefillReader) Restore(key common.SegmentKey, lastSendSegment uint32, pData *[]PreparedData) error {
-	rr.mx.RLock()
-	defer rr.mx.RUnlock()
-	rlen := len(*pData)
-	defer func() {
-		slices.Reverse((*pData)[rlen:])
-	}()
-	for key.Segment > lastSendSegment+1 {
-		if mval := rr.getSnapshotPosition(key); mval != nil {
-			*pData = append(*pData, PreparedData{
-				MsgType:   frames.SnapshotType,
-				SegmentID: key.Segment,
-				Value:     mval,
-			})
-			return nil
-		}
-		key.Segment--
-		mval := rr.getSegmentPosition(key)
-		if mval == nil {
-			return SegmentNotFoundInRefill(key)
-		}
-		*pData = append(*pData, PreparedData{
-			MsgType:   frames.DrySegmentType,
-			SegmentID: key.Segment,
-			Value:     mval,
-		})
-	}
 	return nil
 }
 

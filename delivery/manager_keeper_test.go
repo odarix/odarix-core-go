@@ -6,7 +6,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"math"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -234,7 +236,7 @@ func (*ManagerKeeperSuite) simpleEncoder() delivery.ManagerEncoderCtor {
 			LastEncodedSegmentFunc: func() uint32 { return nextSegmentID - 1 },
 			EncodeFunc: func(
 				_ context.Context, data common.ShardedData,
-			) (common.SegmentKey, common.Segment, common.Redundant, error) {
+			) (common.SegmentKey, common.Segment, error) {
 				key := common.SegmentKey{
 					ShardID: shardID,
 					Segment: nextSegmentID,
@@ -245,42 +247,8 @@ func (*ManagerKeeperSuite) simpleEncoder() delivery.ManagerEncoderCtor {
 						blockID, shardID, shards, nextSegmentID, data.(*shardedDataTest).data,
 					)),
 				}
-				redundant := &RedundantTest{
-					blockID: blockID,
-					shardID: shardID,
-					segment: nextSegmentID,
-				}
 				nextSegmentID++
-				return key, segment, redundant, nil
-			},
-			SnapshotFunc: func(_ context.Context, redundants []common.Redundant) (common.Snapshot, error) {
-				var lastRedundant uint32
-				firstSegment := nextSegmentID
-				for _, redundant := range redundants {
-					dr, ok := redundant.(*RedundantTest)
-					if !ok {
-						return nil, fmt.Errorf("Unknown redundant type %[1]T, %[1]v", redundant)
-					}
-					if dr.blockID != blockID || dr.shardID != shardID {
-						return nil, fmt.Errorf(
-							"Encoder-redundant mismatch: expected %s/%d, got %s/%d",
-							blockID, shardID, dr.blockID, dr.shardID)
-					}
-					if lastRedundant != 0 && dr.segment != lastRedundant+1 {
-						return nil, fmt.Errorf("Non-monothonic redundants: expected %d, got %d", lastRedundant+1, dr.segment)
-					}
-					lastRedundant = dr.segment
-					if dr.segment < firstSegment {
-						firstSegment = dr.segment
-					}
-				}
-				if lastRedundant != 0 && lastRedundant != nextSegmentID-1 {
-					return nil, fmt.Errorf("Partial redundants: expected %d, got %d", nextSegmentID, lastRedundant)
-				}
-				return &dataTest{data: []byte(fmt.Sprintf(
-					"snapshot:%s:%d:%d:%d",
-					blockID, shardID, shards, firstSegment,
-				))}, nil
+				return key, segment, nil
 			},
 			DestroyFunc: func() {},
 		}, nil
@@ -320,43 +288,11 @@ func (*ManagerKeeperSuite) inMemoryRefill() *ManagerRefillMock {
 
 			rejects[key] = true
 		},
-		RestoreFunc: func(_ context.Context, key common.SegmentKey) (delivery.Snapshot, []delivery.Segment, error) {
-			m.Lock()
-			defer m.Unlock()
-
-			shard := data[key.ShardID]
-			var blobs []interface{}
-			i := key.Segment - 1
-			for {
-				blob, ok := shard[i]
-				if !ok {
-					break
-				}
-				blobs = append(blobs, blob)
-				i--
-			}
-			if len(blobs) == 0 {
-				return nil, nil, errNotFound
-			}
-			var snapshot delivery.Snapshot
-			if s, ok := blobs[len(blobs)-1].(delivery.Snapshot); ok {
-				snapshot = s
-				blobs = blobs[:len(blobs)-1]
-			}
-			segments := make([]delivery.Segment, 0, len(blobs))
-			for i := len(blobs) - 1; i >= 0; i-- {
-				segments = append(segments, blobs[i].(common.Segment))
-			}
-			return snapshot, segments, nil
-		},
 		WriteSegmentFunc: func(_ context.Context, key common.SegmentKey, segment delivery.Segment) error {
 			m.Lock()
 			defer m.Unlock()
 
-			if _, ok := data[key.ShardID][key.Segment-1]; key.Segment > 0 && !ok {
-				return delivery.ErrSnapshotRequired
-			}
-			if key.Segment == 0 {
+			if key.Segment == 0 || data[key.ShardID] == nil {
 				data[key.ShardID] = make(map[uint32]interface{})
 			}
 
@@ -370,26 +306,6 @@ func (*ManagerKeeperSuite) inMemoryRefill() *ManagerRefillMock {
 			}
 			if lastSegment, ok := lastSegments[key.ShardID]; !ok || lastSegment < key.Segment {
 				lastSegments[key.ShardID] = key.Segment
-			}
-			return nil
-		},
-		WriteSnapshotFunc: func(_ context.Context, key common.SegmentKey, snapshot delivery.Snapshot) error {
-			m.Lock()
-			defer m.Unlock()
-
-			shard, ok := data[key.ShardID]
-			if !ok {
-				shard = make(map[uint32]interface{})
-				data[key.ShardID] = shard
-			}
-
-			buf, err := framestest.ReadPayload(snapshot)
-			if err != nil {
-				return err
-			}
-
-			shard[key.Segment-1] = &dataTest{
-				data: buf,
 			}
 			return nil
 		},
@@ -668,15 +584,15 @@ func TestRotateTimer(t *testing.T) {
 
 func (s *RotateTimerSuite) SetupSuite() {
 	s.cfg = delivery.BlockLimits{
-		DesiredBlockFormationDuration: 10 * time.Second,
-		DelayAfterNotify:              4 * time.Second,
+		DesiredBlockFormationDuration: 2 * time.Hour,
+		DelayAfterNotify:              300 * time.Second,
 	}
 }
 
 func (s *RotateTimerSuite) TestMainTickWithNotify() {
-	clock := clockwork.NewFakeClock()
+	clock := clockwork.NewFakeClockAt(time.Unix(1700826343, 0))
 	rt := delivery.NewRotateTimer(clock, s.cfg)
-	s.T().Log("notify tick")
+	s.T().Log("notify tick", clock.Now().Unix())
 	rt.NotifyOnReject()
 	clock.Advance(s.cfg.DelayAfterNotify)
 	loop := <-rt.Chan()
@@ -684,13 +600,14 @@ func (s *RotateTimerSuite) TestMainTickWithNotify() {
 
 	s.T().Log("main tick")
 	rt.Reset()
-	clock.Advance(s.cfg.DesiredBlockFormationDuration)
+	rotateAt := rt.RotateAtNext()
+	clock.Advance(rotateAt.Sub(clock.Now()))
 	loop = <-rt.Chan()
 	s.Zero(clock.Since(loop))
 }
 
 func (s *RotateTimerSuite) TestMainTickWith2Notify() {
-	clock := clockwork.NewFakeClock()
+	clock := clockwork.NewFakeClockAt(time.Unix(1700826343, 0))
 	rt := delivery.NewRotateTimer(clock, s.cfg)
 	s.T().Log("2 notify tick")
 	rt.NotifyOnReject()
@@ -707,7 +624,7 @@ func (s *RotateTimerSuite) TestMainTick() {
 	s.T().Log("main tick")
 	stop := atomic.Bool{}
 	go func() {
-		for i := 0; i < 20 && !stop.Load(); i++ {
+		for i := 0; i < 48 && !stop.Load(); i++ {
 			time.Sleep(time.Millisecond)
 			rt.NotifyOnReject()
 			clock.Advance(s.cfg.DelayAfterNotify / 2)
@@ -715,7 +632,7 @@ func (s *RotateTimerSuite) TestMainTick() {
 	}()
 	loop := <-rt.Chan()
 	stop.Store(true)
-	s.Zero(clock.Since(loop))
+	s.WithinDuration(clock.Now(), loop, 5*time.Minute)
 }
 
 func (s *RotateTimerSuite) TestMainTickStopped() {
@@ -1094,4 +1011,70 @@ func (s *BlockLimitsSuite) TestMarshalBinaryUnmarshalBinary_Quick() {
 
 	err := quick.Check(f, nil)
 	s.NoError(err)
+}
+
+func TestXxx(t *testing.T) {
+	// // x = random(block_duration) # [0, 120*60*1000)
+	// blockDuration := 2 * time.Hour
+	// dur := blockDuration.Milliseconds()
+	// x := rand.Int63n(dur)
+
+	// // y = now % block_duration   # [0, 120*60*1000)
+	// now := time.Now().UnixMilli()
+	// y := now % dur
+
+	// // a = ⌊now / block_duration⌋*block_duration
+	// a := math.Floor(float64(now)/float64(dur)) * float64(dur)
+
+	// // now = a + y
+	// now2 := int64(a) + y
+
+	// t.Log("dur", dur)
+	// t.Log("x", x)
+	// t.Log("y", y)
+	// t.Log("a", int64(a), time.UnixMilli(int64(a)))
+	// t.Log("now", now)
+	// t.Log("now2", now2)
+
+	// var rotate_at int64
+
+	// if x > y {
+	// 	t.Log("x > y")
+	// 	rotate_at = int64(a) + x
+	// } else {
+	// 	t.Log("x <= y")
+	// 	rotate_at = int64(a) + dur + x
+	// }
+
+	// t.Log(time.UnixMilli(now))
+	// t.Log(time.UnixMilli(rotate_at))
+
+	blockDuration := (2 * time.Hour).Milliseconds()
+	rndDur := rand.Int63n(blockDuration)
+	now := time.Now().UnixMilli()
+	rotate_at := calculateNext(now, blockDuration, rndDur)
+
+	t.Log(time.UnixMilli(now))
+	t.Log(time.UnixMilli(rotate_at))
+	t.Log(time.UnixMilli(rotate_at).Sub(time.UnixMilli(now)))
+
+	now = rotate_at + 1
+	rotate_at = calculateNext(now, blockDuration, rndDur)
+
+	t.Log(time.UnixMilli(now))
+	t.Log(time.UnixMilli(rotate_at))
+	t.Log(time.UnixMilli(rotate_at).Sub(time.UnixMilli(now)))
+}
+
+func calculateNext(now, dur, rndDur int64) int64 {
+	k := now % dur
+	startBlock := math.Floor(float64(now)/float64(dur)) * float64(dur)
+
+	if rndDur > k {
+		log.Println("1")
+		return int64(startBlock) + rndDur
+	}
+
+	log.Println("2")
+	return int64(startBlock) + dur + rndDur
 }

@@ -13,7 +13,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-	"unsafe"
 
 	"github.com/odarix/odarix-core-go/common"
 	"github.com/odarix/odarix-core-go/delivery"
@@ -822,43 +821,11 @@ func (*ManagerSuite) inMemoryRefill() *ManagerRefillMock {
 
 			rejects[key] = true
 		},
-		RestoreFunc: func(_ context.Context, key common.SegmentKey) (delivery.Snapshot, []delivery.Segment, error) {
-			m.Lock()
-			defer m.Unlock()
-
-			shard := data[key.ShardID]
-			var blobs []interface{}
-			i := key.Segment - 1
-			for {
-				blob, ok := shard[i]
-				if !ok {
-					break
-				}
-				blobs = append(blobs, blob)
-				i--
-			}
-			if len(blobs) == 0 {
-				return nil, nil, errNotFound
-			}
-			var snapshot common.Snapshot
-			if s, ok := blobs[len(blobs)-1].(common.Snapshot); ok {
-				snapshot = s
-				blobs = blobs[:len(blobs)-1]
-			}
-			segments := make([]delivery.Segment, 0, len(blobs))
-			for i := len(blobs) - 1; i >= 0; i-- {
-				segments = append(segments, blobs[i].(common.Segment))
-			}
-			return snapshot, segments, nil
-		},
 		WriteSegmentFunc: func(_ context.Context, key common.SegmentKey, segment delivery.Segment) error {
 			m.Lock()
 			defer m.Unlock()
 
-			if _, ok := data[key.ShardID][key.Segment-1]; key.Segment > 0 && !ok {
-				return delivery.ErrSnapshotRequired
-			}
-			if key.Segment == 0 {
+			if key.Segment == 0 || data[key.ShardID] == nil {
 				data[key.ShardID] = make(map[uint32]interface{})
 			}
 
@@ -872,26 +839,6 @@ func (*ManagerSuite) inMemoryRefill() *ManagerRefillMock {
 			}
 			if lastSegment, ok := lastSegments[key.ShardID]; !ok || lastSegment < key.Segment {
 				lastSegments[key.ShardID] = key.Segment
-			}
-			return nil
-		},
-		WriteSnapshotFunc: func(_ context.Context, key common.SegmentKey, snapshot delivery.Snapshot) error {
-			m.Lock()
-			defer m.Unlock()
-
-			shard, ok := data[key.ShardID]
-			if !ok {
-				shard = make(map[uint32]interface{})
-				data[key.ShardID] = shard
-			}
-
-			buf, err := framestest.ReadPayload(snapshot)
-			if err != nil {
-				return err
-			}
-
-			shard[key.Segment-1] = &dataTest{
-				data: buf,
 			}
 			return nil
 		},
@@ -910,13 +857,7 @@ func (*ManagerSuite) corruptedRefill() *ManagerRefillMock {
 		},
 		AckFunc:    func(_ common.SegmentKey, _ string) {},
 		RejectFunc: func(_ common.SegmentKey, _ string) {},
-		RestoreFunc: func(_ context.Context, _ common.SegmentKey) (delivery.Snapshot, []delivery.Segment, error) {
-			return nil, nil, assert.AnError
-		},
 		WriteSegmentFunc: func(_ context.Context, _ common.SegmentKey, _ delivery.Segment) error {
-			return assert.AnError
-		},
-		WriteSnapshotFunc: func(_ context.Context, _ common.SegmentKey, _ delivery.Snapshot) error {
 			return assert.AnError
 		},
 		WriteAckStatusFunc: func(_ context.Context) error {
@@ -952,19 +893,6 @@ func (*ManagerSuite) constructorForRefill(refill *ManagerRefillMock) delivery.Ma
 	}
 }
 
-type RedundantTest struct {
-	blockID uuid.UUID
-	shardID uint16
-	segment uint32
-}
-
-func (*RedundantTest) PointerData() unsafe.Pointer {
-	return nil
-}
-
-func (*RedundantTest) Destroy() {
-}
-
 //revive:disable-next-line:cognitive-complexity this is test
 func (*ManagerSuite) simpleEncoder() delivery.ManagerEncoderCtor {
 	return func(blockID uuid.UUID, shardID uint16, shardsNumberPower uint8) (delivery.ManagerEncoder, error) {
@@ -977,7 +905,7 @@ func (*ManagerSuite) simpleEncoder() delivery.ManagerEncoderCtor {
 			LastEncodedSegmentFunc: func() uint32 { return nextSegmentID - 1 },
 			EncodeFunc: func(
 				_ context.Context, data common.ShardedData,
-			) (common.SegmentKey, common.Segment, common.Redundant, error) {
+			) (common.SegmentKey, common.Segment, error) {
 				key := common.SegmentKey{
 					ShardID: shardID,
 					Segment: nextSegmentID,
@@ -988,42 +916,8 @@ func (*ManagerSuite) simpleEncoder() delivery.ManagerEncoderCtor {
 						blockID, shardID, shards, nextSegmentID, data.(*shardedDataTest).data,
 					)),
 				}
-				redundant := &RedundantTest{
-					blockID: blockID,
-					shardID: shardID,
-					segment: nextSegmentID,
-				}
 				nextSegmentID++
-				return key, segment, redundant, nil
-			},
-			SnapshotFunc: func(_ context.Context, redundants []common.Redundant) (common.Snapshot, error) {
-				var lastRedundant uint32
-				firstSegment := nextSegmentID
-				for _, redundant := range redundants {
-					dr, ok := redundant.(*RedundantTest)
-					if !ok {
-						return nil, fmt.Errorf("Unknown redundant type %[1]T, %+[1]v", redundant)
-					}
-					if dr.blockID != blockID || dr.shardID != shardID {
-						return nil, fmt.Errorf(
-							"Encoder-redundant mismatch: expected %s/%d, got %s/%d",
-							blockID, shardID, dr.blockID, dr.shardID)
-					}
-					if lastRedundant != 0 && dr.segment != lastRedundant+1 {
-						return nil, fmt.Errorf("Non-monothonic redundants: expected %d, got %d", lastRedundant+1, dr.segment)
-					}
-					lastRedundant = dr.segment
-					if dr.segment < firstSegment {
-						firstSegment = dr.segment
-					}
-				}
-				if lastRedundant != 0 && lastRedundant != nextSegmentID-1 {
-					return nil, fmt.Errorf("Partial redundants: expected %d, got %d", nextSegmentID, lastRedundant)
-				}
-				return &dataTest{data: []byte(fmt.Sprintf(
-					"snapshot:%s:%d:%d:%d",
-					blockID, shardID, shards, firstSegment,
-				))}, nil
+				return key, segment, nil
 			},
 			DestroyFunc: func() {},
 			AddFunc: func(_ context.Context, shardedData common.ShardedData) (common.Segment, error) {
@@ -1033,7 +927,7 @@ func (*ManagerSuite) simpleEncoder() delivery.ManagerEncoderCtor {
 
 				return &dataTest{}, nil
 			},
-			FinalizeFunc: func(_ context.Context) (common.SegmentKey, common.Segment, common.Redundant, error) {
+			FinalizeFunc: func(_ context.Context) (common.SegmentKey, common.Segment, error) {
 				key := common.SegmentKey{
 					ShardID: shardID,
 					Segment: nextSegmentID,
@@ -1048,13 +942,8 @@ func (*ManagerSuite) simpleEncoder() delivery.ManagerEncoderCtor {
 						blockID, shardID, shards, nextSegmentID, data,
 					)),
 				}
-				redundant := &RedundantTest{
-					blockID: blockID,
-					shardID: shardID,
-					segment: nextSegmentID,
-				}
 				nextSegmentID++
-				return key, segment, redundant, nil
+				return key, segment, nil
 			},
 		}, nil
 	}

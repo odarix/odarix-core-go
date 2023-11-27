@@ -24,11 +24,6 @@ type Segment interface {
 	frames.WritePayload
 }
 
-// Snapshot is an universal interface for blob snapshot data
-type Snapshot interface {
-	frames.WritePayload
-}
-
 // ProtoData is an universal interface for blob protobuf data
 type ProtoData interface {
 	Bytes() []byte

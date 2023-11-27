@@ -151,7 +151,7 @@ func (s *FileManagerSuite) TestRename() {
 	err = s.fm.Rename(s.etalonNewFileName)
 	s.NoError(err)
 
-	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.etalonNewFileName+".refill"))
+	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.etalonNewFileName+refillExt))
 	s.NoError(err)
 }
 

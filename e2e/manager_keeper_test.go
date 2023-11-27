@@ -307,7 +307,7 @@ func (s *ManagerKeeperSuite) TestWithReject() {
 			}
 
 			switch fe.GetType() {
-			case frames.SnapshotType, frames.DrySegmentType, frames.SegmentType:
+			case frames.SegmentType:
 				if _, errW := fe.WriteTo(file); !s.NoError(errW, "fail write") {
 					return
 				}

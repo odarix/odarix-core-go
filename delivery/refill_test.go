@@ -119,9 +119,7 @@ func (s *RefillSuite) TestManagerInitIsContinuable() {
 		Segment: 1,
 	}
 
-	err := s.mr.WriteSnapshot(s.ctx, segKey, s.etalonsData)
-	s.NoError(err)
-	err = s.mr.WriteSegment(s.ctx, segKey, s.etalonsData)
+	err := s.mr.WriteSegment(s.ctx, segKey, s.etalonsData)
 	s.NoError(err)
 	err = s.mr.WriteAckStatus(s.ctx)
 	s.NoError(err)
@@ -177,163 +175,11 @@ func (s *RefillSuite) TestSegment() {
 	}
 }
 
-func (s *RefillSuite) TestRestoreWithSegment() {
-	segKey := common.SegmentKey{
-		ShardID: 0,
-		Segment: 1,
-	}
-
-	s.mr.WriteSnapshot(s.ctx, segKey, s.etalonsData)
-
-	etalonsSegs := []string{"first", "second", "third", "requiredSegment"}
-	s.mr.WriteSegment(s.ctx, segKey, newDataTest([]byte(etalonsSegs[0])))
-	segKey.Segment++
-
-	s.mr.WriteSegment(s.ctx, segKey, newDataTest([]byte(etalonsSegs[1])))
-	segKey.Segment++
-
-	s.mr.WriteSegment(s.ctx, segKey, newDataTest([]byte(etalonsSegs[2])))
-	segKey.Segment++
-
-	s.mr.WriteSegment(s.ctx, segKey, newDataTest([]byte(etalonsSegs[2])))
-
-	actualSnap, actSegments, err := s.mr.Restore(s.ctx, segKey)
-	s.NoError(err)
-	s.Equal(3, len(actSegments))
-	if buf, errRead := framestest.ReadPayload(actualSnap); s.NoError(errRead) {
-		s.Equal(s.etalonsData.Bytes(), buf)
-	}
-
-	if buf, errRead := framestest.ReadPayload(actSegments[0]); s.NoError(errRead) {
-		s.Equal([]byte(etalonsSegs[0]), buf)
-	}
-
-	if buf, errRead := framestest.ReadPayload(actSegments[1]); s.NoError(errRead) {
-		s.Equal([]byte(etalonsSegs[1]), buf)
-	}
-
-	if buf, errRead := framestest.ReadPayload(actSegments[2]); s.NoError(errRead) {
-		s.Equal([]byte(etalonsSegs[2]), buf)
-	}
-
-	err = s.mr.Shutdown(s.ctx)
-	s.NoError(err)
-}
-
-func (s *RefillSuite) TestRestoreWithoutSnapshot() {
-	segKey := common.SegmentKey{
-		ShardID: 0,
-		Segment: 0,
-	}
-
-	s.mr.WriteSegment(s.ctx, segKey, s.etalonsData)
-	segKey.Segment++
-	s.mr.WriteSegment(s.ctx, segKey, s.etalonsData)
-	segKey.Segment++
-	s.mr.WriteSegment(s.ctx, segKey, s.etalonsData)
-	segKey.Segment++
-	s.mr.WriteSegment(s.ctx, segKey, s.etalonsData)
-
-	actualSnap, actSegments, err := s.mr.Restore(s.ctx, segKey)
-	s.NoError(err)
-	s.Equal(3, len(actSegments))
-	s.Nil(actualSnap)
-	if buf, errRead := framestest.ReadPayload(actSegments[0]); s.NoError(errRead) {
-		s.Equal(s.etalonsData.Bytes(), buf)
-	}
-
-	err = s.mr.Shutdown(s.ctx)
-	s.NoError(err)
-}
-
-func (s *RefillSuite) TestRestoreWithoutSegment() {
-	segKey := common.SegmentKey{
-		ShardID: 0,
-		Segment: 1,
-	}
-
-	s.mr.WriteSnapshot(s.ctx, segKey, s.etalonsData)
-	s.mr.WriteSegment(s.ctx, segKey, s.etalonsData)
-
-	actualSnap, actSegments, err := s.mr.Restore(s.ctx, segKey)
-	s.NoError(err)
-	s.Equal(0, len(actSegments))
-	if buf, errBuf := framestest.ReadPayload(actualSnap); s.NoError(errBuf) {
-		s.Equal(s.etalonsData.Bytes(), buf)
-	}
-
-	err = s.mr.Shutdown(s.ctx)
-	s.NoError(err)
-}
-
-func (s *RefillSuite) TestRestoreError() {
-	segKey := common.SegmentKey{
-		ShardID: 0,
-		Segment: 2,
-	}
-
-	s.mr.WriteSnapshot(s.ctx, segKey, s.etalonsData)
-	s.mr.WriteSegment(s.ctx, segKey, s.etalonsData)
-
-	segKey.Segment = 1
-
-	actualSnap, actSegments, err := s.mr.Restore(s.ctx, segKey)
-	s.Error(err)
-	s.ErrorAs(err, &delivery.ErrSegmentNotFoundInRefill{})
-	s.Equal(0, len(actSegments))
-	s.Nil(actualSnap)
-
-	err = s.mr.Shutdown(s.ctx)
-	s.NoError(err)
-}
-
-func (s *RefillSuite) TestRestoreError_2() {
-	segKey := common.SegmentKey{
-		ShardID: 0,
-		Segment: 1,
-	}
-
-	s.mr.WriteSegment(s.ctx, segKey, s.etalonsData)
-	segKey.Segment++
-	s.mr.WriteSegment(s.ctx, segKey, s.etalonsData)
-	segKey.Segment++
-	s.mr.WriteSegment(s.ctx, segKey, s.etalonsData)
-
-	actualSnap, actSegments, err := s.mr.Restore(s.ctx, segKey)
-	s.Error(err)
-	s.ErrorAs(err, &delivery.ErrSegmentNotFoundInRefill{})
-	s.Equal(0, len(actSegments))
-	s.Nil(actualSnap)
-
-	err = s.mr.Shutdown(s.ctx)
-	s.NoError(err)
-}
-
-func (s *RefillSuite) TestWriteSegmentError() {
-	segKey := common.SegmentKey{
-		ShardID: 0,
-		Segment: 2,
-	}
-
-	errSegKey := common.SegmentKey{
-		ShardID: segKey.ShardID,
-		Segment: segKey.Segment + 2,
-	}
-
-	err := s.mr.WriteSnapshot(s.ctx, segKey, s.etalonsData)
-	s.NoError(err)
-	err = s.mr.WriteSegment(s.ctx, errSegKey, s.etalonsData)
-	s.ErrorIs(err, delivery.ErrSnapshotRequired)
-
-	err = s.mr.Shutdown(s.ctx)
-	s.NoError(err)
-}
-
 func (s *RefillSuite) TestAckStatus() {
 	s.T().Log("write ack status and check file not exist")
 	err := s.mr.WriteAckStatus(s.ctx)
 	s.NoError(err)
-	_, err = os.Stat(filepath.Join(s.workingDir, delivery.RefillFileName+".refill"))
+	_, err = os.Stat(filepath.Join(s.workingDir, delivery.RefillFileName+refillExt))
 	s.Error(err, "File not deleted")
 
 	s.T().Log("write segment, ack status and check file exist")
@@ -341,7 +187,7 @@ func (s *RefillSuite) TestAckStatus() {
 	s.NoError(err)
 	err = s.mr.WriteAckStatus(s.ctx)
 	s.NoError(err)
-	_, err = os.Stat(filepath.Join(s.workingDir, delivery.RefillDir, delivery.RefillFileName+".refill"))
+	_, err = os.Stat(filepath.Join(s.workingDir, delivery.RefillDir, delivery.RefillFileName+refillExt))
 	s.NoError(err, "File deleted")
 
 	s.T().Log("ack segments for all name and check file deleted")
@@ -351,7 +197,7 @@ func (s *RefillSuite) TestAckStatus() {
 	}
 	err = s.mr.WriteAckStatus(s.ctx)
 	s.NoError(err)
-	_, err = os.Stat(filepath.Join(s.workingDir, delivery.RefillFileName+".refill"))
+	_, err = os.Stat(filepath.Join(s.workingDir, delivery.RefillFileName+refillExt))
 	s.Error(err, "File not deleted")
 
 	err = s.mr.Shutdown(s.ctx)
@@ -362,7 +208,7 @@ func (s *RefillSuite) TestAckStatusWithReject() {
 	s.T().Log("write ack status and check file not exist")
 	err := s.mr.WriteAckStatus(s.ctx)
 	s.NoError(err)
-	_, err = os.Stat(filepath.Join(s.workingDir, delivery.RefillFileName+".refill"))
+	_, err = os.Stat(filepath.Join(s.workingDir, delivery.RefillFileName+refillExt))
 	s.Error(err, "File not deleted")
 
 	s.T().Log("write segment, ack status and check file exist")
@@ -370,7 +216,7 @@ func (s *RefillSuite) TestAckStatusWithReject() {
 	s.NoError(err)
 	err = s.mr.WriteAckStatus(s.ctx)
 	s.NoError(err)
-	_, err = os.Stat(filepath.Join(s.workingDir, delivery.RefillDir, delivery.RefillFileName+".refill"))
+	_, err = os.Stat(filepath.Join(s.workingDir, delivery.RefillDir, delivery.RefillFileName+refillExt))
 	s.NoError(err, "File deleted")
 
 	s.T().Log("ack segments for all name and 1 reject and check file not deleted")
@@ -381,66 +227,8 @@ func (s *RefillSuite) TestAckStatusWithReject() {
 	s.mr.Reject(common.SegmentKey{ShardID: 0, Segment: 3}, s.etalonsNames[0])
 	err = s.mr.WriteAckStatus(s.ctx)
 	s.NoError(err)
-	_, err = os.Stat(filepath.Join(s.workingDir, delivery.RefillDir, delivery.RefillFileName+".refill"))
+	_, err = os.Stat(filepath.Join(s.workingDir, delivery.RefillDir, delivery.RefillFileName+refillExt))
 	s.NoError(err, "File deleted")
-
-	err = s.mr.Shutdown(s.ctx)
-	s.NoError(err)
-}
-
-func (s *RefillSuite) TestAckStatusWithSnapshot() {
-	s.T().Log("init segKey")
-	segKey := common.SegmentKey{
-		ShardID: 0,
-		Segment: 2,
-	}
-
-	s.T().Log("write snapshot")
-	err := s.mr.WriteSnapshot(
-		s.ctx,
-		segKey,
-		s.etalonsData,
-	)
-	s.NoError(err)
-
-	s.T().Log("check file exist")
-	_, err = os.Stat(filepath.Join(s.workingDir, delivery.RefillDir, delivery.RefillFileName+".refill"))
-	s.NoError(err, "File exist")
-
-	s.T().Log("write ack status")
-	err = s.mr.WriteAckStatus(s.ctx)
-	s.NoError(err)
-
-	s.T().Log("check file exist")
-	_, err = os.Stat(filepath.Join(s.workingDir, delivery.RefillDir, delivery.RefillFileName+".refill"))
-	s.NoError(err, "File exist")
-
-	s.T().Log("acked status for 0 shard for all name")
-	for _, name := range s.etalonsNames {
-		s.mr.Ack(common.SegmentKey{ShardID: 0, Segment: 0}, name)
-		s.mr.Ack(common.SegmentKey{ShardID: 0, Segment: 1}, name)
-		s.mr.Ack(common.SegmentKey{ShardID: 0, Segment: 2}, name)
-	}
-
-	s.T().Log("write ack status")
-	err = s.mr.WriteAckStatus(s.ctx)
-	s.NoError(err)
-
-	s.T().Log("check file does not exist, file must be deleted")
-	_, err = os.Stat(filepath.Join(s.workingDir, delivery.RefillDir, delivery.RefillFileName+".refill"))
-	s.Error(err, "File not deleted")
-
-	s.T().Log("write again snapshot")
-	err = s.mr.WriteSnapshot(
-		s.ctx,
-		segKey,
-		s.etalonsData,
-	)
-	s.NoError(err)
-
-	s.T().Log("check file exist")
-	_, err = os.Stat(filepath.Join(s.workingDir, delivery.RefillDir, delivery.RefillFileName+".refill"))
-	s.NoError(err, "File exist")
 
 	err = s.mr.Shutdown(s.ctx)
 	s.NoError(err)
@@ -452,7 +240,7 @@ func (s *RefillSuite) TestRename() {
 		Segment: 2,
 	}
 
-	err := s.mr.WriteSnapshot(
+	err := s.mr.WriteSegment(
 		s.ctx,
 		segKey,
 		s.etalonsData,
@@ -462,6 +250,6 @@ func (s *RefillSuite) TestRename() {
 	s.NoError(s.mr.IntermediateRename())
 	s.NoError(s.mr.Shutdown(s.ctx))
 
-	_, err = os.Stat(filepath.Join(s.workingDir, delivery.RefillDir, delivery.RefillFileName+".refill"))
+	_, err = os.Stat(filepath.Join(s.workingDir, delivery.RefillDir, delivery.RefillFileName+refillExt))
 	s.Error(err, "File not rotated")
 }

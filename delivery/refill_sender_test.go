@@ -127,15 +127,6 @@ func (s *RefillSenderSuite) makeRefill(destinationsNames []string) {
 		Segment: 2,
 	}
 
-	err = mr.WriteSnapshot(
-		s.baseCtx,
-		segKey,
-		&dataTest{
-			data: []byte(fmt.Sprintf("%d:%d:snapshot", segKey.ShardID, segKey.Segment)),
-		},
-	)
-	s.Require().NoError(err)
-
 	for i := 0; i < 4; i++ {
 		err = mr.WriteSegment(
 			s.baseCtx,
@@ -151,7 +142,7 @@ func (s *RefillSenderSuite) makeRefill(destinationsNames []string) {
 	err = mr.WriteAckStatus(s.baseCtx)
 	s.Require().NoError(err)
 
-	_, err = os.Stat(filepath.Join(s.refillDir, delivery.RefillFileName+".refill"))
+	_, err = os.Stat(filepath.Join(s.refillDir, delivery.RefillFileName+refillExt))
 	s.Require().NoError(err, "file not exist")
 
 	// ack 0,1 segment, 2 - reject for all destinations
@@ -179,7 +170,7 @@ func (s *RefillSenderSuite) makeRefill(destinationsNames []string) {
 	err = mr.WriteAckStatus(s.baseCtx)
 	s.Require().NoError(err)
 
-	_, err = os.Stat(filepath.Join(s.refillDir, delivery.RefillFileName+".refill"))
+	_, err = os.Stat(filepath.Join(s.refillDir, delivery.RefillFileName+refillExt))
 	s.Require().NoError(err, "file not exist")
 
 	s.Require().NoError(mr.IntermediateRename())

@@ -4,9 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"path/filepath"
-	"slices"
 	"sync"
 	"time"
 
@@ -23,10 +21,6 @@ const (
 )
 
 var (
-	// ErrSnapshotNotFoundRefill - error snapshot not found in refill.
-	ErrSnapshotNotFoundRefill = errors.New("snapshot not found")
-	// ErrSnapshotRequired - error for case if not found snapshots or prevous segment.
-	ErrSnapshotRequired = errors.New("snapshot is required")
 	// ErrShardsNotEqual - error when number of shards not equal.
 	ErrShardsNotEqual = errors.New("number of shards not equal")
 	// ErrDestinationsNamesNotEqual - error when destinations names not equal.
@@ -125,61 +119,12 @@ func (rl *Refill) Reject(segKey common.SegmentKey, dest string) {
 	rl.sm.Reject(segKey, dest)
 }
 
-// Restore - return snapshot and segments.
-func (rl *Refill) Restore(ctx context.Context, key common.SegmentKey) (Snapshot, []Segment, error) {
-	rl.mx.RLock()
-	defer rl.mx.RUnlock()
-
-	segments := make([]Segment, 0)
-	snapshot, err := rl.sm.GetSnapshot(ctx, key)
-	if err == nil {
-		return snapshot, segments, nil
-	}
-	if err != ErrSnapshotNotFoundRefill {
-		return nil, nil, err
-	}
-
-	key.Segment--
-	for key.Segment != math.MaxUint32 {
-		seg, err := rl.sm.GetSegment(ctx, key)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		segments = append(
-			segments,
-			seg,
-		)
-
-		snapshot, err := rl.sm.GetSnapshot(ctx, key)
-		if err == nil {
-			slices.Reverse(segments)
-			return snapshot, segments, nil
-		}
-		if err != ErrSnapshotNotFoundRefill {
-			return nil, nil, err
-		}
-
-		key.Segment--
-	}
-	slices.Reverse(segments)
-	return nil, segments, nil
-}
-
 // WriteSegment - write Segment in file.
 func (rl *Refill) WriteSegment(ctx context.Context, key common.SegmentKey, seg Segment) error {
 	rl.mx.Lock()
 	defer rl.mx.Unlock()
 
 	return rl.sm.WriteSegment(ctx, key, seg)
-}
-
-// WriteSnapshot - write Snapshot in file.
-func (rl *Refill) WriteSnapshot(ctx context.Context, segKey common.SegmentKey, snapshot Snapshot) error {
-	rl.mx.Lock()
-	defer rl.mx.Unlock()
-
-	return rl.sm.WriteSnapshot(ctx, segKey, snapshot)
 }
 
 // WriteAckStatus - write AckStatus.

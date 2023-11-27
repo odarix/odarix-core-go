@@ -215,51 +215,6 @@ func (s *StorageManagerSuite) TestSegment() {
 	}
 }
 
-func (s *StorageManagerSuite) TestWriteSegmentWithError() {
-	ok, err := s.sm.FileExist()
-	s.NoError(err)
-	s.False(ok)
-
-	err = s.sm.WriteSegment(
-		context.Background(),
-		common.SegmentKey{
-			ShardID: 0,
-			Segment: 2,
-		},
-		s.etalonsData,
-	)
-	s.ErrorIs(err, delivery.ErrSnapshotRequired)
-}
-
-func (s *StorageManagerSuite) TestSnapshot() {
-	ok, err := s.sm.FileExist()
-	s.NoError(err)
-	s.False(ok)
-
-	segKey := common.SegmentKey{
-		ShardID: 0,
-		Segment: 2,
-	}
-
-	err = s.sm.WriteSnapshot(
-		context.Background(),
-		segKey,
-		s.etalonsData,
-	)
-	s.NoError(err)
-
-	ok, err = s.sm.FileExist()
-	s.NoError(err)
-	s.True(ok)
-
-	actualSnap, err := s.sm.GetSnapshot(s.ctx, segKey)
-	if s.NoError(err) {
-		if buf, err := framestest.ReadPayload(actualSnap); s.NoError(err) {
-			s.Equal(s.etalonsData.Bytes(), buf)
-		}
-	}
-}
-
 func (s *StorageManagerSuite) TestAckStatus() {
 	ok, err := s.sm.FileExist()
 	s.NoError(err)
@@ -283,7 +238,7 @@ func (s *StorageManagerSuite) TestRename() {
 		Segment: 2,
 	}
 
-	err = s.sm.WriteSnapshot(
+	err = s.sm.WriteSegment(
 		context.Background(),
 		segKey,
 		s.etalonsData,
@@ -303,7 +258,7 @@ func (s *StorageManagerSuite) TestRename() {
 
 	s.NoError(s.sm.Rename(s.etalonNewFileName))
 
-	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.etalonNewFileName+".refill"))
+	_, err = os.Stat(filepath.Join(s.cfg.Dir, s.etalonNewFileName+refillExt))
 	s.NoError(err)
 }
 
@@ -320,7 +275,7 @@ func (s *StorageManagerSuite) TestRestore() {
 	err = s.sm.WriteAckStatus(context.Background())
 	s.NoError(err)
 
-	err = s.sm.WriteSnapshot(context.Background(), segKey, s.etalonsData)
+	err = s.sm.WriteSegment(context.Background(), segKey, s.etalonsData)
 	s.NoError(err)
 
 	err = s.sm.WriteSegment(context.Background(), segKey, s.etalonsData)
@@ -353,7 +308,7 @@ func (s *StorageManagerSuite) TestRestore() {
 		}
 	}
 
-	actualSnap, err := s.sm.GetSnapshot(s.ctx, segKey)
+	actualSnap, err := s.sm.GetSegment(s.ctx, segKey)
 	if s.NoError(err) {
 		if buf, err := framestest.ReadPayload(actualSnap); s.NoError(err) {
 			s.Equal(s.etalonsData.Bytes(), buf)

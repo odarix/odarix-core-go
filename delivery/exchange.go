@@ -106,7 +106,6 @@ func (ex *Exchange) Get(ctx context.Context, key common.SegmentKey) (common.Segm
 func (ex *Exchange) Put(
 	key common.SegmentKey,
 	segment common.Segment,
-	redundant common.Redundant,
 	sendPromise *SendPromise,
 	expiredAt time.Time,
 ) {
@@ -116,7 +115,7 @@ func (ex *Exchange) Put(
 
 	ex.puts.Inc()
 	record, _ := ex.records.LoadOrStore(key, newExchangeRecord())
-	record.(*exchangeRecord).Resolve(segment, redundant, ex.destinations, sendPromise, expiredAt)
+	record.(*exchangeRecord).Resolve(segment, ex.destinations, sendPromise, expiredAt)
 	if !atomic.CompareAndSwapUint32(&ex.lastSegments[key.ShardID], key.Segment-1, key.Segment) {
 		panic("invalid segment putted in exchange")
 	}
@@ -201,23 +200,6 @@ func (ex *Exchange) RemoveAll() {
 	)
 }
 
-// Redundant returns redundant by key
-func (ex *Exchange) Redundant(ctx context.Context, key common.SegmentKey) (common.Redundant, error) {
-	record, ok := ex.records.Load(key)
-	if ok {
-		return record.(*exchangeRecord).Redundant(ctx)
-	}
-	if atomic.LoadUint32(&ex.lastSegments[key.ShardID]) >= key.Segment {
-		return nil, ErrSegmentGone
-	}
-	record, ok = ex.records.LoadOrStore(key, newExchangeRecord)
-	if !ok && atomic.LoadUint32(&ex.locked) != 0 {
-		record.(*exchangeRecord).CancelIfNotResolved()
-		ex.deleteRecord(key)
-	}
-	return record.(*exchangeRecord).Redundant(ctx)
-}
-
 // Shutdown locks exchange and await until it will be empty
 //
 // Shutdown also cancels all unresolved promises, cause put is forbidden after lock.
@@ -248,7 +230,6 @@ func newExchangeRecord() *exchangeRecord {
 
 func (record *exchangeRecord) Resolve(
 	segment common.Segment,
-	redundant common.Redundant,
 	destinations int,
 	sendPromise *SendPromise,
 	expiredAt time.Time,
@@ -257,7 +238,7 @@ func (record *exchangeRecord) Resolve(
 	record.sendPromise = sendPromise
 	record.expiredAt = expiredAt
 
-	record.segmentPromise.Resolve(segment, redundant)
+	record.segmentPromise.Resolve(segment)
 }
 
 func (record *exchangeRecord) Ack() bool {
@@ -281,10 +262,9 @@ func (record *exchangeRecord) Expired(now time.Time) bool {
 }
 
 type segmentPromise struct {
-	segment   common.Segment
-	redundant common.Redundant
-	err       error
-	resolve   chan struct{}
+	segment common.Segment
+	err     error
+	resolve chan struct{}
 }
 
 func newSegmentPromise() *segmentPromise {
@@ -302,18 +282,8 @@ func (promise *segmentPromise) Segment(ctx context.Context) (common.Segment, err
 	}
 }
 
-func (promise *segmentPromise) Redundant(ctx context.Context) (common.Redundant, error) {
-	select {
-	case <-ctx.Done():
-		return nil, context.Cause(ctx)
-	case <-promise.resolve:
-		return promise.redundant, promise.err
-	}
-}
-
-func (promise *segmentPromise) Resolve(segment common.Segment, redundant common.Redundant) {
+func (promise *segmentPromise) Resolve(segment common.Segment) {
 	promise.segment = segment
-	promise.redundant = redundant
 	close(promise.resolve)
 }
 

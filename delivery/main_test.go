@@ -6,6 +6,8 @@ import (
 	"github.com/odarix/odarix-core-go/common"
 )
 
+const refillExt = ".refill"
+
 // dataTest - test data.
 type dataTest struct {
 	data []byte

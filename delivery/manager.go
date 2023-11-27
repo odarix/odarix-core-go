@@ -59,7 +59,6 @@ type Manager struct {
 	encodeDuration           prometheus.Histogram
 	promiseDuration          prometheus.Histogram
 	segmentSize              prometheus.Histogram
-	snapshotSize             prometheus.Histogram
 	lagDuration              *prometheus.HistogramVec
 	segmentSeries            prometheus.Histogram
 	segmentSamples           prometheus.Histogram
@@ -75,10 +74,9 @@ type (
 	// ManagerEncoder - interface for encoder manager.
 	ManagerEncoder interface {
 		LastEncodedSegment() uint32
-		Encode(context.Context, common.ShardedData) (common.SegmentKey, common.Segment, common.Redundant, error)
+		Encode(context.Context, common.ShardedData) (common.SegmentKey, common.Segment, error)
 		Add(context.Context, common.ShardedData) (common.Segment, error)
-		Finalize(context.Context) (common.SegmentKey, common.Segment, common.Redundant, error)
-		Snapshot(context.Context, []common.Redundant) (common.Snapshot, error)
+		Finalize(context.Context) (common.SegmentKey, common.Segment, error)
 		Destroy()
 	}
 
@@ -99,9 +97,7 @@ type (
 		Get(context.Context, common.SegmentKey) (Segment, error)
 		Ack(common.SegmentKey, string)
 		Reject(common.SegmentKey, string)
-		Restore(context.Context, common.SegmentKey) (Snapshot, []Segment, error)
 		WriteSegment(context.Context, common.SegmentKey, Segment) error
-		WriteSnapshot(context.Context, common.SegmentKey, Snapshot) error
 		WriteAckStatus(context.Context) error
 		IntermediateRename() error
 		Shutdown(context.Context) error
@@ -240,13 +236,6 @@ func NewManager(
 				Buckets: prometheus.ExponentialBucketsRange(1024, 1<<20, 10),
 			},
 		),
-		snapshotSize: factory.NewHistogram(
-			prometheus.HistogramOpts{
-				Name:    "odarix_core_delivery_manager_snapshot_bytes",
-				Help:    "Size of encoded snapshot.",
-				Buckets: prometheus.ExponentialBucketsRange(1<<20, 120<<20, 10),
-			},
-		),
 		lagDuration: factory.NewHistogramVec(
 			prometheus.HistogramOpts{
 				Name:    "odarix_core_delivery_manager_lag_duration_seconds",
@@ -338,7 +327,7 @@ func (mgr *Manager) Send(ctx context.Context, data ProtoData) (ack bool, err err
 	for i := range mgr.encoders {
 		i := i
 		group.Go(func() error {
-			key, segment, redundant, errEnc := mgr.encoders[i].Encode(gCtx, hx)
+			key, segment, errEnc := mgr.encoders[i].Encode(gCtx, hx)
 			if errEnc != nil {
 				if isUnhandledEncoderError(errEnc) {
 					errEnc = markAsCorruptedEncoderError(errEnc)
@@ -347,7 +336,7 @@ func (mgr *Manager) Send(ctx context.Context, data ProtoData) (ack bool, err err
 				return errEnc
 			}
 			mgr.observeSegmentMetrics(segment)
-			mgr.exchange.Put(key, segment, redundant, result, expiredAt)
+			mgr.exchange.Put(key, segment, result, expiredAt)
 			if mgr.uncommittedTimeWindow == AlwaysToRefill {
 				mgr.triggeredRefill()
 			}
@@ -459,13 +448,13 @@ func (mgr *Manager) finalizePromise() {
 	for i := range mgr.encoders {
 		i := i
 		group.Go(func() error {
-			key, segment, redundant, errEnc := mgr.encoders[i].Finalize(gCtx)
+			key, segment, errEnc := mgr.encoders[i].Finalize(gCtx)
 			if errEnc != nil {
 				return errEnc
 			}
 			atomic.AddInt64(&mgr.walsSizes[i], segment.Size())
 			mgr.observeSegmentMetrics(segment)
-			mgr.exchange.Put(key, segment, redundant, mgr.ohPromise.SendPromise, expiredAt)
+			mgr.exchange.Put(key, segment, mgr.ohPromise.SendPromise, expiredAt)
 			if mgr.uncommittedTimeWindow == AlwaysToRefill {
 				mgr.triggeredRefill()
 			}
@@ -551,27 +540,6 @@ func (mgr *Manager) triggeredRefill() {
 	case mgr.refillSignal <- struct{}{}:
 	default:
 	}
-}
-
-// Restore - get data for restore state from refill.
-func (mgr *Manager) Restore(ctx context.Context, key common.SegmentKey) (Snapshot, []Segment) {
-	snapshot, segments, err := mgr.refill.Restore(ctx, key)
-	if err == nil {
-		return snapshot, segments
-	}
-
-	// refill may not contain snapshot yet
-	snapshot, err = mgr.snapshot(ctx, key)
-	if err == nil {
-		return snapshot, nil
-	}
-
-	// redundants may be dropped from exchange during refill-loop
-	snapshot, segments, err = mgr.refill.Restore(ctx, key)
-	if err != nil {
-		panic("unrestorable state. Impossible")
-	}
-	return snapshot, segments
 }
 
 // Close - rename refill file for close file and shutdown manager.
@@ -697,44 +665,8 @@ func (mgr *Manager) writeSegmentToRefill(ctx context.Context, key common.Segment
 	case err != nil:
 		return err
 	}
-	err = mgr.refill.WriteSegment(ctx, key, segment)
-	if err == nil || !errors.Is(err, ErrSnapshotRequired) {
-		return err
-	}
-	snapshot, err := mgr.snapshot(ctx, key)
-	if err != nil {
-		return err
-	}
-	err = mgr.refill.WriteSnapshot(ctx, key, snapshot)
-	if err != nil {
-		return err
-	}
+
 	return mgr.refill.WriteSegment(ctx, key, segment)
-}
-
-func (mgr *Manager) snapshot(ctx context.Context, key common.SegmentKey) (common.Snapshot, error) {
-	mgr.encodersLock.Lock()
-	defer mgr.encodersLock.Unlock()
-
-	lastSegment := mgr.encoders[key.ShardID].LastEncodedSegment()
-
-	if key.Segment > lastSegment+1 {
-		panic("invalid segment key: more last segment +1")
-	}
-
-	redundants := make([]common.Redundant, 0, lastSegment-key.Segment+1)
-	for segment := key.Segment; segment <= lastSegment; segment++ {
-		key = common.SegmentKey{ShardID: key.ShardID, Segment: segment}
-		redundant, err := mgr.exchange.Redundant(ctx, key)
-		if err != nil {
-			return nil, err
-		}
-		redundants = append(redundants, redundant)
-	}
-
-	snapshot, err := mgr.encoders[key.ShardID].Snapshot(ctx, redundants)
-	mgr.snapshotSize.Observe(float64(snapshot.Size()))
-	return snapshot, err
 }
 
 // MaxBlockBytes - maximum block size among all shards.

@@ -49,14 +49,13 @@ func (s *RefillSenderSuite) errorHandler(msg string, err error) {
 func (s *RefillSenderSuite) TestRefillSenderHappyPath() {
 	count := 10
 	baseCtx := context.Background()
-	retCh := make(chan *server.Request, count*2)
-	rejectsCh := make(chan *server.Request, count*2)
+	retCh := make(chan *frames.ReadFrame, count*2)
+	rejectsCh := make(chan *frames.ReadFrame, count*2)
 
 	handleStream := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
-		reader := server.NewProtocolReader(server.StartWith(tcpReader, fe))
-		defer reader.Destroy()
+		reader := server.StartWith(tcpReader, fe)
 		for {
-			rq, err := reader.Next(ctx)
+			fe, err := reader.Next(ctx)
 			if err != nil {
 				if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
 					s.NoError(err, "fail to read next message")
@@ -64,33 +63,33 @@ func (s *RefillSenderSuite) TestRefillSenderHappyPath() {
 				return
 			}
 
-			if rq.Finalized {
+			if fe.GetType() == frames.FinalType {
 				// something doing
-				retCh <- rq
+				retCh <- fe
 				return
 			}
 
 			// process data
-			retCh <- rq
+			retCh <- fe
 
-			if rq.SegmentID%2 == 0 {
+			if fe.GetSegmentID()%2 == 0 {
 				if !s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 					Text:      "reject",
 					Code:      400,
-					SegmentID: rq.SegmentID,
-					SendAt:    rq.SentAt,
+					SegmentID: fe.GetSegmentID(),
+					SendAt:    fe.GetCreatedAt(),
 				}), "fail to send response") {
 					return
 				}
-				rejectsCh <- rq
+				rejectsCh <- fe
 				continue
 			}
 
 			if !s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 				Text:      "OK",
 				Code:      200,
-				SegmentID: rq.SegmentID,
-				SendAt:    rq.SentAt,
+				SegmentID: fe.GetSegmentID(),
+				SendAt:    fe.GetCreatedAt(),
 			}), "fail to send response") {
 				return
 			}
@@ -122,7 +121,7 @@ func (s *RefillSenderSuite) TestRefillSenderHappyPath() {
 			}
 
 			switch fe.GetType() {
-			case frames.SnapshotType, frames.DrySegmentType, frames.SegmentType:
+			case frames.SegmentType:
 				if _, err = fe.WriteTo(file); !s.NoError(err, "fail write") {
 					return
 				}
@@ -145,16 +144,12 @@ func (s *RefillSenderSuite) TestRefillSenderHappyPath() {
 		}
 		defer fr.Close()
 
-		// make ProtocolReader over FileReader
-		pr := server.NewProtocolReader(fr)
-		defer pr.Destroy()
-
 		// make BlockWriter
 		// read until EOF from ProtocolReader and append to BlockWriter
 		// save BlockWriter
 		// send block to S3
 		for {
-			rq, err := pr.Next(ctx)
+			fe, err := fr.Next(ctx)
 			if err != nil {
 				if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
 					s.NoError(err, "fail to read next message")
@@ -163,8 +158,8 @@ func (s *RefillSenderSuite) TestRefillSenderHappyPath() {
 			}
 
 			s.Require().NotEqual(0, len(rejectsCh))
-			ewr := <-rejectsCh
-			s.Equal(ewr.Message.String(), rq.Message.String())
+			efe := <-rejectsCh
+			s.Equal(efe.GetSegmentID(), fe.GetSegmentID())
 		}
 
 		s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
@@ -197,8 +192,8 @@ func (s *RefillSenderSuite) TestRefillSenderHappyPath() {
 			s.Require().True(delivered)
 		}
 
-		rq := <-retCh
-		s.Equal(wr.String(), rq.Message.String())
+		fe := <-retCh
+		s.EqualValues(i, fe.GetSegmentID())
 	}
 
 	s.T().Log("client: shutdown manager")
@@ -236,8 +231,8 @@ func (s *RefillSenderSuite) TestRefillSenderHappyPath() {
 	err = rsmanager.Shutdown(shutdownCtx)
 	s.Require().NoError(err)
 
-	rq := <-retCh
-	s.True(rq.Finalized)
+	fe := <-retCh
+	s.True(fe.GetType() == frames.FinalType)
 
 	s.T().Log("client: shutdown listener")
 	err = listener.Close()
@@ -254,8 +249,8 @@ func (s *RefillSenderSuite) TestRefillSenderHappyPath() {
 func (s *RefillSenderSuite) TestRefillSenderBreakingConnection() {
 	count := 10
 	baseCtx := context.Background()
-	retCh := make(chan *server.Request, count*2)
-	rejectsCh := make(chan *server.Request, count*2)
+	retCh := make(chan *frames.ReadFrame, count*2)
+	rejectsCh := make(chan *frames.ReadFrame, count*2)
 
 	var (
 		breaker int32 = 10
@@ -284,10 +279,9 @@ func (s *RefillSenderSuite) TestRefillSenderBreakingConnection() {
 	}
 
 	handleStream := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
-		reader := server.NewProtocolReader(server.StartWith(tcpReader, fe))
-		defer reader.Destroy()
+		reader := server.StartWith(tcpReader, fe)
 		for {
-			rq, err := reader.Next(ctx)
+			fe, err := reader.Next(ctx)
 			if err != nil {
 				if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
 					s.NoError(err, "fail to read next message")
@@ -295,33 +289,33 @@ func (s *RefillSenderSuite) TestRefillSenderBreakingConnection() {
 				return
 			}
 
-			if rq.Finalized {
+			if fe.GetType() == frames.FinalType {
 				// something doing
-				retCh <- rq
+				retCh <- fe
 				return
 			}
 
 			// process data
-			retCh <- rq
+			retCh <- fe
 
-			if rq.SegmentID%2 == 0 {
+			if fe.GetSegmentID()%2 == 0 {
 				if !s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 					Text:      "reject",
 					Code:      400,
-					SegmentID: rq.SegmentID,
-					SendAt:    rq.SentAt,
+					SegmentID: fe.GetSegmentID(),
+					SendAt:    fe.GetCreatedAt(),
 				}), "fail to send response") {
 					return
 				}
-				rejectsCh <- rq
+				rejectsCh <- fe
 				continue
 			}
 
 			if !s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
 				Text:      "OK",
 				Code:      200,
-				SegmentID: rq.SegmentID,
-				SendAt:    rq.SentAt,
+				SegmentID: fe.GetSegmentID(),
+				SendAt:    fe.GetCreatedAt(),
 			}), "fail to send response") {
 				return
 			}
@@ -358,7 +352,7 @@ func (s *RefillSenderSuite) TestRefillSenderBreakingConnection() {
 			}
 
 			switch fe.GetType() {
-			case frames.SnapshotType, frames.DrySegmentType, frames.SegmentType:
+			case frames.SegmentType:
 				if _, err = fe.WriteTo(file); !s.NoError(err, "fail write") {
 					return
 				}
@@ -386,16 +380,12 @@ func (s *RefillSenderSuite) TestRefillSenderBreakingConnection() {
 		}
 		defer fr.Close()
 
-		// make ProtocolReader over FileReader
-		pr := server.NewProtocolReader(fr)
-		defer pr.Destroy()
-
 		// make BlockWriter
 		// read until EOF from ProtocolReader and append to BlockWriter
 		// save BlockWriter
 		// send block to S3
 		for {
-			rq, err := pr.Next(ctx)
+			fe, err := fr.Next(ctx)
 			if err != nil {
 				if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
 					s.NoError(err, "fail to read next message")
@@ -404,8 +394,8 @@ func (s *RefillSenderSuite) TestRefillSenderBreakingConnection() {
 			}
 
 			s.Require().NotEqual(0, len(rejectsCh))
-			ewr := <-rejectsCh
-			s.Equal(ewr.Message.String(), rq.Message.String())
+			efe := <-rejectsCh
+			s.Equal(efe.GetSegmentID(), fe.GetSegmentID())
 		}
 
 		tcpReader.SendResponse(ctx, &frames.ResponseMsg{
@@ -438,8 +428,8 @@ func (s *RefillSenderSuite) TestRefillSenderBreakingConnection() {
 			s.Require().True(delivered)
 		}
 
-		rq := <-retCh
-		s.Equal(wr.String(), rq.Message.String())
+		fe := <-retCh
+		s.EqualValues(i, fe.GetSegmentID())
 	}
 
 	s.T().Log("client: shutdown manager")
@@ -479,8 +469,8 @@ func (s *RefillSenderSuite) TestRefillSenderBreakingConnection() {
 	err = rsmanager.Shutdown(shutdownCtx)
 	s.Require().NoError(err)
 
-	rq := <-retCh
-	s.True(rq.Finalized)
+	fe := <-retCh
+	s.True(fe.GetType() == frames.FinalType)
 
 	s.T().Log("client: shutdown listener")
 	err = listener.Close()

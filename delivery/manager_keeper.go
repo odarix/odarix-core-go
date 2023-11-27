@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"math"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"sync"
@@ -415,21 +416,27 @@ type RotateTimer struct {
 	timer            clockwork.Timer
 	rotateAt         time.Time
 	delayAfterNotify time.Duration
-	durationBlock    time.Duration
+	durationBlock    int64
+	rndDurationBlock int64
 	mx               *sync.Mutex
 }
 
 // NewRotateTimer - init new RotateTimer. The duration durationBlock and delayAfterNotify must be greater than zero;
 // if not, Ticker will panic. Stop the ticker to release associated resources.
 func NewRotateTimer(clock clockwork.Clock, cfg BlockLimits) *RotateTimer {
+	bd := cfg.DesiredBlockFormationDuration.Milliseconds()
+	//nolint:gosec // there is no need for cryptographic strength here
+	rnd := rand.New(rand.NewSource(clock.Now().UnixNano()))
 	rt := &RotateTimer{
 		clock:            clock,
-		timer:            clock.NewTimer(cfg.DesiredBlockFormationDuration),
-		rotateAt:         clock.Now().Add(cfg.DesiredBlockFormationDuration),
 		delayAfterNotify: cfg.DelayAfterNotify,
-		durationBlock:    cfg.DesiredBlockFormationDuration,
+		durationBlock:    bd,
+		rndDurationBlock: rnd.Int63n(bd),
 		mx:               new(sync.Mutex),
 	}
+
+	rt.rotateAt = rt.RotateAtNext()
+	rt.timer = clock.NewTimer(rt.rotateAt.Sub(rt.clock.Now()))
 
 	return rt
 }
@@ -456,15 +463,28 @@ func (rt *RotateTimer) Chan() <-chan time.Time {
 // Reset - changes the timer to expire after duration Block and clearing channels.
 func (rt *RotateTimer) Reset() {
 	rt.mx.Lock()
-	rt.rotateAt = rt.clock.Now().Add(rt.durationBlock)
+	rt.rotateAt = rt.RotateAtNext()
 	if !rt.timer.Stop() {
 		select {
 		case <-rt.timer.Chan():
 		default:
 		}
 	}
-	rt.timer.Reset(rt.durationBlock)
+	rt.timer.Reset(rt.rotateAt.Sub(rt.clock.Now()))
 	rt.mx.Unlock()
+}
+
+// RotateAtNext - calculated next rotate time.
+func (rt *RotateTimer) RotateAtNext() time.Time {
+	now := rt.clock.Now().UnixMilli()
+	k := now % rt.durationBlock
+	startBlock := math.Floor(float64(now)/float64(rt.durationBlock)) * float64(rt.durationBlock)
+
+	if rt.rndDurationBlock > k {
+		return time.UnixMilli(int64(startBlock) + rt.rndDurationBlock)
+	}
+
+	return time.UnixMilli(int64(startBlock) + rt.durationBlock + rt.rndDurationBlock)
 }
 
 // Stop - prevents the Timer from firing.
