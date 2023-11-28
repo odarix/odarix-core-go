@@ -6,9 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"math"
-	"math/rand"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -1011,70 +1009,4 @@ func (s *BlockLimitsSuite) TestMarshalBinaryUnmarshalBinary_Quick() {
 
 	err := quick.Check(f, nil)
 	s.NoError(err)
-}
-
-func TestXxx(t *testing.T) {
-	// // x = random(block_duration) # [0, 120*60*1000)
-	// blockDuration := 2 * time.Hour
-	// dur := blockDuration.Milliseconds()
-	// x := rand.Int63n(dur)
-
-	// // y = now % block_duration   # [0, 120*60*1000)
-	// now := time.Now().UnixMilli()
-	// y := now % dur
-
-	// // a = ⌊now / block_duration⌋*block_duration
-	// a := math.Floor(float64(now)/float64(dur)) * float64(dur)
-
-	// // now = a + y
-	// now2 := int64(a) + y
-
-	// t.Log("dur", dur)
-	// t.Log("x", x)
-	// t.Log("y", y)
-	// t.Log("a", int64(a), time.UnixMilli(int64(a)))
-	// t.Log("now", now)
-	// t.Log("now2", now2)
-
-	// var rotate_at int64
-
-	// if x > y {
-	// 	t.Log("x > y")
-	// 	rotate_at = int64(a) + x
-	// } else {
-	// 	t.Log("x <= y")
-	// 	rotate_at = int64(a) + dur + x
-	// }
-
-	// t.Log(time.UnixMilli(now))
-	// t.Log(time.UnixMilli(rotate_at))
-
-	blockDuration := (2 * time.Hour).Milliseconds()
-	rndDur := rand.Int63n(blockDuration)
-	now := time.Now().UnixMilli()
-	rotate_at := calculateNext(now, blockDuration, rndDur)
-
-	t.Log(time.UnixMilli(now))
-	t.Log(time.UnixMilli(rotate_at))
-	t.Log(time.UnixMilli(rotate_at).Sub(time.UnixMilli(now)))
-
-	now = rotate_at + 1
-	rotate_at = calculateNext(now, blockDuration, rndDur)
-
-	t.Log(time.UnixMilli(now))
-	t.Log(time.UnixMilli(rotate_at))
-	t.Log(time.UnixMilli(rotate_at).Sub(time.UnixMilli(now)))
-}
-
-func calculateNext(now, dur, rndDur int64) int64 {
-	k := now % dur
-	startBlock := math.Floor(float64(now)/float64(dur)) * float64(dur)
-
-	if rndDur > k {
-		log.Println("1")
-		return int64(startBlock) + rndDur
-	}
-
-	log.Println("2")
-	return int64(startBlock) + dur + rndDur
 }
