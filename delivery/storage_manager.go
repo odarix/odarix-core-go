@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 
 	"github.com/google/uuid"
-	"github.com/odarix/odarix-core-go/common"
+	"github.com/odarix/odarix-core-go/cppbridge"
 	"github.com/odarix/odarix-core-go/frames"
 	"github.com/odarix/odarix-core-go/util"
 	"github.com/prometheus/client_golang/prometheus"
@@ -21,7 +21,7 @@ const posNotFound int64 = -1
 // MarkupKey - key for search position.
 type MarkupKey struct {
 	typeFrame frames.TypeFrame
-	common.SegmentKey
+	cppbridge.SegmentKey
 }
 
 // StorageManager - manager for file refill. Contains file markup for quick access to data.
@@ -177,18 +177,18 @@ func (sm *StorageManager) CheckSegmentsSent() bool {
 }
 
 // Ack - increment status by destination and shard if segment is next for current value.
-func (sm *StorageManager) Ack(key common.SegmentKey, dest string) {
+func (sm *StorageManager) Ack(key cppbridge.SegmentKey, dest string) {
 	sm.ackStatus.Ack(key, dest)
 }
 
 // Reject - accumulates rejects and serializes and writes to refill while recording statuses.
-func (sm *StorageManager) Reject(segKey common.SegmentKey, dest string) {
+func (sm *StorageManager) Reject(segKey cppbridge.SegmentKey, dest string) {
 	sm.hasRejects.Store(true)
 	sm.ackStatus.Reject(segKey, dest)
 }
 
 // getSegmentPosition - return position in storage.
-func (sm *StorageManager) getSegmentPosition(segKey common.SegmentKey) int64 {
+func (sm *StorageManager) getSegmentPosition(segKey cppbridge.SegmentKey) int64 {
 	mk := MarkupKey{
 		typeFrame:  frames.SegmentType,
 		SegmentKey: segKey,
@@ -202,7 +202,7 @@ func (sm *StorageManager) getSegmentPosition(segKey common.SegmentKey) int64 {
 }
 
 // setSegmentPosition - set segment position in storage.
-func (sm *StorageManager) setSegmentPosition(segKey common.SegmentKey, position int64) {
+func (sm *StorageManager) setSegmentPosition(segKey cppbridge.SegmentKey, position int64) {
 	mk := MarkupKey{
 		typeFrame:  frames.SegmentType,
 		SegmentKey: segKey,
@@ -215,7 +215,7 @@ func (sm *StorageManager) setSegmentPosition(segKey common.SegmentKey, position 
 }
 
 // GetSegment - return segment from storage.
-func (sm *StorageManager) GetSegment(ctx context.Context, segKey common.SegmentKey) (Segment, error) {
+func (sm *StorageManager) GetSegment(ctx context.Context, segKey cppbridge.SegmentKey) (Segment, error) {
 	// get position
 	pos := sm.getSegmentPosition(segKey)
 	if pos == posNotFound {
@@ -294,7 +294,7 @@ func (sm *StorageManager) restoreSegment(h *frames.Header, off int64) error {
 	}
 
 	sm.setSegmentPosition(
-		common.SegmentKey{
+		cppbridge.SegmentKey{
 			ShardID: h.GetShardID(),
 			Segment: h.GetSegmentID(),
 		},
@@ -427,7 +427,7 @@ func (sm *StorageManager) openNewFile(ctx context.Context) error {
 }
 
 // WriteSegment - write Segment in storage.
-func (sm *StorageManager) WriteSegment(ctx context.Context, key common.SegmentKey, seg Segment) error {
+func (sm *StorageManager) WriteSegment(ctx context.Context, key cppbridge.SegmentKey, seg Segment) error {
 	if !sm.isOpenFile {
 		if err := sm.openNewFile(ctx); err != nil {
 			return err
@@ -662,7 +662,7 @@ func (as *AckStatus) Shards() int {
 }
 
 // Ack increment status by destination and shard if segment is next for current value
-func (as *AckStatus) Ack(key common.SegmentKey, dest string) {
+func (as *AckStatus) Ack(key cppbridge.SegmentKey, dest string) {
 	id := as.names.StringToID(dest)
 	if id == frames.NotFoundName {
 		panic(fmt.Sprintf(
@@ -687,7 +687,7 @@ func (as *AckStatus) Ack(key common.SegmentKey, dest string) {
 }
 
 // Reject - add rejected segment.
-func (as *AckStatus) Reject(segKey common.SegmentKey, dest string) {
+func (as *AckStatus) Reject(segKey cppbridge.SegmentKey, dest string) {
 	id := as.names.StringToID(dest)
 	if id == frames.NotFoundName {
 		panic(fmt.Sprintf(
@@ -722,7 +722,7 @@ func (as *AckStatus) Last(shardID uint16, dest string) uint32 {
 }
 
 // IsAck returns true if segment ack by all destinations
-func (as *AckStatus) IsAck(key common.SegmentKey) bool {
+func (as *AckStatus) IsAck(key cppbridge.SegmentKey) bool {
 	for id := 0; id < as.Destinations(); id++ {
 		if atomic.LoadUint32(&as.status[id*as.Shards()+int(key.ShardID)])+1 <= key.Segment {
 			return false

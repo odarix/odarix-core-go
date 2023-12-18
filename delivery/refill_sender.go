@@ -17,7 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jonboulle/clockwork"
-	"github.com/odarix/odarix-core-go/common"
+	"github.com/odarix/odarix-core-go/cppbridge"
 	"github.com/odarix/odarix-core-go/frames"
 	"github.com/odarix/odarix-core-go/util"
 	"github.com/prometheus/client_golang/prometheus"
@@ -547,7 +547,7 @@ func (rs *RefillSender) collectedData() ([]PreparedData, error) {
 	pData := make([]PreparedData, 0, len(rs.dataToSend))
 
 	for _, segment := range rs.dataToSend {
-		key := common.SegmentKey{ShardID: rs.shardID, Segment: segment}
+		key := cppbridge.SegmentKey{ShardID: rs.shardID, Segment: segment}
 		mval := rs.source.SegmentPosition(key)
 		if mval == nil {
 			return nil, SegmentNotFoundInRefill(key)
@@ -896,7 +896,7 @@ func (rr *RefillReader) setMarkupSegment(h *frames.Header, off int64) error {
 		return ErrServiceDataNotRestored{}
 	}
 
-	segKey := common.SegmentKey{
+	segKey := cppbridge.SegmentKey{
 		ShardID: h.GetShardID(),
 		Segment: h.GetSegmentID(),
 	}
@@ -1005,7 +1005,7 @@ func (rr *RefillReader) Segment(ctx context.Context, mval *MarkupValue) (*frames
 }
 
 // SegmentPosition - return position in storage.
-func (rr *RefillReader) SegmentPosition(segKey common.SegmentKey) *MarkupValue {
+func (rr *RefillReader) SegmentPosition(segKey cppbridge.SegmentKey) *MarkupValue {
 	rr.mx.RLock()
 	defer rr.mx.RUnlock()
 
@@ -1013,7 +1013,7 @@ func (rr *RefillReader) SegmentPosition(segKey common.SegmentKey) *MarkupValue {
 }
 
 // GetSegment - return segment from storage.
-func (rr *RefillReader) GetSegment(ctx context.Context, segKey common.SegmentKey) (*frames.BinaryBody, error) {
+func (rr *RefillReader) GetSegment(ctx context.Context, segKey cppbridge.SegmentKey) (*frames.BinaryBody, error) {
 	rr.mx.RLock()
 	defer rr.mx.RUnlock()
 
@@ -1027,7 +1027,7 @@ func (rr *RefillReader) GetSegment(ctx context.Context, segKey common.SegmentKey
 }
 
 // getSegmentPosition - return position in storage.
-func (rr *RefillReader) getSegmentPosition(segKey common.SegmentKey) *MarkupValue {
+func (rr *RefillReader) getSegmentPosition(segKey cppbridge.SegmentKey) *MarkupValue {
 	mk := MarkupKey{
 		typeFrame:  frames.SegmentType,
 		SegmentKey: segKey,

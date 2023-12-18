@@ -10,7 +10,7 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/google/uuid"
-	"github.com/odarix/odarix-core-go/common"
+	"github.com/odarix/odarix-core-go/cppbridge"
 	"github.com/odarix/odarix-core-go/frames"
 	"github.com/odarix/odarix-core-go/util"
 	"github.com/prometheus/client_golang/prometheus"
@@ -28,9 +28,9 @@ var (
 
 // Source is a manager
 type Source interface {
-	Get(ctx context.Context, key common.SegmentKey) (Segment, error)
-	Ack(key common.SegmentKey, dest string)
-	Reject(key common.SegmentKey, dest string)
+	Get(ctx context.Context, key cppbridge.SegmentKey) (Segment, error)
+	Ack(key cppbridge.SegmentKey, dest string)
+	Reject(key cppbridge.SegmentKey, dest string)
 }
 
 // Sender is a transport adapter for manager
@@ -146,13 +146,13 @@ func (sender *Sender) mainLoop(ctx context.Context) {
 		}
 		transport.OnAck(func(id uint32) {
 			sender.responsedSegment.With(prometheus.Labels{"state": "ack"}).Set(float64(id))
-			sender.source.Ack(common.SegmentKey{ShardID: sender.shardID, Segment: id}, sender.String())
+			sender.source.Ack(cppbridge.SegmentKey{ShardID: sender.shardID, Segment: id}, sender.String())
 			onResponse(id)
 		})
 		transport.OnReject(func(id uint32) {
 			sender.hasRejects.Store(true)
 			sender.responsedSegment.With(prometheus.Labels{"state": "reject"}).Set(float64(id))
-			sender.source.Reject(common.SegmentKey{ShardID: sender.shardID, Segment: id}, sender.String())
+			sender.source.Reject(cppbridge.SegmentKey{ShardID: sender.shardID, Segment: id}, sender.String())
 			onResponse(id)
 		})
 		writeCtx, cancel := context.WithCancelCause(ctx)
@@ -249,7 +249,7 @@ func (sender *Sender) writeLoop(ctx context.Context, transport Transport, from u
 //
 // So, it's correct to check that segment is nil, it is equivalent permanent state.
 func (sender *Sender) getSegment(ctx context.Context, id uint32) (Segment, error) {
-	key := common.SegmentKey{
+	key := cppbridge.SegmentKey{
 		ShardID: sender.shardID,
 		Segment: id,
 	}

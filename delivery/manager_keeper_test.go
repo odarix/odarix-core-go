@@ -23,7 +23,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/odarix/odarix-core-go/common"
+	"github.com/odarix/odarix-core-go/cppbridge"
 	"github.com/odarix/odarix-core-go/delivery"
 	"github.com/odarix/odarix-core-go/frames"
 	"github.com/odarix/odarix-core-go/frames/framestest"
@@ -233,9 +233,9 @@ func (*ManagerKeeperSuite) simpleEncoder() delivery.ManagerEncoderCtor {
 		return &ManagerEncoderMock{
 			LastEncodedSegmentFunc: func() uint32 { return nextSegmentID - 1 },
 			EncodeFunc: func(
-				_ context.Context, data common.ShardedData,
-			) (common.SegmentKey, common.Segment, error) {
-				key := common.SegmentKey{
+				_ context.Context, data cppbridge.ShardedData,
+			) (cppbridge.SegmentKey, cppbridge.Segment, error) {
+				key := cppbridge.SegmentKey{
 					ShardID: shardID,
 					Segment: nextSegmentID,
 				}
@@ -248,7 +248,6 @@ func (*ManagerKeeperSuite) simpleEncoder() delivery.ManagerEncoderCtor {
 				nextSegmentID++
 				return key, segment, nil
 			},
-			DestroyFunc: func() {},
 		}, nil
 	}
 }
@@ -258,12 +257,12 @@ func (*ManagerKeeperSuite) simpleEncoder() delivery.ManagerEncoderCtor {
 func (*ManagerKeeperSuite) inMemoryRefill() *ManagerRefillMock {
 	m := new(sync.Mutex)
 	data := make(map[uint16]map[uint32]interface{})
-	rejects := make(map[common.SegmentKey]bool)
+	rejects := make(map[cppbridge.SegmentKey]bool)
 	lastSegments := make(map[uint16]uint32)
 	errNotFound := errors.New("not found")
 
 	return &ManagerRefillMock{
-		GetFunc: func(_ context.Context, key common.SegmentKey) (delivery.Segment, error) {
+		GetFunc: func(_ context.Context, key cppbridge.SegmentKey) (delivery.Segment, error) {
 			m.Lock()
 			defer m.Unlock()
 
@@ -271,7 +270,7 @@ func (*ManagerKeeperSuite) inMemoryRefill() *ManagerRefillMock {
 			if !ok {
 				return nil, errNotFound
 			}
-			if segment, ok := blob.(common.Segment); ok {
+			if segment, ok := blob.(cppbridge.Segment); ok {
 				buf, _ := framestest.ReadPayload(segment)
 				if !strings.Contains(string(buf), "snapshot:") {
 					return segment, nil
@@ -279,18 +278,18 @@ func (*ManagerKeeperSuite) inMemoryRefill() *ManagerRefillMock {
 			}
 			return nil, errNotFound
 		},
-		AckFunc: func(_ common.SegmentKey, _ string) {},
-		RejectFunc: func(key common.SegmentKey, _ string) {
+		AckFunc: func(_ cppbridge.SegmentKey, _ string) {},
+		RejectFunc: func(key cppbridge.SegmentKey, _ string) {
 			m.Lock()
 			defer m.Unlock()
 
 			rejects[key] = true
 		},
-		WriteSegmentFunc: func(_ context.Context, key common.SegmentKey, segment delivery.Segment) error {
+		WriteSegmentFunc: func(_ context.Context, key cppbridge.SegmentKey, segment delivery.Segment) error {
 			m.Lock()
 			defer m.Unlock()
 
-			if key.Segment == 0 || data[key.ShardID] == nil {
+			if data[key.ShardID] == nil {
 				data[key.ShardID] = make(map[uint32]interface{})
 			}
 
@@ -298,7 +297,6 @@ func (*ManagerKeeperSuite) inMemoryRefill() *ManagerRefillMock {
 			if err != nil {
 				return err
 			}
-
 			data[key.ShardID][key.Segment] = &dataTest{
 				data: buf,
 			}
@@ -333,7 +331,7 @@ func (s *ManagerKeeperSuite) TestSendHappyPath() {
 
 	s.T().Log("use no-op refill: assumed that it won't be touched")
 	refillCtor := s.constructorForRefill(&ManagerRefillMock{
-		AckFunc:                func(common.SegmentKey, string) {},
+		AckFunc:                func(cppbridge.SegmentKey, string) {},
 		WriteAckStatusFunc:     func(context.Context) error { return nil },
 		IntermediateRenameFunc: func() error { return nil },
 		ShutdownFunc:           func(context.Context) error { return nil },
@@ -406,7 +404,7 @@ func (s *ManagerKeeperSuite) TestSendWithRotate() {
 
 	s.T().Log("use no-op refill: assumed that it won't be touched")
 	refillCtor := s.constructorForRefill(&ManagerRefillMock{
-		AckFunc:                func(common.SegmentKey, string) {},
+		AckFunc:                func(cppbridge.SegmentKey, string) {},
 		WriteAckStatusFunc:     func(context.Context) error { return nil },
 		IntermediateRenameFunc: func() error { return nil },
 		ShutdownFunc:           func(context.Context) error { return nil },
@@ -554,7 +552,7 @@ func (s *ManagerKeeperSuite) TestSendWithReject() {
 		_, err = managerKeeper.Send(sendCtx, data)
 		s.NoError(err, "data should be delivered in 300 ms")
 		sendCancel()
-		s.Equal(expectedData, <-destination, "data should be delivered 1 times(1 shard)")
+		s.Equalf(expectedData, <-destination, "data should be delivered 1 times(1 shard) segment")
 	}
 
 	s.T().Log("shutdown manager")

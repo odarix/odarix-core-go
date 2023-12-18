@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/jonboulle/clockwork"
-	"github.com/odarix/odarix-core-go/common"
+	"github.com/odarix/odarix-core-go/cppbridge"
 	"github.com/odarix/odarix-core-go/frames"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -206,7 +206,7 @@ func NewOpenHeadPromise(
 }
 
 // Add appends data to promise and checks limits. It returns true if limits reached.
-func (promise *OpenHeadPromise) Add(segments []common.Segment) (limitsReached bool, afterFinish func()) {
+func (promise *OpenHeadPromise) Add(segments []cppbridge.SegmentStats) (limitsReached bool, afterFinish func()) {
 	select {
 	case <-promise.done:
 		panic("Attempt to add data in finalized promise")
@@ -256,11 +256,11 @@ func IsPermanent(err error) bool {
 
 // ErrSegmentNotFoundInRefill - error segment not found in refill.
 type ErrSegmentNotFoundInRefill struct {
-	key common.SegmentKey
+	key cppbridge.SegmentKey
 }
 
 // SegmentNotFoundInRefill create ErrSegmentNotFoundInRefill error
-func SegmentNotFoundInRefill(key common.SegmentKey) ErrSegmentNotFoundInRefill {
+func SegmentNotFoundInRefill(key cppbridge.SegmentKey) ErrSegmentNotFoundInRefill {
 	return ErrSegmentNotFoundInRefill{key}
 }
 
@@ -293,8 +293,8 @@ type CorruptedEncoderError struct {
 }
 
 func isUnhandledEncoderError(err error) bool {
-	return !common.IsRemoteWriteLimitsExceedsError(err) &&
-		!common.IsRemoteWriteParsingError(err)
+	return !cppbridge.IsRemoteWriteLimitsExceedsError(err) &&
+		!cppbridge.IsRemoteWriteParsingError(err)
 }
 
 func markAsCorruptedEncoderError(err error) error {

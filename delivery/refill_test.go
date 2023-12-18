@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/odarix/odarix-core-go/common"
+	"github.com/odarix/odarix-core-go/cppbridge"
 	"github.com/odarix/odarix-core-go/delivery"
 	"github.com/odarix/odarix-core-go/frames/framestest"
 )
@@ -114,7 +114,7 @@ func (s *RefillSuite) TearDownTest() {
 }
 
 func (s *RefillSuite) TestManagerInitIsContinuable() {
-	segKey := common.SegmentKey{
+	segKey := cppbridge.SegmentKey{
 		ShardID: 0,
 		Segment: 1,
 	}
@@ -157,7 +157,7 @@ func (s *RefillSuite) TestManagerInitIsContinuable() {
 }
 
 func (s *RefillSuite) TestSegment() {
-	segKey := common.SegmentKey{
+	segKey := cppbridge.SegmentKey{
 		ShardID: 0,
 		Segment: 0,
 	}
@@ -183,7 +183,7 @@ func (s *RefillSuite) TestAckStatus() {
 	s.Error(err, "File not deleted")
 
 	s.T().Log("write segment, ack status and check file exist")
-	err = s.mr.WriteSegment(s.ctx, common.SegmentKey{ShardID: 0, Segment: 0}, s.etalonsData)
+	err = s.mr.WriteSegment(s.ctx, cppbridge.SegmentKey{ShardID: 0, Segment: 0}, s.etalonsData)
 	s.NoError(err)
 	err = s.mr.WriteAckStatus(s.ctx)
 	s.NoError(err)
@@ -192,8 +192,8 @@ func (s *RefillSuite) TestAckStatus() {
 
 	s.T().Log("ack segments for all name and check file deleted")
 	for _, name := range s.etalonsNames {
-		s.mr.Ack(common.SegmentKey{ShardID: 0, Segment: 0}, name)
-		s.mr.Ack(common.SegmentKey{ShardID: 0, Segment: 1}, name)
+		s.mr.Ack(cppbridge.SegmentKey{ShardID: 0, Segment: 0}, name)
+		s.mr.Ack(cppbridge.SegmentKey{ShardID: 0, Segment: 1}, name)
 	}
 	err = s.mr.WriteAckStatus(s.ctx)
 	s.NoError(err)
@@ -212,7 +212,7 @@ func (s *RefillSuite) TestAckStatusWithReject() {
 	s.Error(err, "File not deleted")
 
 	s.T().Log("write segment, ack status and check file exist")
-	err = s.mr.WriteSegment(s.ctx, common.SegmentKey{ShardID: 0, Segment: 0}, s.etalonsData)
+	err = s.mr.WriteSegment(s.ctx, cppbridge.SegmentKey{ShardID: 0, Segment: 0}, s.etalonsData)
 	s.NoError(err)
 	err = s.mr.WriteAckStatus(s.ctx)
 	s.NoError(err)
@@ -221,10 +221,10 @@ func (s *RefillSuite) TestAckStatusWithReject() {
 
 	s.T().Log("ack segments for all name and 1 reject and check file not deleted")
 	for _, name := range s.etalonsNames {
-		s.mr.Ack(common.SegmentKey{ShardID: 0, Segment: 0}, name)
-		s.mr.Ack(common.SegmentKey{ShardID: 0, Segment: 1}, name)
+		s.mr.Ack(cppbridge.SegmentKey{ShardID: 0, Segment: 0}, name)
+		s.mr.Ack(cppbridge.SegmentKey{ShardID: 0, Segment: 1}, name)
 	}
-	s.mr.Reject(common.SegmentKey{ShardID: 0, Segment: 3}, s.etalonsNames[0])
+	s.mr.Reject(cppbridge.SegmentKey{ShardID: 0, Segment: 3}, s.etalonsNames[0])
 	err = s.mr.WriteAckStatus(s.ctx)
 	s.NoError(err)
 	_, err = os.Stat(filepath.Join(s.workingDir, delivery.RefillDir, delivery.RefillFileName+refillExt))
@@ -235,7 +235,7 @@ func (s *RefillSuite) TestAckStatusWithReject() {
 }
 
 func (s *RefillSuite) TestRename() {
-	segKey := common.SegmentKey{
+	segKey := cppbridge.SegmentKey{
 		ShardID: 0,
 		Segment: 2,
 	}

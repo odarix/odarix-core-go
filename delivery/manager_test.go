@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/odarix/odarix-core-go/common"
+	"github.com/odarix/odarix-core-go/cppbridge"
 	"github.com/odarix/odarix-core-go/delivery"
 	"github.com/odarix/odarix-core-go/frames"
 	"github.com/odarix/odarix-core-go/frames/framestest"
@@ -45,7 +45,7 @@ func (s *ManagerSuite) TestSendWithAck() {
 
 	s.T().Log("Use no-op refill: assumed that it won't be touched")
 	refillCtor := s.constructorForRefill(&ManagerRefillMock{
-		AckFunc:            func(common.SegmentKey, string) {},
+		AckFunc:            func(cppbridge.SegmentKey, string) {},
 		WriteAckStatusFunc: func(context.Context) error { return nil },
 		ShutdownFunc:       func(context.Context) error { return nil },
 	})
@@ -159,7 +159,7 @@ func (s *ManagerSuite) TestRejectToRefill() {
 
 	s.T().Log("Check that rejected data is in refill")
 	for i := 0; i < 4; i++ {
-		segment, err := refill.Get(baseCtx, common.SegmentKey{ShardID: uint16(i), Segment: 1})
+		segment, err := refill.Get(baseCtx, cppbridge.SegmentKey{ShardID: uint16(i), Segment: 1})
 		if s.NoError(err, "segment should be in refill") {
 			data, err := framestest.ReadPayload(segment)
 			if s.NoError(err) {
@@ -189,7 +189,7 @@ func (s *ManagerSuite) TestAckRejectRace() {
 	refill := s.inMemoryRefill()
 	refillWriteLock := new(sync.Mutex)
 	writeSegment := refill.WriteSegmentFunc
-	refill.WriteSegmentFunc = func(ctx context.Context, key common.SegmentKey, segment delivery.Segment) error {
+	refill.WriteSegmentFunc = func(ctx context.Context, key cppbridge.SegmentKey, segment delivery.Segment) error {
 		refillWriteLock.Lock()
 		defer refillWriteLock.Unlock()
 		return writeSegment(ctx, key, segment)
@@ -273,7 +273,7 @@ func (s *ManagerSuite) TestAckRejectRace() {
 	s.T().Log("Check that rejected and followed data is in refill")
 	for i := 1; i < 3; i++ {
 		for j := 0; j < 4; j++ {
-			segment, err := refill.Get(baseCtx, common.SegmentKey{ShardID: uint16(j), Segment: uint32(i)})
+			segment, err := refill.Get(baseCtx, cppbridge.SegmentKey{ShardID: uint16(j), Segment: uint32(i)})
 			if s.NoError(err, "segment should be in refill") {
 				data, err := framestest.ReadPayload(segment)
 				if s.NoError(err) {
@@ -490,7 +490,7 @@ func (s *ManagerSuite) TestNotOpened() {
 
 	s.T().Log("Check that rejected data is in refill")
 	for i := 0; i < 4; i++ {
-		segment, err := refill.Get(baseCtx, common.SegmentKey{ShardID: uint16(i), Segment: 0})
+		segment, err := refill.Get(baseCtx, cppbridge.SegmentKey{ShardID: uint16(i), Segment: 0})
 		if s.NoError(err, "segment should be in refill") {
 			data, err := framestest.ReadPayload(segment)
 			if s.NoError(err) {
@@ -563,7 +563,7 @@ func (s *ManagerSuite) TestLongDial() {
 
 	s.T().Log("Check that rejected data is in refill")
 	for i := 0; i < 4; i++ {
-		segment, err := refill.Get(baseCtx, common.SegmentKey{ShardID: uint16(i), Segment: 0})
+		segment, err := refill.Get(baseCtx, cppbridge.SegmentKey{ShardID: uint16(i), Segment: 0})
 		if s.NoError(err, "segment should be in refill") {
 			data, err := framestest.ReadPayload(segment)
 			if s.NoError(err) {
@@ -637,7 +637,7 @@ func (s *ManagerSuite) TestAlwaysToRefill() {
 	s.T().Log("Check that rejected and followed data is in refill")
 	for i := 0; i < 3; i++ {
 		for j := 0; j < 4; j++ {
-			segment, err := refill.Get(baseCtx, common.SegmentKey{ShardID: uint16(j), Segment: uint32(i)})
+			segment, err := refill.Get(baseCtx, cppbridge.SegmentKey{ShardID: uint16(j), Segment: uint32(i)})
 			if s.NoError(err, "segment should be in refill") {
 				data, err := framestest.ReadPayload(segment)
 				if s.NoError(err) {
@@ -796,12 +796,12 @@ func (*ManagerSuite) transportNewAutoAck(name string, delay time.Duration, dest 
 func (*ManagerSuite) inMemoryRefill() *ManagerRefillMock {
 	m := new(sync.Mutex)
 	data := make(map[uint16]map[uint32]interface{})
-	rejects := make(map[common.SegmentKey]bool)
+	rejects := make(map[cppbridge.SegmentKey]bool)
 	lastSegments := make(map[uint16]uint32)
 	errNotFound := errors.New("not found")
 
 	return &ManagerRefillMock{
-		GetFunc: func(_ context.Context, key common.SegmentKey) (delivery.Segment, error) {
+		GetFunc: func(_ context.Context, key cppbridge.SegmentKey) (delivery.Segment, error) {
 			m.Lock()
 			defer m.Unlock()
 
@@ -809,23 +809,23 @@ func (*ManagerSuite) inMemoryRefill() *ManagerRefillMock {
 			if !ok {
 				return nil, errNotFound
 			}
-			if segment, ok := blob.(common.Segment); ok {
+			if segment, ok := blob.(cppbridge.Segment); ok {
 				return segment, nil
 			}
 			return nil, errNotFound
 		},
-		AckFunc: func(_ common.SegmentKey, _ string) {},
-		RejectFunc: func(key common.SegmentKey, _ string) {
+		AckFunc: func(_ cppbridge.SegmentKey, _ string) {},
+		RejectFunc: func(key cppbridge.SegmentKey, _ string) {
 			m.Lock()
 			defer m.Unlock()
 
 			rejects[key] = true
 		},
-		WriteSegmentFunc: func(_ context.Context, key common.SegmentKey, segment delivery.Segment) error {
+		WriteSegmentFunc: func(_ context.Context, key cppbridge.SegmentKey, segment delivery.Segment) error {
 			m.Lock()
 			defer m.Unlock()
 
-			if key.Segment == 0 || data[key.ShardID] == nil {
+			if data[key.ShardID] == nil {
 				data[key.ShardID] = make(map[uint32]interface{})
 			}
 
@@ -852,12 +852,12 @@ func (*ManagerSuite) inMemoryRefill() *ManagerRefillMock {
 
 func (*ManagerSuite) corruptedRefill() *ManagerRefillMock {
 	return &ManagerRefillMock{
-		GetFunc: func(_ context.Context, key common.SegmentKey) (delivery.Segment, error) {
+		GetFunc: func(_ context.Context, key cppbridge.SegmentKey) (delivery.Segment, error) {
 			return nil, assert.AnError
 		},
-		AckFunc:    func(_ common.SegmentKey, _ string) {},
-		RejectFunc: func(_ common.SegmentKey, _ string) {},
-		WriteSegmentFunc: func(_ context.Context, _ common.SegmentKey, _ delivery.Segment) error {
+		AckFunc:    func(_ cppbridge.SegmentKey, _ string) {},
+		RejectFunc: func(_ cppbridge.SegmentKey, _ string) {},
+		WriteSegmentFunc: func(_ context.Context, _ cppbridge.SegmentKey, _ delivery.Segment) error {
 			return assert.AnError
 		},
 		WriteAckStatusFunc: func(_ context.Context) error {
@@ -904,9 +904,9 @@ func (*ManagerSuite) simpleEncoder() delivery.ManagerEncoderCtor {
 		return &ManagerEncoderMock{
 			LastEncodedSegmentFunc: func() uint32 { return nextSegmentID - 1 },
 			EncodeFunc: func(
-				_ context.Context, data common.ShardedData,
-			) (common.SegmentKey, common.Segment, error) {
-				key := common.SegmentKey{
+				_ context.Context, data cppbridge.ShardedData,
+			) (cppbridge.SegmentKey, cppbridge.Segment, error) {
+				key := cppbridge.SegmentKey{
 					ShardID: shardID,
 					Segment: nextSegmentID,
 				}
@@ -919,16 +919,15 @@ func (*ManagerSuite) simpleEncoder() delivery.ManagerEncoderCtor {
 				nextSegmentID++
 				return key, segment, nil
 			},
-			DestroyFunc: func() {},
-			AddFunc: func(_ context.Context, shardedData common.ShardedData) (common.Segment, error) {
+			AddFunc: func(_ context.Context, shardedData cppbridge.ShardedData) (cppbridge.SegmentStats, error) {
 				mx.Lock()
 				defer mx.Unlock()
 				headData += shardedData.(*shardedDataTest).data
 
 				return &dataTest{}, nil
 			},
-			FinalizeFunc: func(_ context.Context) (common.SegmentKey, common.Segment, error) {
-				key := common.SegmentKey{
+			FinalizeFunc: func(_ context.Context) (cppbridge.SegmentKey, cppbridge.Segment, error) {
+				key := cppbridge.SegmentKey{
 					ShardID: shardID,
 					Segment: nextSegmentID,
 				}
@@ -962,7 +961,7 @@ func (s *ManagerSuite) TestSend2WithAck() {
 
 	s.T().Log("Use no-op refill: assumed that it won't be touched")
 	refillCtor := s.constructorForRefill(&ManagerRefillMock{
-		AckFunc:            func(common.SegmentKey, string) {},
+		AckFunc:            func(cppbridge.SegmentKey, string) {},
 		WriteAckStatusFunc: func(context.Context) error { return nil },
 		ShutdownFunc:       func(context.Context) error { return nil },
 	})

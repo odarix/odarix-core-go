@@ -48,7 +48,6 @@ func (s *BlockManagerSuite) TestDeliveryManagerHappyPath() {
 
 	handleStream := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
 		reader := server.NewProtocolReader(server.StartWith(tcpReader, fe))
-		defer reader.Destroy()
 		for {
 			rq, err := reader.Next(ctx)
 			if err != nil {
@@ -106,7 +105,7 @@ func (s *BlockManagerSuite) TestDeliveryManagerHappyPath() {
 		s.Require().NoError(errLoop)
 		s.Require().True(delivered)
 		rq := <-retCh
-		s.Equal(wr.String(), rq.Message.String())
+		s.EqualAsJSON(wr, rq.Message)
 	}
 
 	s.T().Log("client: shutdown manager")

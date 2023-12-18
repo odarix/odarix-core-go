@@ -15,7 +15,7 @@ import (
 
 	"github.com/go-playground/validator/v10"
 	"github.com/jonboulle/clockwork"
-	"github.com/odarix/odarix-core-go/common"
+	"github.com/odarix/odarix-core-go/cppbridge"
 	"github.com/odarix/odarix-core-go/util"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -137,7 +137,7 @@ type ManagerKeeper struct {
 	limitTrigger       chan struct{}
 	stop               chan struct{}
 	done               chan struct{}
-	cgogc              *common.CGOGC
+	cgogc              *cppbridge.CGOGC
 	registerer         prometheus.Registerer
 	// stat
 	sendDuration *prometheus.HistogramVec
@@ -188,7 +188,7 @@ func NewManagerKeeper(
 		limitTrigger:       make(chan struct{}),
 		stop:               make(chan struct{}),
 		done:               make(chan struct{}),
-		cgogc:              common.NewCGOGC(registerer),
+		cgogc:              cppbridge.NewCGOGC(registerer),
 		registerer:         registerer,
 		sendDuration: factory.NewHistogramVec(
 			prometheus.HistogramOpts{
@@ -557,7 +557,7 @@ func (l *BlockLimits) UnmarshalBinary(data []byte) error {
 type Limits struct {
 	OpenHead OpenHeadLimits
 	Block    BlockLimits
-	Hashdex  common.HashdexLimits
+	Hashdex  cppbridge.HashdexLimits
 }
 
 // DefaultLimits - generate default Limits.
@@ -565,7 +565,7 @@ func DefaultLimits() Limits {
 	return Limits{
 		OpenHead: DefaultOpenHeadLimits(),
 		Block:    DefaultBlockLimits(),
-		Hashdex:  common.DefaultHashdexLimits(),
+		Hashdex:  cppbridge.DefaultHashdexLimits(),
 	}
 }
 

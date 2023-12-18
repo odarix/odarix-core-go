@@ -6,7 +6,7 @@ package delivery_test
 import (
 	"context"
 	"github.com/google/uuid"
-	"github.com/odarix/odarix-core-go/common"
+	"github.com/odarix/odarix-core-go/cppbridge"
 	"github.com/odarix/odarix-core-go/delivery"
 	"github.com/odarix/odarix-core-go/frames"
 	"sync"
@@ -422,16 +422,13 @@ var _ delivery.ManagerEncoder = &ManagerEncoderMock{}
 //
 //		// make and configure a mocked delivery.ManagerEncoder
 //		mockedManagerEncoder := &ManagerEncoderMock{
-//			AddFunc: func(contextMoqParam context.Context, shardedData common.ShardedData) (common.Segment, error) {
+//			AddFunc: func(contextMoqParam context.Context, shardedData cppbridge.ShardedData) (cppbridge.SegmentStats, error) {
 //				panic("mock out the Add method")
 //			},
-//			DestroyFunc: func()  {
-//				panic("mock out the Destroy method")
-//			},
-//			EncodeFunc: func(contextMoqParam context.Context, shardedData common.ShardedData) (common.SegmentKey, common.Segment, error) {
+//			EncodeFunc: func(contextMoqParam context.Context, shardedData cppbridge.ShardedData) (cppbridge.SegmentKey, cppbridge.Segment, error) {
 //				panic("mock out the Encode method")
 //			},
-//			FinalizeFunc: func(contextMoqParam context.Context) (common.SegmentKey, common.Segment, error) {
+//			FinalizeFunc: func(contextMoqParam context.Context) (cppbridge.SegmentKey, cppbridge.Segment, error) {
 //				panic("mock out the Finalize method")
 //			},
 //			LastEncodedSegmentFunc: func() uint32 {
@@ -445,16 +442,13 @@ var _ delivery.ManagerEncoder = &ManagerEncoderMock{}
 //	}
 type ManagerEncoderMock struct {
 	// AddFunc mocks the Add method.
-	AddFunc func(contextMoqParam context.Context, shardedData common.ShardedData) (common.Segment, error)
-
-	// DestroyFunc mocks the Destroy method.
-	DestroyFunc func()
+	AddFunc func(contextMoqParam context.Context, shardedData cppbridge.ShardedData) (cppbridge.SegmentStats, error)
 
 	// EncodeFunc mocks the Encode method.
-	EncodeFunc func(contextMoqParam context.Context, shardedData common.ShardedData) (common.SegmentKey, common.Segment, error)
+	EncodeFunc func(contextMoqParam context.Context, shardedData cppbridge.ShardedData) (cppbridge.SegmentKey, cppbridge.Segment, error)
 
 	// FinalizeFunc mocks the Finalize method.
-	FinalizeFunc func(contextMoqParam context.Context) (common.SegmentKey, common.Segment, error)
+	FinalizeFunc func(contextMoqParam context.Context) (cppbridge.SegmentKey, cppbridge.Segment, error)
 
 	// LastEncodedSegmentFunc mocks the LastEncodedSegment method.
 	LastEncodedSegmentFunc func() uint32
@@ -466,17 +460,14 @@ type ManagerEncoderMock struct {
 			// ContextMoqParam is the contextMoqParam argument value.
 			ContextMoqParam context.Context
 			// ShardedData is the shardedData argument value.
-			ShardedData common.ShardedData
-		}
-		// Destroy holds details about calls to the Destroy method.
-		Destroy []struct {
+			ShardedData cppbridge.ShardedData
 		}
 		// Encode holds details about calls to the Encode method.
 		Encode []struct {
 			// ContextMoqParam is the contextMoqParam argument value.
 			ContextMoqParam context.Context
 			// ShardedData is the shardedData argument value.
-			ShardedData common.ShardedData
+			ShardedData cppbridge.ShardedData
 		}
 		// Finalize holds details about calls to the Finalize method.
 		Finalize []struct {
@@ -488,20 +479,19 @@ type ManagerEncoderMock struct {
 		}
 	}
 	lockAdd                sync.RWMutex
-	lockDestroy            sync.RWMutex
 	lockEncode             sync.RWMutex
 	lockFinalize           sync.RWMutex
 	lockLastEncodedSegment sync.RWMutex
 }
 
 // Add calls AddFunc.
-func (mock *ManagerEncoderMock) Add(contextMoqParam context.Context, shardedData common.ShardedData) (common.Segment, error) {
+func (mock *ManagerEncoderMock) Add(contextMoqParam context.Context, shardedData cppbridge.ShardedData) (cppbridge.SegmentStats, error) {
 	if mock.AddFunc == nil {
 		panic("ManagerEncoderMock.AddFunc: method is nil but ManagerEncoder.Add was just called")
 	}
 	callInfo := struct {
 		ContextMoqParam context.Context
-		ShardedData     common.ShardedData
+		ShardedData     cppbridge.ShardedData
 	}{
 		ContextMoqParam: contextMoqParam,
 		ShardedData:     shardedData,
@@ -518,11 +508,11 @@ func (mock *ManagerEncoderMock) Add(contextMoqParam context.Context, shardedData
 //	len(mockedManagerEncoder.AddCalls())
 func (mock *ManagerEncoderMock) AddCalls() []struct {
 	ContextMoqParam context.Context
-	ShardedData     common.ShardedData
+	ShardedData     cppbridge.ShardedData
 } {
 	var calls []struct {
 		ContextMoqParam context.Context
-		ShardedData     common.ShardedData
+		ShardedData     cppbridge.ShardedData
 	}
 	mock.lockAdd.RLock()
 	calls = mock.calls.Add
@@ -530,41 +520,14 @@ func (mock *ManagerEncoderMock) AddCalls() []struct {
 	return calls
 }
 
-// Destroy calls DestroyFunc.
-func (mock *ManagerEncoderMock) Destroy() {
-	if mock.DestroyFunc == nil {
-		panic("ManagerEncoderMock.DestroyFunc: method is nil but ManagerEncoder.Destroy was just called")
-	}
-	callInfo := struct {
-	}{}
-	mock.lockDestroy.Lock()
-	mock.calls.Destroy = append(mock.calls.Destroy, callInfo)
-	mock.lockDestroy.Unlock()
-	mock.DestroyFunc()
-}
-
-// DestroyCalls gets all the calls that were made to Destroy.
-// Check the length with:
-//
-//	len(mockedManagerEncoder.DestroyCalls())
-func (mock *ManagerEncoderMock) DestroyCalls() []struct {
-} {
-	var calls []struct {
-	}
-	mock.lockDestroy.RLock()
-	calls = mock.calls.Destroy
-	mock.lockDestroy.RUnlock()
-	return calls
-}
-
 // Encode calls EncodeFunc.
-func (mock *ManagerEncoderMock) Encode(contextMoqParam context.Context, shardedData common.ShardedData) (common.SegmentKey, common.Segment, error) {
+func (mock *ManagerEncoderMock) Encode(contextMoqParam context.Context, shardedData cppbridge.ShardedData) (cppbridge.SegmentKey, cppbridge.Segment, error) {
 	if mock.EncodeFunc == nil {
 		panic("ManagerEncoderMock.EncodeFunc: method is nil but ManagerEncoder.Encode was just called")
 	}
 	callInfo := struct {
 		ContextMoqParam context.Context
-		ShardedData     common.ShardedData
+		ShardedData     cppbridge.ShardedData
 	}{
 		ContextMoqParam: contextMoqParam,
 		ShardedData:     shardedData,
@@ -581,11 +544,11 @@ func (mock *ManagerEncoderMock) Encode(contextMoqParam context.Context, shardedD
 //	len(mockedManagerEncoder.EncodeCalls())
 func (mock *ManagerEncoderMock) EncodeCalls() []struct {
 	ContextMoqParam context.Context
-	ShardedData     common.ShardedData
+	ShardedData     cppbridge.ShardedData
 } {
 	var calls []struct {
 		ContextMoqParam context.Context
-		ShardedData     common.ShardedData
+		ShardedData     cppbridge.ShardedData
 	}
 	mock.lockEncode.RLock()
 	calls = mock.calls.Encode
@@ -594,7 +557,7 @@ func (mock *ManagerEncoderMock) EncodeCalls() []struct {
 }
 
 // Finalize calls FinalizeFunc.
-func (mock *ManagerEncoderMock) Finalize(contextMoqParam context.Context) (common.SegmentKey, common.Segment, error) {
+func (mock *ManagerEncoderMock) Finalize(contextMoqParam context.Context) (cppbridge.SegmentKey, cppbridge.Segment, error) {
 	if mock.FinalizeFunc == nil {
 		panic("ManagerEncoderMock.FinalizeFunc: method is nil but ManagerEncoder.Finalize was just called")
 	}
@@ -662,7 +625,7 @@ var _ delivery.ManagerRefill = &ManagerRefillMock{}
 //
 //		// make and configure a mocked delivery.ManagerRefill
 //		mockedManagerRefill := &ManagerRefillMock{
-//			AckFunc: func(segmentKey common.SegmentKey, s string)  {
+//			AckFunc: func(segmentKey cppbridge.SegmentKey, s string)  {
 //				panic("mock out the Ack method")
 //			},
 //			BlockIDFunc: func() uuid.UUID {
@@ -671,7 +634,7 @@ var _ delivery.ManagerRefill = &ManagerRefillMock{}
 //			DestinationsFunc: func() int {
 //				panic("mock out the Destinations method")
 //			},
-//			GetFunc: func(contextMoqParam context.Context, segmentKey common.SegmentKey) (delivery.Segment, error) {
+//			GetFunc: func(contextMoqParam context.Context, segmentKey cppbridge.SegmentKey) (delivery.Segment, error) {
 //				panic("mock out the Get method")
 //			},
 //			IntermediateRenameFunc: func() error {
@@ -683,7 +646,7 @@ var _ delivery.ManagerRefill = &ManagerRefillMock{}
 //			LastSegmentFunc: func(v uint16, s string) uint32 {
 //				panic("mock out the LastSegment method")
 //			},
-//			RejectFunc: func(segmentKey common.SegmentKey, s string)  {
+//			RejectFunc: func(segmentKey cppbridge.SegmentKey, s string)  {
 //				panic("mock out the Reject method")
 //			},
 //			ShardsFunc: func() int {
@@ -695,7 +658,7 @@ var _ delivery.ManagerRefill = &ManagerRefillMock{}
 //			WriteAckStatusFunc: func(contextMoqParam context.Context) error {
 //				panic("mock out the WriteAckStatus method")
 //			},
-//			WriteSegmentFunc: func(contextMoqParam context.Context, segmentKey common.SegmentKey, segment delivery.Segment) error {
+//			WriteSegmentFunc: func(contextMoqParam context.Context, segmentKey cppbridge.SegmentKey, segment delivery.Segment) error {
 //				panic("mock out the WriteSegment method")
 //			},
 //		}
@@ -706,7 +669,7 @@ var _ delivery.ManagerRefill = &ManagerRefillMock{}
 //	}
 type ManagerRefillMock struct {
 	// AckFunc mocks the Ack method.
-	AckFunc func(segmentKey common.SegmentKey, s string)
+	AckFunc func(segmentKey cppbridge.SegmentKey, s string)
 
 	// BlockIDFunc mocks the BlockID method.
 	BlockIDFunc func() uuid.UUID
@@ -715,7 +678,7 @@ type ManagerRefillMock struct {
 	DestinationsFunc func() int
 
 	// GetFunc mocks the Get method.
-	GetFunc func(contextMoqParam context.Context, segmentKey common.SegmentKey) (delivery.Segment, error)
+	GetFunc func(contextMoqParam context.Context, segmentKey cppbridge.SegmentKey) (delivery.Segment, error)
 
 	// IntermediateRenameFunc mocks the IntermediateRename method.
 	IntermediateRenameFunc func() error
@@ -727,7 +690,7 @@ type ManagerRefillMock struct {
 	LastSegmentFunc func(v uint16, s string) uint32
 
 	// RejectFunc mocks the Reject method.
-	RejectFunc func(segmentKey common.SegmentKey, s string)
+	RejectFunc func(segmentKey cppbridge.SegmentKey, s string)
 
 	// ShardsFunc mocks the Shards method.
 	ShardsFunc func() int
@@ -739,14 +702,14 @@ type ManagerRefillMock struct {
 	WriteAckStatusFunc func(contextMoqParam context.Context) error
 
 	// WriteSegmentFunc mocks the WriteSegment method.
-	WriteSegmentFunc func(contextMoqParam context.Context, segmentKey common.SegmentKey, segment delivery.Segment) error
+	WriteSegmentFunc func(contextMoqParam context.Context, segmentKey cppbridge.SegmentKey, segment delivery.Segment) error
 
 	// calls tracks calls to the methods.
 	calls struct {
 		// Ack holds details about calls to the Ack method.
 		Ack []struct {
 			// SegmentKey is the segmentKey argument value.
-			SegmentKey common.SegmentKey
+			SegmentKey cppbridge.SegmentKey
 			// S is the s argument value.
 			S string
 		}
@@ -761,7 +724,7 @@ type ManagerRefillMock struct {
 			// ContextMoqParam is the contextMoqParam argument value.
 			ContextMoqParam context.Context
 			// SegmentKey is the segmentKey argument value.
-			SegmentKey common.SegmentKey
+			SegmentKey cppbridge.SegmentKey
 		}
 		// IntermediateRename holds details about calls to the IntermediateRename method.
 		IntermediateRename []struct {
@@ -779,7 +742,7 @@ type ManagerRefillMock struct {
 		// Reject holds details about calls to the Reject method.
 		Reject []struct {
 			// SegmentKey is the segmentKey argument value.
-			SegmentKey common.SegmentKey
+			SegmentKey cppbridge.SegmentKey
 			// S is the s argument value.
 			S string
 		}
@@ -801,7 +764,7 @@ type ManagerRefillMock struct {
 			// ContextMoqParam is the contextMoqParam argument value.
 			ContextMoqParam context.Context
 			// SegmentKey is the segmentKey argument value.
-			SegmentKey common.SegmentKey
+			SegmentKey cppbridge.SegmentKey
 			// Segment is the segment argument value.
 			Segment delivery.Segment
 		}
@@ -821,12 +784,12 @@ type ManagerRefillMock struct {
 }
 
 // Ack calls AckFunc.
-func (mock *ManagerRefillMock) Ack(segmentKey common.SegmentKey, s string) {
+func (mock *ManagerRefillMock) Ack(segmentKey cppbridge.SegmentKey, s string) {
 	if mock.AckFunc == nil {
 		panic("ManagerRefillMock.AckFunc: method is nil but ManagerRefill.Ack was just called")
 	}
 	callInfo := struct {
-		SegmentKey common.SegmentKey
+		SegmentKey cppbridge.SegmentKey
 		S          string
 	}{
 		SegmentKey: segmentKey,
@@ -843,11 +806,11 @@ func (mock *ManagerRefillMock) Ack(segmentKey common.SegmentKey, s string) {
 //
 //	len(mockedManagerRefill.AckCalls())
 func (mock *ManagerRefillMock) AckCalls() []struct {
-	SegmentKey common.SegmentKey
+	SegmentKey cppbridge.SegmentKey
 	S          string
 } {
 	var calls []struct {
-		SegmentKey common.SegmentKey
+		SegmentKey cppbridge.SegmentKey
 		S          string
 	}
 	mock.lockAck.RLock()
@@ -911,13 +874,13 @@ func (mock *ManagerRefillMock) DestinationsCalls() []struct {
 }
 
 // Get calls GetFunc.
-func (mock *ManagerRefillMock) Get(contextMoqParam context.Context, segmentKey common.SegmentKey) (delivery.Segment, error) {
+func (mock *ManagerRefillMock) Get(contextMoqParam context.Context, segmentKey cppbridge.SegmentKey) (delivery.Segment, error) {
 	if mock.GetFunc == nil {
 		panic("ManagerRefillMock.GetFunc: method is nil but ManagerRefill.Get was just called")
 	}
 	callInfo := struct {
 		ContextMoqParam context.Context
-		SegmentKey      common.SegmentKey
+		SegmentKey      cppbridge.SegmentKey
 	}{
 		ContextMoqParam: contextMoqParam,
 		SegmentKey:      segmentKey,
@@ -934,11 +897,11 @@ func (mock *ManagerRefillMock) Get(contextMoqParam context.Context, segmentKey c
 //	len(mockedManagerRefill.GetCalls())
 func (mock *ManagerRefillMock) GetCalls() []struct {
 	ContextMoqParam context.Context
-	SegmentKey      common.SegmentKey
+	SegmentKey      cppbridge.SegmentKey
 } {
 	var calls []struct {
 		ContextMoqParam context.Context
-		SegmentKey      common.SegmentKey
+		SegmentKey      cppbridge.SegmentKey
 	}
 	mock.lockGet.RLock()
 	calls = mock.calls.Get
@@ -1037,12 +1000,12 @@ func (mock *ManagerRefillMock) LastSegmentCalls() []struct {
 }
 
 // Reject calls RejectFunc.
-func (mock *ManagerRefillMock) Reject(segmentKey common.SegmentKey, s string) {
+func (mock *ManagerRefillMock) Reject(segmentKey cppbridge.SegmentKey, s string) {
 	if mock.RejectFunc == nil {
 		panic("ManagerRefillMock.RejectFunc: method is nil but ManagerRefill.Reject was just called")
 	}
 	callInfo := struct {
-		SegmentKey common.SegmentKey
+		SegmentKey cppbridge.SegmentKey
 		S          string
 	}{
 		SegmentKey: segmentKey,
@@ -1059,11 +1022,11 @@ func (mock *ManagerRefillMock) Reject(segmentKey common.SegmentKey, s string) {
 //
 //	len(mockedManagerRefill.RejectCalls())
 func (mock *ManagerRefillMock) RejectCalls() []struct {
-	SegmentKey common.SegmentKey
+	SegmentKey cppbridge.SegmentKey
 	S          string
 } {
 	var calls []struct {
-		SegmentKey common.SegmentKey
+		SegmentKey cppbridge.SegmentKey
 		S          string
 	}
 	mock.lockReject.RLock()
@@ -1164,13 +1127,13 @@ func (mock *ManagerRefillMock) WriteAckStatusCalls() []struct {
 }
 
 // WriteSegment calls WriteSegmentFunc.
-func (mock *ManagerRefillMock) WriteSegment(contextMoqParam context.Context, segmentKey common.SegmentKey, segment delivery.Segment) error {
+func (mock *ManagerRefillMock) WriteSegment(contextMoqParam context.Context, segmentKey cppbridge.SegmentKey, segment delivery.Segment) error {
 	if mock.WriteSegmentFunc == nil {
 		panic("ManagerRefillMock.WriteSegmentFunc: method is nil but ManagerRefill.WriteSegment was just called")
 	}
 	callInfo := struct {
 		ContextMoqParam context.Context
-		SegmentKey      common.SegmentKey
+		SegmentKey      cppbridge.SegmentKey
 		Segment         delivery.Segment
 	}{
 		ContextMoqParam: contextMoqParam,
@@ -1189,12 +1152,12 @@ func (mock *ManagerRefillMock) WriteSegment(contextMoqParam context.Context, seg
 //	len(mockedManagerRefill.WriteSegmentCalls())
 func (mock *ManagerRefillMock) WriteSegmentCalls() []struct {
 	ContextMoqParam context.Context
-	SegmentKey      common.SegmentKey
+	SegmentKey      cppbridge.SegmentKey
 	Segment         delivery.Segment
 } {
 	var calls []struct {
 		ContextMoqParam context.Context
-		SegmentKey      common.SegmentKey
+		SegmentKey      cppbridge.SegmentKey
 		Segment         delivery.Segment
 	}
 	mock.lockWriteSegment.RLock()
@@ -1259,177 +1222,5 @@ func (mock *RejectNotifyerMock) NotifyOnRejectCalls() []struct {
 	mock.lockNotifyOnReject.RLock()
 	calls = mock.calls.NotifyOnReject
 	mock.lockNotifyOnReject.RUnlock()
-	return calls
-}
-
-// Ensure, that SourceMock does implement delivery.Source.
-// If this is not the case, regenerate this file with moq.
-var _ delivery.Source = &SourceMock{}
-
-// SourceMock is a mock implementation of delivery.Source.
-//
-//	func TestSomethingThatUsesSource(t *testing.T) {
-//
-//		// make and configure a mocked delivery.Source
-//		mockedSource := &SourceMock{
-//			AckFunc: func(key common.SegmentKey, dest string)  {
-//				panic("mock out the Ack method")
-//			},
-//			GetFunc: func(ctx context.Context, key common.SegmentKey) (delivery.Segment, error) {
-//				panic("mock out the Get method")
-//			},
-//			RejectFunc: func(key common.SegmentKey, dest string)  {
-//				panic("mock out the Reject method")
-//			},
-//		}
-//
-//		// use mockedSource in code that requires delivery.Source
-//		// and then make assertions.
-//
-//	}
-type SourceMock struct {
-	// AckFunc mocks the Ack method.
-	AckFunc func(key common.SegmentKey, dest string)
-
-	// GetFunc mocks the Get method.
-	GetFunc func(ctx context.Context, key common.SegmentKey) (delivery.Segment, error)
-
-	// RejectFunc mocks the Reject method.
-	RejectFunc func(key common.SegmentKey, dest string)
-
-	// calls tracks calls to the methods.
-	calls struct {
-		// Ack holds details about calls to the Ack method.
-		Ack []struct {
-			// Key is the key argument value.
-			Key common.SegmentKey
-			// Dest is the dest argument value.
-			Dest string
-		}
-		// Get holds details about calls to the Get method.
-		Get []struct {
-			// Ctx is the ctx argument value.
-			Ctx context.Context
-			// Key is the key argument value.
-			Key common.SegmentKey
-		}
-		// Reject holds details about calls to the Reject method.
-		Reject []struct {
-			// Key is the key argument value.
-			Key common.SegmentKey
-			// Dest is the dest argument value.
-			Dest string
-		}
-	}
-	lockAck    sync.RWMutex
-	lockGet    sync.RWMutex
-	lockReject sync.RWMutex
-}
-
-// Ack calls AckFunc.
-func (mock *SourceMock) Ack(key common.SegmentKey, dest string) {
-	if mock.AckFunc == nil {
-		panic("SourceMock.AckFunc: method is nil but Source.Ack was just called")
-	}
-	callInfo := struct {
-		Key  common.SegmentKey
-		Dest string
-	}{
-		Key:  key,
-		Dest: dest,
-	}
-	mock.lockAck.Lock()
-	mock.calls.Ack = append(mock.calls.Ack, callInfo)
-	mock.lockAck.Unlock()
-	mock.AckFunc(key, dest)
-}
-
-// AckCalls gets all the calls that were made to Ack.
-// Check the length with:
-//
-//	len(mockedSource.AckCalls())
-func (mock *SourceMock) AckCalls() []struct {
-	Key  common.SegmentKey
-	Dest string
-} {
-	var calls []struct {
-		Key  common.SegmentKey
-		Dest string
-	}
-	mock.lockAck.RLock()
-	calls = mock.calls.Ack
-	mock.lockAck.RUnlock()
-	return calls
-}
-
-// Get calls GetFunc.
-func (mock *SourceMock) Get(ctx context.Context, key common.SegmentKey) (delivery.Segment, error) {
-	if mock.GetFunc == nil {
-		panic("SourceMock.GetFunc: method is nil but Source.Get was just called")
-	}
-	callInfo := struct {
-		Ctx context.Context
-		Key common.SegmentKey
-	}{
-		Ctx: ctx,
-		Key: key,
-	}
-	mock.lockGet.Lock()
-	mock.calls.Get = append(mock.calls.Get, callInfo)
-	mock.lockGet.Unlock()
-	return mock.GetFunc(ctx, key)
-}
-
-// GetCalls gets all the calls that were made to Get.
-// Check the length with:
-//
-//	len(mockedSource.GetCalls())
-func (mock *SourceMock) GetCalls() []struct {
-	Ctx context.Context
-	Key common.SegmentKey
-} {
-	var calls []struct {
-		Ctx context.Context
-		Key common.SegmentKey
-	}
-	mock.lockGet.RLock()
-	calls = mock.calls.Get
-	mock.lockGet.RUnlock()
-	return calls
-}
-
-// Reject calls RejectFunc.
-func (mock *SourceMock) Reject(key common.SegmentKey, dest string) {
-	if mock.RejectFunc == nil {
-		panic("SourceMock.RejectFunc: method is nil but Source.Reject was just called")
-	}
-	callInfo := struct {
-		Key  common.SegmentKey
-		Dest string
-	}{
-		Key:  key,
-		Dest: dest,
-	}
-	mock.lockReject.Lock()
-	mock.calls.Reject = append(mock.calls.Reject, callInfo)
-	mock.lockReject.Unlock()
-	mock.RejectFunc(key, dest)
-}
-
-// RejectCalls gets all the calls that were made to Reject.
-// Check the length with:
-//
-//	len(mockedSource.RejectCalls())
-func (mock *SourceMock) RejectCalls() []struct {
-	Key  common.SegmentKey
-	Dest string
-} {
-	var calls []struct {
-		Key  common.SegmentKey
-		Dest string
-	}
-	mock.lockReject.RLock()
-	calls = mock.calls.Reject
-	mock.lockReject.RUnlock()
 	return calls
 }

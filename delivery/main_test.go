@@ -3,7 +3,7 @@ package delivery_test
 import (
 	"io"
 
-	"github.com/odarix/odarix-core-go/common"
+	"github.com/odarix/odarix-core-go/cppbridge"
 )
 
 const refillExt = ".refill"
@@ -44,12 +44,12 @@ func (*dataTest) Series() uint32 {
 }
 
 // Earliest returns timestamp in ms of earliest sample in segment
-func (*dataTest) Earliest() int64 {
+func (*dataTest) EarliestTimestamp() int64 {
 	return 0
 }
 
 // Latest returns timestamp in ms of latest sample in segment
-func (*dataTest) Latest() int64 {
+func (*dataTest) LatestTimestamp() int64 {
 	return 0
 }
 
@@ -67,7 +67,7 @@ type shardedDataTest struct {
 	data string
 }
 
-func newByteShardedDataTest(data []byte, _ common.HashdexLimits) (common.ShardedData, error) {
+func newByteShardedDataTest(data []byte, _ cppbridge.HashdexLimits) (cppbridge.ShardedData, error) {
 	return newShardedDataTest(string(data)), nil
 }
 

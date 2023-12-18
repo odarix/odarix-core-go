@@ -4,26 +4,26 @@
 package delivery_test
 
 import (
-	"github.com/odarix/odarix-core-go/common"
+	"github.com/odarix/odarix-core-go/cppbridge"
 	"io"
 	"sync"
 )
 
-// Ensure, that SegmentMock does implement common.Segment.
+// Ensure, that SegmentMock does implement cppbridge.Segment.
 // If this is not the case, regenerate this file with moq.
-var _ common.Segment = &SegmentMock{}
+var _ cppbridge.Segment = &SegmentMock{}
 
-// SegmentMock is a mock implementation of common.Segment.
+// SegmentMock is a mock implementation of cppbridge.Segment.
 //
 //	func TestSomethingThatUsesSegment(t *testing.T) {
 //
-//		// make and configure a mocked common.Segment
+//		// make and configure a mocked cppbridge.Segment
 //		mockedSegment := &SegmentMock{
-//			EarliestFunc: func() int64 {
-//				panic("mock out the Earliest method")
+//			EarliestTimestampFunc: func() int64 {
+//				panic("mock out the EarliestTimestamp method")
 //			},
-//			LatestFunc: func() int64 {
-//				panic("mock out the Latest method")
+//			LatestTimestampFunc: func() int64 {
+//				panic("mock out the LatestTimestamp method")
 //			},
 //			RemainingTableSizeFunc: func() uint32 {
 //				panic("mock out the RemainingTableSize method")
@@ -42,16 +42,16 @@ var _ common.Segment = &SegmentMock{}
 //			},
 //		}
 //
-//		// use mockedSegment in code that requires common.Segment
+//		// use mockedSegment in code that requires cppbridge.Segment
 //		// and then make assertions.
 //
 //	}
 type SegmentMock struct {
-	// EarliestFunc mocks the Earliest method.
-	EarliestFunc func() int64
+	// EarliestTimestampFunc mocks the EarliestTimestamp method.
+	EarliestTimestampFunc func() int64
 
-	// LatestFunc mocks the Latest method.
-	LatestFunc func() int64
+	// LatestTimestampFunc mocks the LatestTimestamp method.
+	LatestTimestampFunc func() int64
 
 	// RemainingTableSizeFunc mocks the RemainingTableSize method.
 	RemainingTableSizeFunc func() uint32
@@ -70,11 +70,11 @@ type SegmentMock struct {
 
 	// calls tracks calls to the methods.
 	calls struct {
-		// Earliest holds details about calls to the Earliest method.
-		Earliest []struct {
+		// EarliestTimestamp holds details about calls to the EarliestTimestamp method.
+		EarliestTimestamp []struct {
 		}
-		// Latest holds details about calls to the Latest method.
-		Latest []struct {
+		// LatestTimestamp holds details about calls to the LatestTimestamp method.
+		LatestTimestamp []struct {
 		}
 		// RemainingTableSize holds details about calls to the RemainingTableSize method.
 		RemainingTableSize []struct {
@@ -94,8 +94,8 @@ type SegmentMock struct {
 			W io.Writer
 		}
 	}
-	lockEarliest           sync.RWMutex
-	lockLatest             sync.RWMutex
+	lockEarliestTimestamp  sync.RWMutex
+	lockLatestTimestamp    sync.RWMutex
 	lockRemainingTableSize sync.RWMutex
 	lockSamples            sync.RWMutex
 	lockSeries             sync.RWMutex
@@ -103,57 +103,57 @@ type SegmentMock struct {
 	lockWriteTo            sync.RWMutex
 }
 
-// Earliest calls EarliestFunc.
-func (mock *SegmentMock) Earliest() int64 {
-	if mock.EarliestFunc == nil {
-		panic("SegmentMock.EarliestFunc: method is nil but Segment.Earliest was just called")
+// EarliestTimestamp calls EarliestTimestampFunc.
+func (mock *SegmentMock) EarliestTimestamp() int64 {
+	if mock.EarliestTimestampFunc == nil {
+		panic("SegmentMock.EarliestTimestampFunc: method is nil but Segment.EarliestTimestamp was just called")
 	}
 	callInfo := struct {
 	}{}
-	mock.lockEarliest.Lock()
-	mock.calls.Earliest = append(mock.calls.Earliest, callInfo)
-	mock.lockEarliest.Unlock()
-	return mock.EarliestFunc()
+	mock.lockEarliestTimestamp.Lock()
+	mock.calls.EarliestTimestamp = append(mock.calls.EarliestTimestamp, callInfo)
+	mock.lockEarliestTimestamp.Unlock()
+	return mock.EarliestTimestampFunc()
 }
 
-// EarliestCalls gets all the calls that were made to Earliest.
+// EarliestTimestampCalls gets all the calls that were made to EarliestTimestamp.
 // Check the length with:
 //
-//	len(mockedSegment.EarliestCalls())
-func (mock *SegmentMock) EarliestCalls() []struct {
+//	len(mockedSegment.EarliestTimestampCalls())
+func (mock *SegmentMock) EarliestTimestampCalls() []struct {
 } {
 	var calls []struct {
 	}
-	mock.lockEarliest.RLock()
-	calls = mock.calls.Earliest
-	mock.lockEarliest.RUnlock()
+	mock.lockEarliestTimestamp.RLock()
+	calls = mock.calls.EarliestTimestamp
+	mock.lockEarliestTimestamp.RUnlock()
 	return calls
 }
 
-// Latest calls LatestFunc.
-func (mock *SegmentMock) Latest() int64 {
-	if mock.LatestFunc == nil {
-		panic("SegmentMock.LatestFunc: method is nil but Segment.Latest was just called")
+// LatestTimestamp calls LatestTimestampFunc.
+func (mock *SegmentMock) LatestTimestamp() int64 {
+	if mock.LatestTimestampFunc == nil {
+		panic("SegmentMock.LatestTimestampFunc: method is nil but Segment.LatestTimestamp was just called")
 	}
 	callInfo := struct {
 	}{}
-	mock.lockLatest.Lock()
-	mock.calls.Latest = append(mock.calls.Latest, callInfo)
-	mock.lockLatest.Unlock()
-	return mock.LatestFunc()
+	mock.lockLatestTimestamp.Lock()
+	mock.calls.LatestTimestamp = append(mock.calls.LatestTimestamp, callInfo)
+	mock.lockLatestTimestamp.Unlock()
+	return mock.LatestTimestampFunc()
 }
 
-// LatestCalls gets all the calls that were made to Latest.
+// LatestTimestampCalls gets all the calls that were made to LatestTimestamp.
 // Check the length with:
 //
-//	len(mockedSegment.LatestCalls())
-func (mock *SegmentMock) LatestCalls() []struct {
+//	len(mockedSegment.LatestTimestampCalls())
+func (mock *SegmentMock) LatestTimestampCalls() []struct {
 } {
 	var calls []struct {
 	}
-	mock.lockLatest.RLock()
-	calls = mock.calls.Latest
-	mock.lockLatest.RUnlock()
+	mock.lockLatestTimestamp.RLock()
+	calls = mock.calls.LatestTimestamp
+	mock.lockLatestTimestamp.RUnlock()
 	return calls
 }
 

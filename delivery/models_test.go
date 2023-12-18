@@ -1,6 +1,6 @@
 package delivery_test
 
-//go:generate moq -out models_moq_test.go -pkg delivery_test -rm ../common Segment
+//go:generate moq -out models_moq_test.go -pkg delivery_test -rm ../cppbridge Segment
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/jonboulle/clockwork"
-	"github.com/odarix/odarix-core-go/common"
+	"github.com/odarix/odarix-core-go/cppbridge"
 	"github.com/odarix/odarix-core-go/delivery"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -153,7 +153,7 @@ func (s *OpenHeadPromiseSuite) SetupTest() {
 }
 
 func (s *OpenHeadPromiseSuite) TestProlongation() {
-	segments := s.getSegments(1e3)
+	segments := s.getSegmentStats(1e3)
 	promise := s.getPromise(len(segments), delivery.OpenHeadLimits{
 		MaxDuration:    5 * time.Second,
 		MaxSamples:     40e3,
@@ -176,7 +176,7 @@ func (s *OpenHeadPromiseSuite) TestProlongation() {
 }
 
 func (s *OpenHeadPromiseSuite) TestSamplesLimit() {
-	segments := s.getSegments(11e3)
+	segments := s.getSegmentStats(11e3)
 	promise := s.getPromise(len(segments), delivery.OpenHeadLimits{
 		MaxDuration:    5 * time.Second,
 		MaxSamples:     40e3,
@@ -205,7 +205,7 @@ func (s *OpenHeadPromiseSuite) TestSamplesLimit() {
 }
 
 func (s *OpenHeadPromiseSuite) TestDurationLimit() {
-	segments := s.getSegments(1e3)
+	segments := s.getSegmentStats(1e3)
 	promise := s.getPromise(len(segments), delivery.OpenHeadLimits{
 		MaxDuration:    5 * time.Second,
 		MaxSamples:     40e3,
@@ -229,7 +229,7 @@ func (s *OpenHeadPromiseSuite) TestDurationLimit() {
 }
 
 func (s *OpenHeadPromiseSuite) TestConcurrentClose() {
-	segments := s.getSegments(10e3)
+	segments := s.getSegmentStats(10e3)
 	promise := s.getPromise(len(segments), delivery.OpenHeadLimits{
 		MaxDuration:    5 * time.Second,
 		MaxSamples:     19e3,
@@ -246,7 +246,7 @@ func (s *OpenHeadPromiseSuite) TestConcurrentClose() {
 }
 
 func (s *OpenHeadPromiseSuite) TestPanicOnAddToFinalized() {
-	segments := s.getSegments(10e3)
+	segments := s.getSegmentStats(10e3)
 	promise := s.getPromise(len(segments), delivery.OpenHeadLimits{
 		MaxDuration:    5 * time.Second,
 		MaxSamples:     19e3,
@@ -264,7 +264,7 @@ func (s *OpenHeadPromiseSuite) TestPanicOnAddToFinalized_Long() {
 	if testing.Short() {
 		s.T().SkipNow()
 	}
-	segments := s.getSegments(10e3)
+	segments := s.getSegmentStats(10e3)
 	promise := delivery.NewOpenHeadPromise(len(segments), delivery.OpenHeadLimits{
 		MaxDuration:    100 * time.Millisecond,
 		MaxSamples:     40e3,
@@ -285,8 +285,8 @@ func (s *OpenHeadPromiseSuite) TestPanicOnAddToFinalized_Long() {
 	time.Sleep(10 * time.Millisecond)
 }
 
-func (*OpenHeadPromiseSuite) getSegments(samples uint32) []common.Segment {
-	segments := make([]common.Segment, 4)
+func (*OpenHeadPromiseSuite) getSegmentStats(samples uint32) []cppbridge.SegmentStats {
+	segments := make([]cppbridge.SegmentStats, 4)
 	for i := range segments {
 		segments[i] = &SegmentMock{
 			SamplesFunc: func() uint32 { return samples },

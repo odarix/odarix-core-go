@@ -2,6 +2,7 @@ package e2e_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -15,7 +16,7 @@ import (
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/odarix/odarix-core-go/common"
+	"github.com/odarix/odarix-core-go/cppbridge"
 	"github.com/odarix/odarix-core-go/delivery"
 	"github.com/odarix/odarix-core-go/frames"
 	"github.com/odarix/odarix-core-go/server"
@@ -127,9 +128,9 @@ func (s *MainSuite) createManager(
 	encoderCtor := func(
 		blockID uuid.UUID,
 		shardID uint16,
-		shardsNumberPower uint8,
+		logShards uint8,
 	) (delivery.ManagerEncoder, error) {
-		return common.NewEncoder(shardID, 1<<shardsNumberPower), nil
+		return cppbridge.NewWALEncoder(shardID, logShards), nil
 	}
 
 	refillCtor := func(
@@ -160,7 +161,7 @@ func (s *MainSuite) createManager(
 	manager, err := delivery.NewManager(
 		ctx,
 		dialers,
-		common.NewHashdex,
+		cppbridge.NewWALHashdex,
 		encoderCtor,
 		refillCtor,
 		shardsNumberPower,
@@ -280,9 +281,9 @@ func (s *MainSuite) createManagerKeeper(
 	encoderCtor := func(
 		blockID uuid.UUID,
 		shardID uint16,
-		shardsNumberPower uint8,
+		logShards uint8,
 	) (delivery.ManagerEncoder, error) {
-		return common.NewEncoder(shardID, 1<<shardsNumberPower), nil
+		return cppbridge.NewWALEncoder(shardID, logShards), nil
 	}
 
 	refillCtor := func(
@@ -317,7 +318,7 @@ func (s *MainSuite) createManagerKeeper(
 		ctx,
 		cfg,
 		delivery.NewManager,
-		common.NewHashdex,
+		cppbridge.NewWALHashdex,
 		encoderCtor,
 		refillCtor,
 		rsmanagerCtor,
@@ -331,6 +332,22 @@ func (s *MainSuite) createManagerKeeper(
 	}
 
 	return managerKeeper, nil
+}
+
+func (s *MainSuite) EqualAsJSON(expected, actual interface{}, args ...interface{}) bool {
+	e, err := json.Marshal(expected)
+	s.Require().NoError(err)
+	a, err := json.Marshal(actual)
+	s.Require().NoError(err)
+	return s.JSONEq(string(e), string(a), args...)
+}
+
+func (s *MainSuite) EqualAsJSONf(expected, actual interface{}, msg string, args ...interface{}) bool {
+	e, err := json.Marshal(expected)
+	s.Require().NoError(err)
+	a, err := json.Marshal(actual)
+	s.Require().NoError(err)
+	return s.JSONEqf(string(e), string(a), msg, args...)
 }
 
 // protoDataTest - test data.

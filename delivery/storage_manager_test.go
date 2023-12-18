@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/odarix/odarix-core-go/common"
+	"github.com/odarix/odarix-core-go/cppbridge"
 	"github.com/odarix/odarix-core-go/delivery"
 	"github.com/odarix/odarix-core-go/frames"
 	"github.com/odarix/odarix-core-go/frames/framestest"
@@ -191,7 +191,7 @@ func (s *StorageManagerSuite) TestSegment() {
 	s.NoError(err)
 	s.False(ok)
 
-	segKey := common.SegmentKey{
+	segKey := cppbridge.SegmentKey{
 		ShardID: 0,
 		Segment: 0,
 	}
@@ -233,7 +233,7 @@ func (s *StorageManagerSuite) TestRename() {
 	s.NoError(err)
 	s.False(ok)
 
-	segKey := common.SegmentKey{
+	segKey := cppbridge.SegmentKey{
 		ShardID: 0,
 		Segment: 2,
 	}
@@ -267,7 +267,7 @@ func (s *StorageManagerSuite) TestRestore() {
 	s.NoError(err)
 	s.False(ok)
 
-	segKey := common.SegmentKey{
+	segKey := cppbridge.SegmentKey{
 		ShardID: 0,
 		Segment: 1,
 	}
@@ -282,7 +282,7 @@ func (s *StorageManagerSuite) TestRestore() {
 	s.NoError(err)
 
 	expectAckStatus := s.sm.GetAckStatus()
-	expectAckStatus.Ack(common.SegmentKey{ShardID: 0, Segment: 0}, "www.collector.com")
+	expectAckStatus.Ack(cppbridge.SegmentKey{ShardID: 0, Segment: 0}, "www.collector.com")
 	err = s.sm.WriteAckStatus(context.Background())
 	s.NoError(err)
 
@@ -359,7 +359,7 @@ func (ass *AckStatusSuite) TestAckStatus() {
 	ass.T().Log("check last ack")
 	ass.EqualValues(math.MaxUint32, as.Last(0, ass.etalonsNames[0]))
 
-	segKey := common.SegmentKey{ShardID: 0, Segment: 0}
+	segKey := cppbridge.SegmentKey{ShardID: 0, Segment: 0}
 	ass.T().Logf("ack key(%v) for name(%s)", segKey, ass.etalonsNames[0])
 	as.Ack(segKey, ass.etalonsNames[0])
 	ass.False(as.IsAck(segKey))

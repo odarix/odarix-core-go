@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/odarix/odarix-core-go/common"
+	"github.com/odarix/odarix-core-go/cppbridge"
 	"github.com/odarix/odarix-core-go/delivery"
 	"github.com/odarix/odarix-core-go/frames"
 	"github.com/odarix/odarix-core-go/frames/framestest"
@@ -122,7 +122,7 @@ func (s *RefillSenderSuite) makeRefill(destinationsNames []string) {
 	)
 	s.Require().NoError(err)
 
-	segKey := common.SegmentKey{
+	segKey := cppbridge.SegmentKey{
 		ShardID: 0,
 		Segment: 2,
 	}
@@ -147,24 +147,24 @@ func (s *RefillSenderSuite) makeRefill(destinationsNames []string) {
 
 	// ack 0,1 segment, 2 - reject for all destinations
 	for _, name := range destinationsNames {
-		mr.Ack(common.SegmentKey{ShardID: 0, Segment: 0}, name)
-		mr.Ack(common.SegmentKey{ShardID: 0, Segment: 1}, name)
-		mr.Reject(common.SegmentKey{ShardID: 0, Segment: 2}, name)
+		mr.Ack(cppbridge.SegmentKey{ShardID: 0, Segment: 0}, name)
+		mr.Ack(cppbridge.SegmentKey{ShardID: 0, Segment: 1}, name)
+		mr.Reject(cppbridge.SegmentKey{ShardID: 0, Segment: 2}, name)
 	}
 
 	// ack 3 segment for all except 1 destination
 	for _, name := range destinationsNames[1:] {
-		mr.Ack(common.SegmentKey{ShardID: 0, Segment: 3}, name)
+		mr.Ack(cppbridge.SegmentKey{ShardID: 0, Segment: 3}, name)
 	}
 
 	// 4 - reject for all destinations
 	for _, name := range destinationsNames[1:] {
-		mr.Reject(common.SegmentKey{ShardID: 0, Segment: 4}, name)
+		mr.Reject(cppbridge.SegmentKey{ShardID: 0, Segment: 4}, name)
 	}
 
 	// ack 5 segment for all except 1,2 destination
 	for _, name := range destinationsNames[2:] {
-		mr.Ack(common.SegmentKey{ShardID: 0, Segment: 5}, name)
+		mr.Ack(cppbridge.SegmentKey{ShardID: 0, Segment: 5}, name)
 	}
 
 	err = mr.WriteAckStatus(s.baseCtx)

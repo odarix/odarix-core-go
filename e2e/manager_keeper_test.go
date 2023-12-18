@@ -50,7 +50,6 @@ func (s *ManagerKeeperSuite) TestRefillSenderHappyPath() {
 
 	handleStream := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
 		reader := server.NewProtocolReader(server.StartWith(tcpReader, fe))
-		defer reader.Destroy()
 		for {
 			rq, err := reader.Next(ctx)
 			if err != nil {
@@ -111,7 +110,7 @@ func (s *ManagerKeeperSuite) TestRefillSenderHappyPath() {
 		s.Require().True(delivered)
 
 		rq := <-retCh
-		s.Equal(wr.String(), rq.Message.String())
+		s.EqualAsJSON(wr, rq.Message)
 	}
 
 	s.T().Log("client: shutdown manager")
@@ -135,7 +134,6 @@ func (s *ManagerKeeperSuite) TestWithRotate() {
 
 	handleStream := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
 		reader := server.NewProtocolReader(server.StartWith(tcpReader, fe))
-		defer reader.Destroy()
 		for {
 			rq, err := reader.Next(ctx)
 			if err != nil {
@@ -239,7 +237,6 @@ func (s *ManagerKeeperSuite) TestWithReject() {
 
 	handleStream := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
 		reader := server.NewProtocolReader(server.StartWith(tcpReader, fe))
-		defer reader.Destroy()
 		for {
 			rq, err := reader.Next(ctx)
 			if err != nil {
@@ -332,7 +329,6 @@ func (s *ManagerKeeperSuite) TestWithReject() {
 
 		// make ProtocolReader over FileReader
 		pr := server.NewProtocolReader(fr)
-		defer pr.Destroy()
 
 		// make BlockWriter
 		// read until EOF from ProtocolReader and append to BlockWriter

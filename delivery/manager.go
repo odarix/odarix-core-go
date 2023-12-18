@@ -12,7 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jonboulle/clockwork"
-	"github.com/odarix/odarix-core-go/common"
+	"github.com/odarix/odarix-core-go/cppbridge"
 	"github.com/odarix/odarix-core-go/util"
 	"github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/sync/errgroup"
@@ -74,17 +74,16 @@ type (
 	// ManagerEncoder - interface for encoder manager.
 	ManagerEncoder interface {
 		LastEncodedSegment() uint32
-		Encode(context.Context, common.ShardedData) (common.SegmentKey, common.Segment, error)
-		Add(context.Context, common.ShardedData) (common.Segment, error)
-		Finalize(context.Context) (common.SegmentKey, common.Segment, error)
-		Destroy()
+		Encode(context.Context, cppbridge.ShardedData) (cppbridge.SegmentKey, cppbridge.Segment, error)
+		Add(context.Context, cppbridge.ShardedData) (cppbridge.SegmentStats, error)
+		Finalize(context.Context) (cppbridge.SegmentKey, cppbridge.Segment, error)
 	}
 
 	// ManagerEncoderCtor - func-constuctor for ManagerEncoder.
 	ManagerEncoderCtor func(
 		blockID uuid.UUID,
 		shardID uint16,
-		shardsNumberPower uint8,
+		logShards uint8,
 	) (ManagerEncoder, error)
 
 	// ManagerRefill - interface for refill manager.
@@ -94,10 +93,10 @@ type (
 		Shards() int
 		Destinations() int
 		LastSegment(uint16, string) uint32
-		Get(context.Context, common.SegmentKey) (Segment, error)
-		Ack(common.SegmentKey, string)
-		Reject(common.SegmentKey, string)
-		WriteSegment(context.Context, common.SegmentKey, Segment) error
+		Get(context.Context, cppbridge.SegmentKey) (Segment, error)
+		Ack(cppbridge.SegmentKey, string)
+		Reject(cppbridge.SegmentKey, string)
+		WriteSegment(context.Context, cppbridge.SegmentKey, Segment) error
 		WriteAckStatus(context.Context) error
 		IntermediateRename() error
 		Shutdown(context.Context) error
@@ -114,7 +113,7 @@ type (
 	) (ManagerRefill, error)
 
 	// HashdexCtor - func-constuctor for Hashdex.
-	HashdexCtor func(protoData []byte, limits common.HashdexLimits) (common.ShardedData, error)
+	HashdexCtor func(protoData []byte, limits cppbridge.HashdexLimits) (cppbridge.ShardedData, error)
 
 	// HATracker - interface for High Availability Tracker.
 	HATracker interface {
@@ -393,12 +392,12 @@ func (mgr *Manager) SendOpenHead(ctx context.Context, data ProtoData) (ack bool,
 	return promise.Await(ctx)
 }
 
-func (mgr *Manager) addData(ctx context.Context, hx common.ShardedData) ([]common.Segment, error) {
+func (mgr *Manager) addData(ctx context.Context, hx cppbridge.ShardedData) ([]cppbridge.SegmentStats, error) {
 	defer func(start time.Time) {
 		mgr.encodeDuration.Observe(float64(time.Since(start).Milliseconds()))
 	}(time.Now())
 
-	segments := make([]common.Segment, len(mgr.encoders))
+	segments := make([]cppbridge.SegmentStats, len(mgr.encoders))
 	errs := make([]error, len(mgr.encoders))
 	group, gCtx := errgroup.WithContext(ctx)
 	for i := range mgr.encoders {
@@ -470,18 +469,18 @@ func (mgr *Manager) finalizePromise() {
 	mgr.ohPromise = nil
 }
 
-func (mgr *Manager) observeSegmentMetrics(segment common.Segment) {
+func (mgr *Manager) observeSegmentMetrics(segment cppbridge.Segment) {
 	mgr.segmentSize.Observe(float64(segment.Size()))
 	mgr.segmentSeries.Observe(float64(segment.Series()))
 	mgr.segmentSamples.Observe(float64(segment.Samples()))
 	tsNow := time.Now().UnixMilli()
-	maxTS := segment.Latest()
+	maxTS := segment.LatestTimestamp()
 	if maxTS != 0 {
 		mgr.lagDuration.With(
 			prometheus.Labels{"type": "max"},
 		).Observe(float64((tsNow - maxTS) / 1000))
 	}
-	minTS := segment.Earliest()
+	minTS := segment.EarliestTimestamp()
 	if minTS != math.MaxInt64 {
 		mgr.lagDuration.With(
 			prometheus.Labels{"type": "min"},
@@ -511,7 +510,7 @@ func (mgr *Manager) Open(ctx context.Context) {
 }
 
 // Get - get segment for key.
-func (mgr *Manager) Get(ctx context.Context, key common.SegmentKey) (Segment, error) {
+func (mgr *Manager) Get(ctx context.Context, key cppbridge.SegmentKey) (Segment, error) {
 	segment, err := mgr.exchange.Get(ctx, key)
 	if errors.Is(err, ErrSegmentGone) {
 		return mgr.refill.Get(ctx, key)
@@ -520,13 +519,13 @@ func (mgr *Manager) Get(ctx context.Context, key common.SegmentKey) (Segment, er
 }
 
 // Ack - mark ack segment for key and destanition.
-func (mgr *Manager) Ack(key common.SegmentKey, dest string) {
+func (mgr *Manager) Ack(key cppbridge.SegmentKey, dest string) {
 	mgr.refill.Ack(key, dest)
 	mgr.exchange.Ack(key)
 }
 
 // Reject - mark reject segment for key and destanition and send to refill.
-func (mgr *Manager) Reject(key common.SegmentKey, dest string) {
+func (mgr *Manager) Reject(key cppbridge.SegmentKey, dest string) {
 	mgr.refill.Reject(key, dest)
 	if mgr.exchange.Reject(key) {
 		mgr.triggeredRefill()
@@ -592,11 +591,6 @@ func (mgr *Manager) Shutdown(ctx context.Context) error {
 	wg.Wait()
 	// delete all segments because they are not required and reject all state
 	mgr.exchange.RemoveAll()
-	mgr.encodersLock.Lock()
-	for i := range mgr.encoders {
-		mgr.encoders[i].Destroy()
-	}
-	mgr.encodersLock.Unlock()
 
 	return errors.Join(errs, mgr.refill.Shutdown(ctx))
 }
@@ -629,13 +623,13 @@ func (mgr *Manager) refillLoop(ctx context.Context) {
 func (mgr *Manager) collectSegmentsToRefill(ctx context.Context) bool {
 	rejected, empty := mgr.exchange.RejectedOrExpired(mgr.clock.Now())
 	if len(rejected) > 0 {
-		less := func(a, b common.SegmentKey) bool {
+		less := func(a, b cppbridge.SegmentKey) bool {
 			return a.ShardID < b.ShardID || (a.ShardID == b.ShardID && a.Segment < b.Segment)
 		}
 		sort.Slice(rejected, func(i, j int) bool { return less(rejected[i], rejected[j]) })
 	}
 
-	removeRestOfShard := func(keys []common.SegmentKey, i int) []common.SegmentKey {
+	removeRestOfShard := func(keys []cppbridge.SegmentKey, i int) []cppbridge.SegmentKey {
 		j := i + 1
 		for j < len(keys) && keys[j].ShardID == keys[i].ShardID {
 			j++
@@ -656,7 +650,7 @@ func (mgr *Manager) collectSegmentsToRefill(ctx context.Context) bool {
 	return !empty
 }
 
-func (mgr *Manager) writeSegmentToRefill(ctx context.Context, key common.SegmentKey) error {
+func (mgr *Manager) writeSegmentToRefill(ctx context.Context, key cppbridge.SegmentKey) error {
 	segment, err := mgr.exchange.Get(ctx, key)
 	switch {
 	case errors.Is(err, ErrSegmentGone):
@@ -665,7 +659,6 @@ func (mgr *Manager) writeSegmentToRefill(ctx context.Context, key common.Segment
 	case err != nil:
 		return err
 	}
-
 	return mgr.refill.WriteSegment(ctx, key, segment)
 }
 

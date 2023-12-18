@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/odarix/odarix-core-go/common"
+	"github.com/odarix/odarix-core-go/cppbridge"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -102,7 +102,7 @@ func (rl *Refill) LastSegment(shardID uint16, dest string) uint32 {
 }
 
 // Get - get segment from file.
-func (rl *Refill) Get(ctx context.Context, key common.SegmentKey) (Segment, error) {
+func (rl *Refill) Get(ctx context.Context, key cppbridge.SegmentKey) (Segment, error) {
 	rl.mx.RLock()
 	defer rl.mx.RUnlock()
 
@@ -110,17 +110,17 @@ func (rl *Refill) Get(ctx context.Context, key common.SegmentKey) (Segment, erro
 }
 
 // Ack - increment status by destination and shard if segment is next for current value.
-func (rl *Refill) Ack(segKey common.SegmentKey, dest string) {
+func (rl *Refill) Ack(segKey cppbridge.SegmentKey, dest string) {
 	rl.sm.Ack(segKey, dest)
 }
 
 // Reject - accumulates rejects and serializes and writes to refill while recording statuses.
-func (rl *Refill) Reject(segKey common.SegmentKey, dest string) {
+func (rl *Refill) Reject(segKey cppbridge.SegmentKey, dest string) {
 	rl.sm.Reject(segKey, dest)
 }
 
 // WriteSegment - write Segment in file.
-func (rl *Refill) WriteSegment(ctx context.Context, key common.SegmentKey, seg Segment) error {
+func (rl *Refill) WriteSegment(ctx context.Context, key cppbridge.SegmentKey, seg Segment) error {
 	rl.mx.Lock()
 	defer rl.mx.Unlock()
 

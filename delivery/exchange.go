@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/odarix/odarix-core-go/common"
+	"github.com/odarix/odarix-core-go/cppbridge"
 	"github.com/odarix/odarix-core-go/util"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -82,7 +82,7 @@ func (ex *Exchange) deleteRecord(key any) {
 //
 // If exchange locked (after Shutdown), and there is not putted segment,
 // it returns ErrPromiseCanceled.
-func (ex *Exchange) Get(ctx context.Context, key common.SegmentKey) (common.Segment, error) {
+func (ex *Exchange) Get(ctx context.Context, key cppbridge.SegmentKey) (cppbridge.Segment, error) {
 	lastSegment := atomic.LoadUint32(&ex.lastSegments[key.ShardID])
 	record, ok := ex.records.Load(key)
 	if ok {
@@ -104,8 +104,8 @@ func (ex *Exchange) Get(ctx context.Context, key common.SegmentKey) (common.Segm
 //
 // Result of delivery acks will be stored in sendPromise when record will be delete from exchange.
 func (ex *Exchange) Put(
-	key common.SegmentKey,
-	segment common.Segment,
+	key cppbridge.SegmentKey,
+	segment cppbridge.Segment,
 	sendPromise *SendPromise,
 	expiredAt time.Time,
 ) {
@@ -122,7 +122,7 @@ func (ex *Exchange) Put(
 }
 
 // Ack segment by key
-func (ex *Exchange) Ack(key common.SegmentKey) {
+func (ex *Exchange) Ack(key cppbridge.SegmentKey) {
 	record, ok := ex.records.Load(key)
 	if !ok {
 		return
@@ -139,12 +139,12 @@ func (ex *Exchange) Ack(key common.SegmentKey) {
 //
 // If shard has any rejected segment, than we should preserve all segments in this shard
 // for minimize snapshots count.
-func (ex *Exchange) isSafeForDelete(key common.SegmentKey) bool {
+func (ex *Exchange) isSafeForDelete(key cppbridge.SegmentKey) bool {
 	return atomic.LoadUint32(&ex.rejects[key.ShardID]) == 0 && !ex.alwaysToRefill
 }
 
 // Reject segment by key
-func (ex *Exchange) Reject(key common.SegmentKey) bool {
+func (ex *Exchange) Reject(key cppbridge.SegmentKey) bool {
 	atomic.StoreUint32(&ex.rejects[key.ShardID], 1)
 	record, ok := ex.records.Load(key)
 	if ok {
@@ -155,11 +155,11 @@ func (ex *Exchange) Reject(key common.SegmentKey) bool {
 }
 
 // RejectedOrExpired returns slice of keys which was rejected
-func (ex *Exchange) RejectedOrExpired(now time.Time) (keys []common.SegmentKey, empty bool) {
+func (ex *Exchange) RejectedOrExpired(now time.Time) (keys []cppbridge.SegmentKey, empty bool) {
 	empty = true
 	ex.records.Range(func(k, value any) bool {
 		empty = false
-		key := k.(common.SegmentKey)
+		key := k.(cppbridge.SegmentKey)
 		record := value.(*exchangeRecord)
 		if !record.Resolved() {
 			return true
@@ -173,7 +173,7 @@ func (ex *Exchange) RejectedOrExpired(now time.Time) (keys []common.SegmentKey, 
 }
 
 // Remove keys from exchange because them writted in refill
-func (ex *Exchange) Remove(keys []common.SegmentKey) {
+func (ex *Exchange) Remove(keys []cppbridge.SegmentKey) {
 	if len(keys) == 0 {
 		return
 	}
@@ -229,7 +229,7 @@ func newExchangeRecord() *exchangeRecord {
 }
 
 func (record *exchangeRecord) Resolve(
-	segment common.Segment,
+	segment cppbridge.Segment,
 	destinations int,
 	sendPromise *SendPromise,
 	expiredAt time.Time,
@@ -262,7 +262,7 @@ func (record *exchangeRecord) Expired(now time.Time) bool {
 }
 
 type segmentPromise struct {
-	segment common.Segment
+	segment cppbridge.Segment
 	err     error
 	resolve chan struct{}
 }
@@ -273,7 +273,7 @@ func newSegmentPromise() *segmentPromise {
 	}
 }
 
-func (promise *segmentPromise) Segment(ctx context.Context) (common.Segment, error) {
+func (promise *segmentPromise) Segment(ctx context.Context) (cppbridge.Segment, error) {
 	select {
 	case <-ctx.Done():
 		return nil, context.Cause(ctx)
@@ -282,7 +282,7 @@ func (promise *segmentPromise) Segment(ctx context.Context) (common.Segment, err
 	}
 }
 
-func (promise *segmentPromise) Resolve(segment common.Segment) {
+func (promise *segmentPromise) Resolve(segment cppbridge.Segment) {
 	promise.segment = segment
 	close(promise.resolve)
 }
