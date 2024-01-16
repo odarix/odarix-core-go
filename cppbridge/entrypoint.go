@@ -23,10 +23,6 @@ import (
 	"github.com/odarix/odarix-core-go/cppbridge/fastcgo"
 )
 
-func init() {
-	fastcgo.UnsafeCall0(C.opcore_init)
-}
-
 func freeBytes(b []byte) {
 	fastcgo.UnsafeCall1(
 		C.opcore_free_bytes,

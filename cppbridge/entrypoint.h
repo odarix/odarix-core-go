@@ -264,12 +264,6 @@ extern "C" {
  */
 void opcore_get_flavor(void* res);
 
-/**
- * @brief determine flavor and setup function pointers
- *
- */
-void opcore_init();
-
 #ifdef __cplusplus
 }
 #endif
