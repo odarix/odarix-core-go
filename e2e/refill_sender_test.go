@@ -47,6 +47,11 @@ func (s *RefillSenderSuite) errorHandler(msg string, err error) {
 //revive:disable-next-line:cyclomatic this is test
 //revive:disable-next-line:cognitive-complexity this is test
 func (s *RefillSenderSuite) TestRefillSenderHappyPath() {
+	s.testRefillSenderHappyPath(protobufOpenHeadSender{})
+	s.testRefillSenderHappyPath(goModelOpenHeadSender{})
+}
+
+func (s *RefillSenderSuite) testRefillSenderHappyPath(sender OpenHeadSenderGenerator) {
 	count := 10
 	baseCtx := context.Background()
 	retCh := make(chan *frames.ReadFrame, count*2)
@@ -175,16 +180,13 @@ func (s *RefillSenderSuite) TestRefillSenderHappyPath() {
 	dir, err := s.mkDir()
 	s.Require().NoError(err)
 	defer s.removeDir(dir)
-	manager, err := s.createManager(baseCtx, s.token, listener.Addr().String(), dir, s.errorHandler)
+	manager, err := s.createManager(baseCtx, s.token, listener.Addr().String(), dir, s.errorHandler, clockwork.NewRealClock())
 	s.Require().NoError(err)
 	manager.Open(baseCtx)
 
 	s.T().Log("client: send data")
 	for i := 0; i < count; i++ {
-		wr := s.makeData(5000, int64(i))
-		data, errLoop := wr.Marshal()
-		s.Require().NoError(errLoop)
-		delivered, errLoop := manager.Send(baseCtx, newProtoDataTest(data))
+		_, delivered, errLoop := sender.SendOpenHead(baseCtx, manager, testTimeSeriesCount, int64(i))
 		s.Require().NoError(errLoop)
 		if i%2 == 0 {
 			s.Require().False(delivered)
@@ -247,6 +249,11 @@ func (s *RefillSenderSuite) TestRefillSenderHappyPath() {
 //revive:disable-next-line:cyclomatic this is test
 //revive:disable-next-line:cognitive-complexity this is test
 func (s *RefillSenderSuite) TestRefillSenderBreakingConnection() {
+	s.testRefillSenderBreakingConnection(protobufOpenHeadSender{})
+	s.testRefillSenderBreakingConnection(goModelOpenHeadSender{})
+}
+
+func (s *RefillSenderSuite) testRefillSenderBreakingConnection(sender OpenHeadSenderGenerator) {
 	count := 10
 	baseCtx := context.Background()
 	retCh := make(chan *frames.ReadFrame, count*2)
@@ -411,16 +418,13 @@ func (s *RefillSenderSuite) TestRefillSenderBreakingConnection() {
 	dir, err := s.mkDir()
 	s.Require().NoError(err)
 	defer s.removeDir(dir)
-	manager, err := s.createManager(baseCtx, s.token, listener.Addr().String(), dir, s.errorHandler)
+	manager, err := s.createManager(baseCtx, s.token, listener.Addr().String(), dir, s.errorHandler, clockwork.NewRealClock())
 	s.Require().NoError(err)
 	manager.Open(baseCtx)
 
 	s.T().Log("client: send data")
 	for i := 0; i < count; i++ {
-		wr := s.makeData(5000, int64(i))
-		data, errLoop := wr.Marshal()
-		s.Require().NoError(errLoop)
-		delivered, errLoop := manager.Send(baseCtx, newProtoDataTest(data))
+		_, delivered, errLoop := sender.SendOpenHead(baseCtx, manager, testTimeSeriesCount, int64(i))
 		s.Require().NoError(errLoop)
 		if i%2 == 0 {
 			s.Require().False(delivered)

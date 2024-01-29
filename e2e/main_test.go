@@ -19,15 +19,20 @@ import (
 	"github.com/odarix/odarix-core-go/cppbridge"
 	"github.com/odarix/odarix-core-go/delivery"
 	"github.com/odarix/odarix-core-go/frames"
+	"github.com/odarix/odarix-core-go/model"
 	"github.com/odarix/odarix-core-go/server"
 	"github.com/odarix/odarix-core-go/transport"
+)
+
+const (
+	testTimeSeriesCount = 5000
 )
 
 type MainSuite struct {
 	suite.Suite
 }
 
-func (*MainSuite) makeData(count int, sid int64) *prompb.WriteRequest {
+func (*MainSuite) makeProtobufData(count int, sid int64) *prompb.WriteRequest {
 	wr := &prompb.WriteRequest{
 		Timeseries: []prompb.TimeSeries{},
 	}
@@ -90,6 +95,32 @@ func (*MainSuite) makeData(count int, sid int64) *prompb.WriteRequest {
 	return wr
 }
 
+func (*MainSuite) makeGoModelData(count int, sid int64) (timeSeriesSlice []model.TimeSeries) {
+	var (
+		startTime int64 = 1654608400000
+		step      int64 = 60000
+	)
+
+	startTime += step * (sid * 3)
+
+	for i := 0; i < count; i++ {
+		timeSeriesSlice = append(timeSeriesSlice, model.TimeSeries{
+			LabelSet: model.NewLabelSetBuilder().
+				Set("__name__", "test"+strconv.Itoa(i)).
+				Set("__replica__", "blobloblo"+strconv.Itoa(i)).
+				Set("instance", "blobloblo"+strconv.Itoa(i)).
+				Set("job", "tester"+strconv.Itoa(i)).
+				Set("low", "banan"+strconv.Itoa(i)).
+				Set("zero", "non_zero"+strconv.Itoa(i)).
+				Build(),
+			Timestamp: uint64(startTime),
+			Value:     5555,
+		})
+	}
+
+	return timeSeriesSlice
+}
+
 func (*MainSuite) createDialers(token, address string) []delivery.Dialer {
 	dialer := &ConnDialerMock{
 		StringFunc: func() string { return address },
@@ -122,6 +153,7 @@ func (s *MainSuite) createManager(
 	ctx context.Context,
 	token, address, dir string,
 	errorHandler delivery.ErrorHandler,
+	clock clockwork.Clock,
 ) (*delivery.Manager, error) {
 	dialers := s.createDialers(token, address)
 
@@ -152,7 +184,6 @@ func (s *MainSuite) createManager(
 	}
 
 	shardsNumberPower := uint8(0)
-	clock := clockwork.NewFakeClock()
 	haTracker := delivery.NewHighAvailabilityTracker(ctx, nil, clock)
 	rejectNotifyer := delivery.NewRotateTimer(
 		clock,
@@ -161,7 +192,7 @@ func (s *MainSuite) createManager(
 	manager, err := delivery.NewManager(
 		ctx,
 		dialers,
-		cppbridge.NewWALHashdex,
+		cppbridge.HashdexFactory{},
 		encoderCtor,
 		refillCtor,
 		shardsNumberPower,
@@ -318,7 +349,7 @@ func (s *MainSuite) createManagerKeeper(
 		ctx,
 		cfg,
 		delivery.NewManager,
-		cppbridge.NewWALHashdex,
+		cppbridge.HashdexFactory{},
 		encoderCtor,
 		refillCtor,
 		rsmanagerCtor,
@@ -369,4 +400,68 @@ func (pd *protoDataTest) Bytes() []byte {
 // Destroy - clear memory, for implements.
 func (pd *protoDataTest) Destroy() {
 	pd.data = nil
+}
+
+type GeneratedData interface {
+	AsRemoteWriteProto() *prompb.WriteRequest
+}
+type Sender interface {
+	SendOpenHeadProtobuf(ctx context.Context, protoData delivery.ProtoData) (delivered bool, err error)
+	SendOpenHeadGoModel(ctx context.Context, data []model.TimeSeries) (delivered bool, err error)
+}
+
+type OpenHeadSenderGenerator interface {
+	SendOpenHead(ctx context.Context, sender Sender, count int, sid int64) (generatedData GeneratedData, delivered bool, err error)
+}
+
+type protobufOpenHeadSender struct{}
+
+type protobufGeneratedData struct {
+	wr *prompb.WriteRequest
+}
+
+func (d *protobufGeneratedData) AsRemoteWriteProto() *prompb.WriteRequest {
+	return d.wr
+}
+
+func (s protobufOpenHeadSender) SendOpenHead(ctx context.Context, sender Sender, count int, sid int64) (generatedData GeneratedData, delivered bool, err error) {
+	wr := (&MainSuite{}).makeProtobufData(count, sid)
+	encodedData, err := wr.Marshal()
+	if err != nil {
+		return nil, false, err
+	}
+	delivered, err = sender.SendOpenHeadProtobuf(ctx, newProtoDataTest(encodedData))
+	return &protobufGeneratedData{wr: wr}, delivered, err
+}
+
+type goModelOpenHeadSender struct{}
+
+type goModelGeneratedData struct {
+	timeSeriesSlice []model.TimeSeries
+}
+
+func (d *goModelGeneratedData) AsRemoteWriteProto() *prompb.WriteRequest {
+	wr := &prompb.WriteRequest{}
+	for _, timeSeries := range d.timeSeriesSlice {
+		ts := prompb.TimeSeries{}
+		for i := 0; i < timeSeries.LabelSet.Len(); i++ {
+			ts.Labels = append(ts.Labels, prompb.Label{
+				Name:  timeSeries.LabelSet.Key(i),
+				Value: timeSeries.LabelSet.Value(i),
+			})
+		}
+		ts.Samples = append(ts.Samples, prompb.Sample{
+			Timestamp: int64(timeSeries.Timestamp),
+			Value:     timeSeries.Value,
+		})
+		wr.Timeseries = append(wr.Timeseries, ts)
+	}
+
+	return wr
+}
+
+func (goModelOpenHeadSender) SendOpenHead(ctx context.Context, sender Sender, count int, sid int64) (generatedData GeneratedData, delivered bool, err error) {
+	timeSeriesSlice := (&MainSuite{}).makeGoModelData(count, sid)
+	delivered, err = sender.SendOpenHeadGoModel(ctx, timeSeriesSlice)
+	return &goModelGeneratedData{timeSeriesSlice: timeSeriesSlice}, delivered, err
 }

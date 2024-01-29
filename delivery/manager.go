@@ -12,10 +12,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jonboulle/clockwork"
-	"github.com/odarix/odarix-core-go/cppbridge"
-	"github.com/odarix/odarix-core-go/util"
 	"github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/sync/errgroup"
+
+	"github.com/odarix/odarix-core-go/cppbridge"
+	"github.com/odarix/odarix-core-go/util"
+
+	"github.com/odarix/odarix-core-go/model"
 )
 
 var (
@@ -41,7 +44,7 @@ type Manager struct {
 	destinations   []string
 	blockID        uuid.UUID
 	encodersLock   *sync.Mutex
-	hashdexCtor    HashdexCtor
+	hashdexFactory HashdexFactory
 	encoders       []ManagerEncoder
 	ohCreatedAt    time.Time
 	ohPromise      *OpenHeadPromise
@@ -112,8 +115,11 @@ type (
 		registerer prometheus.Registerer,
 	) (ManagerRefill, error)
 
-	// HashdexCtor - func-constuctor for Hashdex.
-	HashdexCtor func(protoData []byte, limits cppbridge.HashdexLimits) (cppbridge.ShardedData, error)
+	// HashdexFactory - constructor factory for Hashdex.
+	HashdexFactory interface {
+		Protobuf(data []byte, limits cppbridge.WALHashdexLimits) (cppbridge.ShardedData, error)
+		GoModel(data []model.TimeSeries, limits cppbridge.WALHashdexLimits) (cppbridge.ShardedData, error)
+	}
 
 	// HATracker - interface for High Availability Tracker.
 	HATracker interface {
@@ -135,7 +141,7 @@ type (
 func NewManager(
 	ctx context.Context,
 	dialers []Dialer,
-	hashdexCtor HashdexCtor,
+	hashdexFactory HashdexFactory,
 	encoderCtor ManagerEncoderCtor,
 	refillCtor ManagerRefillCtor,
 	shardsNumberPower uint8,
@@ -204,7 +210,7 @@ func NewManager(
 		destinations:   destinations,
 		blockID:        blockID,
 		encodersLock:   new(sync.Mutex),
-		hashdexCtor:    hashdexCtor,
+		hashdexFactory: hashdexFactory,
 		encoders:       encoders,
 		exchange:       exchange,
 		refill:         refill,
@@ -307,7 +313,7 @@ func NewManager(
 
 // Send - send data to encoders.
 func (mgr *Manager) Send(ctx context.Context, data ProtoData) (ack bool, err error) {
-	hx, err := mgr.hashdexCtor(data.Bytes(), mgr.limits.Hashdex)
+	hx, err := mgr.hashdexFactory.Protobuf(data.Bytes(), mgr.limits.Hashdex)
 	if err != nil {
 		data.Destroy()
 		return false, err
@@ -357,9 +363,9 @@ func (mgr *Manager) Send(ctx context.Context, data ProtoData) (ack bool, err err
 	return result.Await(ctx)
 }
 
-// SendOpenHead adds data to encoders to send it later when limits reached
-func (mgr *Manager) SendOpenHead(ctx context.Context, data ProtoData) (ack bool, err error) {
-	hx, err := mgr.hashdexCtor(data.Bytes(), mgr.limits.Hashdex)
+// SendOpenHeadProtobuf adds data to encoders to send it later when limits reached
+func (mgr *Manager) SendOpenHeadProtobuf(ctx context.Context, data ProtoData) (ack bool, err error) {
+	hx, err := mgr.hashdexFactory.Protobuf(data.Bytes(), mgr.limits.Hashdex)
 	if err != nil {
 		data.Destroy()
 		return false, err
@@ -373,6 +379,38 @@ func (mgr *Manager) SendOpenHead(ctx context.Context, data ProtoData) (ack bool,
 	mgr.encodersLock.Lock()
 	segments, err := mgr.addData(ctx, hx)
 	data.Destroy()
+
+	promise := mgr.getPromise()
+	limitsReached, afterFinish := promise.Add(segments)
+	if limitsReached {
+		mgr.finalizePromise()
+		afterFinish()
+	}
+	mgr.encodersLock.Unlock()
+	if err != nil {
+		// TODO: is encoder recoverable?
+		return false, err
+	}
+
+	defer func(start time.Time) {
+		mgr.promiseDuration.Observe(time.Since(start).Seconds())
+	}(time.Now())
+	return promise.Await(ctx)
+}
+
+// SendOpenHeadGoModel adds data to encoders to send it later when limits reached
+func (mgr *Manager) SendOpenHeadGoModel(ctx context.Context, data []model.TimeSeries) (ack bool, err error) {
+	hx, err := mgr.hashdexFactory.GoModel(data, mgr.limits.Hashdex)
+	if err != nil {
+		return false, err
+	}
+
+	if mgr.haTracker.IsDrop(hx.Cluster(), hx.Replica()) {
+		return true, nil
+	}
+
+	mgr.encodersLock.Lock()
+	segments, err := mgr.addData(ctx, hx)
 
 	promise := mgr.getPromise()
 	limitsReached, afterFinish := promise.Add(segments)

@@ -58,7 +58,7 @@ func (s *ManagerSuite) TestSendWithAck() {
 	manager, err := delivery.NewManager(
 		baseCtx,
 		dialers,
-		newByteShardedDataTest,
+		testHashdexFactory{},
 		s.simpleEncoder(),
 		refillCtor,
 		2,
@@ -119,7 +119,7 @@ func (s *ManagerSuite) TestRejectToRefill() {
 	manager, err := delivery.NewManager(
 		baseCtx,
 		dialers,
-		newByteShardedDataTest,
+		testHashdexFactory{},
 		s.simpleEncoder(),
 		refillCtor,
 		2,
@@ -204,7 +204,7 @@ func (s *ManagerSuite) TestAckRejectRace() {
 	manager, err := delivery.NewManager(
 		baseCtx,
 		dialers,
-		newByteShardedDataTest,
+		testHashdexFactory{},
 		s.simpleEncoder(),
 		refillCtor,
 		2,
@@ -312,7 +312,7 @@ func (s *ManagerSuite) TestRestoreFromRefill() {
 	manager, err := delivery.NewManager(
 		baseCtx,
 		dialers,
-		newByteShardedDataTest,
+		testHashdexFactory{},
 		s.simpleEncoder(),
 		refillCtor,
 		2,
@@ -389,7 +389,7 @@ func (s *ManagerSuite) TestRestoreWithNoRefill() {
 	manager, err := delivery.NewManager(
 		baseCtx,
 		dialers,
-		newByteShardedDataTest,
+		testHashdexFactory{},
 		s.simpleEncoder(),
 		refillCtor,
 		2,
@@ -457,7 +457,7 @@ func (s *ManagerSuite) TestNotOpened() {
 	manager, err := delivery.NewManager(
 		baseCtx,
 		dialers,
-		newByteShardedDataTest,
+		testHashdexFactory{},
 		s.simpleEncoder(),
 		refillCtor,
 		2,
@@ -527,7 +527,7 @@ func (s *ManagerSuite) TestLongDial() {
 	manager, err := delivery.NewManager(
 		baseCtx,
 		dialers,
-		newByteShardedDataTest,
+		testHashdexFactory{},
 		s.simpleEncoder(),
 		refillCtor,
 		2,
@@ -596,7 +596,7 @@ func (s *ManagerSuite) TestAlwaysToRefill() {
 	manager, err := delivery.NewManager(
 		baseCtx,
 		dialers,
-		newByteShardedDataTest,
+		testHashdexFactory{},
 		s.simpleEncoder(),
 		refillCtor,
 		2,
@@ -974,7 +974,7 @@ func (s *ManagerSuite) TestSend2WithAck() {
 	manager, err := delivery.NewManager(
 		baseCtx,
 		dialers,
-		newByteShardedDataTest,
+		testHashdexFactory{},
 		s.simpleEncoder(),
 		refillCtor,
 		2,
@@ -995,7 +995,7 @@ func (s *ManagerSuite) TestSend2WithAck() {
 		group.Go(func() error {
 			data := newShardedDataTest(faker.Paragraph())
 			sendCtx, sendCancel := context.WithTimeout(gCtx, 4000*time.Millisecond)
-			delivered, errSend := manager.SendOpenHead(sendCtx, data)
+			delivered, errSend := manager.SendOpenHeadProtobuf(sendCtx, data)
 			sendCancel()
 			if errSend != nil {
 				return errSend

@@ -3,13 +3,13 @@ package e2e_test
 import (
 	"context"
 	"errors"
+	"github.com/jonboulle/clockwork"
+	"github.com/stretchr/testify/suite"
 	"io"
 	"os"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
-
-	"github.com/stretchr/testify/suite"
 
 	"github.com/odarix/odarix-core-go/delivery"
 	"github.com/odarix/odarix-core-go/frames"
@@ -43,6 +43,11 @@ func (s *BlockManagerSuite) errorHandler(msg string, err error) {
 }
 
 func (s *BlockManagerSuite) TestDeliveryManagerHappyPath() {
+	s.testDeliveryManagerHappyPath(protobufOpenHeadSender{})
+	s.testDeliveryManagerHappyPath(goModelOpenHeadSender{})
+}
+
+func (s *BlockManagerSuite) testDeliveryManagerHappyPath(sender OpenHeadSenderGenerator) {
 	retCh := make(chan *server.Request, 30)
 	baseCtx := context.Background()
 
@@ -92,20 +97,18 @@ func (s *BlockManagerSuite) TestDeliveryManagerHappyPath() {
 	dir, err := s.mkDir()
 	s.Require().NoError(err)
 	defer s.removeDir(dir)
-	manager, err := s.createManager(baseCtx, s.token, listener.Addr().String(), dir, s.errorHandler)
+	clock := clockwork.NewRealClock()
+	manager, err := s.createManager(baseCtx, s.token, listener.Addr().String(), dir, s.errorHandler, clock)
 	s.Require().NoError(err)
 	manager.Open(baseCtx)
 
 	s.T().Log("client: send data")
 	for i := 0; i < 10; i++ {
-		wr := s.makeData(5000, int64(i))
-		data, errLoop := wr.Marshal()
-		s.Require().NoError(errLoop)
-		delivered, errLoop := manager.Send(baseCtx, newProtoDataTest(data))
+		generatedData, delivered, errLoop := sender.SendOpenHead(baseCtx, manager, testTimeSeriesCount, int64(i))
 		s.Require().NoError(errLoop)
 		s.Require().True(delivered)
 		rq := <-retCh
-		s.EqualAsJSON(wr, rq.Message)
+		s.EqualAsJSON(generatedData.AsRemoteWriteProto(), rq.Message)
 	}
 
 	s.T().Log("client: shutdown manager")
@@ -123,6 +126,11 @@ func (s *BlockManagerSuite) TestDeliveryManagerHappyPath() {
 //revive:disable-next-line:cyclomatic this is test
 //revive:disable-next-line:cognitive-complexity this is test
 func (s *BlockManagerSuite) TestDeliveryManagerBreakingConnection() {
+	s.testDeliveryManagerBreakingConnection(protobufOpenHeadSender{})
+	s.testDeliveryManagerBreakingConnection(goModelOpenHeadSender{})
+}
+
+func (s *BlockManagerSuite) testDeliveryManagerBreakingConnection(sender OpenHeadSenderGenerator) {
 	var (
 		retCh   = make(chan *frames.ReadFrame, 30)
 		breaker int32
@@ -207,16 +215,13 @@ func (s *BlockManagerSuite) TestDeliveryManagerBreakingConnection() {
 	dir, err := s.mkDir()
 	s.Require().NoError(err)
 	defer s.removeDir(dir)
-	manager, err := s.createManager(baseCtx, s.token, listener.Addr().String(), dir, s.errorHandler)
+	manager, err := s.createManager(baseCtx, s.token, listener.Addr().String(), dir, s.errorHandler, clockwork.NewRealClock())
 	s.Require().NoError(err)
 	manager.Open(baseCtx)
 
 	s.T().Log("client: send data before break")
 	for i := 0; i < 5; i++ {
-		wr := s.makeData(5000, int64(i))
-		data, errLoop := wr.Marshal()
-		s.Require().NoError(errLoop)
-		delivered, errLoop := manager.Send(baseCtx, newProtoDataTest(data))
+		_, delivered, errLoop := sender.SendOpenHead(baseCtx, manager, testTimeSeriesCount, int64(i))
 		s.Require().NoError(errLoop)
 		s.Require().True(delivered)
 		fe := <-retCh
@@ -225,10 +230,7 @@ func (s *BlockManagerSuite) TestDeliveryManagerBreakingConnection() {
 
 	s.T().Log("client: break connection before read")
 	for i := 5; i < 10; i++ {
-		wr := s.makeData(5000, int64(i))
-		data, errLoop := wr.Marshal()
-		s.Require().NoError(errLoop)
-		delivered, errLoop := manager.Send(baseCtx, newProtoDataTest(data))
+		_, delivered, errLoop := sender.SendOpenHead(baseCtx, manager, testTimeSeriesCount, int64(i))
 		s.Require().NoError(errLoop)
 		s.Require().True(delivered)
 		fe := <-retCh
@@ -237,10 +239,7 @@ func (s *BlockManagerSuite) TestDeliveryManagerBreakingConnection() {
 
 	s.T().Log("client: break connection after read")
 	for i := 10; i < 15; i++ {
-		wr := s.makeData(5000, int64(i))
-		data, errLoop := wr.Marshal()
-		s.Require().NoError(errLoop)
-		delivered, errLoop := manager.Send(baseCtx, newProtoDataTest(data))
+		_, delivered, errLoop := sender.SendOpenHead(baseCtx, manager, testTimeSeriesCount, int64(i))
 		s.Require().NoError(errLoop)
 		s.Require().True(delivered)
 		fe := <-retCh
@@ -262,6 +261,11 @@ func (s *BlockManagerSuite) TestDeliveryManagerBreakingConnection() {
 //revive:disable-next-line:cyclomatic this is test
 //revive:disable-next-line:cognitive-complexity this is test
 func (s *BlockManagerSuite) TestDeliveryManagerReject() {
+	s.testDeliveryManagerReject(protobufOpenHeadSender{})
+	s.testDeliveryManagerReject(goModelOpenHeadSender{})
+}
+
+func (s *BlockManagerSuite) testDeliveryManagerReject(sender OpenHeadSenderGenerator) {
 	var (
 		rejectSegment uint32 = 5
 	)
@@ -326,16 +330,13 @@ func (s *BlockManagerSuite) TestDeliveryManagerReject() {
 	dir, err := s.mkDir()
 	s.Require().NoError(err)
 	defer s.removeDir(dir)
-	manager, err := s.createManager(baseCtx, s.token, listener.Addr().String(), dir, s.errorHandler)
+	manager, err := s.createManager(baseCtx, s.token, listener.Addr().String(), dir, s.errorHandler, clockwork.NewRealClock())
 	s.Require().NoError(err)
 	manager.Open(baseCtx)
 
 	s.T().Log("client: send data")
 	for i := 0; i < 10; i++ {
-		wr := s.makeData(5000, int64(i))
-		data, errLoop := wr.Marshal()
-		s.Require().NoError(errLoop)
-		delivered, errLoop := manager.Send(baseCtx, newProtoDataTest(data))
+		_, delivered, errLoop := sender.SendOpenHead(baseCtx, manager, testTimeSeriesCount, int64(i))
 		s.Require().NoError(errLoop)
 		if i == int(rejectSegment) {
 			s.Require().False(delivered)

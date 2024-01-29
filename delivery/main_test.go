@@ -4,6 +4,7 @@ import (
 	"io"
 
 	"github.com/odarix/odarix-core-go/cppbridge"
+	"github.com/odarix/odarix-core-go/model"
 )
 
 const refillExt = ".refill"
@@ -62,12 +63,22 @@ func (dt *dataTest) Destroy() {
 	dt.data = nil
 }
 
+type testHashdexFactory struct{}
+
+func (testHashdexFactory) Protobuf(data []byte, _ cppbridge.WALHashdexLimits) (cppbridge.ShardedData, error) {
+	return newShardedDataTest(string(data)), nil
+}
+
+func (testHashdexFactory) GoModel(data []model.TimeSeries, _ cppbridge.WALHashdexLimits) (cppbridge.ShardedData, error) {
+	return noOpShardedData{}, nil
+}
+
 // dataTest - test data.
 type shardedDataTest struct {
 	data string
 }
 
-func newByteShardedDataTest(data []byte, _ cppbridge.HashdexLimits) (cppbridge.ShardedData, error) {
+func newByteShardedDataTest(data []byte, _ cppbridge.WALHashdexLimits) (cppbridge.ShardedData, error) {
 	return newShardedDataTest(string(data)), nil
 }
 
@@ -80,6 +91,10 @@ func newShardedDataTest(data string) *shardedDataTest {
 // Bytes - return bytes, for implements.
 func (dt *shardedDataTest) Bytes() []byte {
 	return []byte(dt.data)
+}
+
+func (*shardedDataTest) Type() uint8 {
+	return 0
 }
 
 // Cluster -  return cluster name, for implements.
@@ -95,4 +110,18 @@ func (*shardedDataTest) Replica() string {
 // Destroy - clear memory, for implements.
 func (dt *shardedDataTest) Destroy() {
 	dt.data = ""
+}
+
+type noOpShardedData struct{}
+
+func (noOpShardedData) Type() uint8 {
+	return 1
+}
+
+func (noOpShardedData) Cluster() string {
+	return ""
+}
+
+func (noOpShardedData) Replica() string {
+	return ""
 }

@@ -44,6 +44,11 @@ func (s *ManagerKeeperSuite) errorHandler(msg string, err error) {
 }
 
 func (s *ManagerKeeperSuite) TestRefillSenderHappyPath() {
+	s.testRefillSenderHappyPath(protobufOpenHeadSender{})
+	s.testRefillSenderHappyPath(goModelOpenHeadSender{})
+}
+
+func (s *ManagerKeeperSuite) testRefillSenderHappyPath(sender OpenHeadSenderGenerator) {
 	count := 10
 	baseCtx := context.Background()
 	retCh := make(chan *server.Request, count)
@@ -95,22 +100,18 @@ func (s *ManagerKeeperSuite) TestRefillSenderHappyPath() {
 	dir, err := s.mkDir()
 	s.Require().NoError(err)
 	defer s.NoError(s.removeDir(dir))
-	clock := clockwork.NewFakeClock()
+	clock := clockwork.NewRealClock()
 	managerKeeper, err := s.createManagerKeeper(baseCtx, s.token, listener.Addr().String(), dir, s.errorHandler, clock)
 	s.Require().NoError(err)
 
 	s.T().Log("client: send data")
 	for i := 0; i < 10; i++ {
-		wr := s.makeData(5000, int64(i))
-		data, errLoop := wr.Marshal()
-		s.Require().NoError(errLoop)
-
-		delivered, errLoop := managerKeeper.Send(baseCtx, newProtoDataTest(data))
+		generatedData, delivered, errLoop := sender.SendOpenHead(baseCtx, managerKeeper, testTimeSeriesCount, int64(i))
 		s.Require().NoError(errLoop)
 		s.Require().True(delivered)
 
 		rq := <-retCh
-		s.EqualAsJSON(wr, rq.Message)
+		s.EqualAsJSON(generatedData.AsRemoteWriteProto(), rq.Message)
 	}
 
 	s.T().Log("client: shutdown manager")
@@ -128,6 +129,10 @@ func (s *ManagerKeeperSuite) TestRefillSenderHappyPath() {
 //revive:disable-next-line:cyclomatic this is test
 //revive:disable-next-line:cognitive-complexity this is test
 func (s *ManagerKeeperSuite) TestWithRotate() {
+	s.testWithRotate(protobufOpenHeadSender{})
+}
+
+func (s *ManagerKeeperSuite) testWithRotate(sender OpenHeadSenderGenerator) {
 	count := 10
 	baseCtx := context.Background()
 	retCh := make(chan *server.Request, count*2)
@@ -203,15 +208,11 @@ func (s *ManagerKeeperSuite) TestWithRotate() {
 
 	s.T().Log("client: send data")
 	for i := 0; i < count; i++ {
-		wr := s.makeData(5000, int64(i))
-		data, errLoop := wr.Marshal()
-		s.Require().NoError(errLoop)
-
-		delivered, errLoop := managerKeeper.Send(baseCtx, newProtoDataTest(data))
+		generatedData, delivered, errLoop := sender.SendOpenHead(baseCtx, managerKeeper, testTimeSeriesCount, int64(i))
 		s.Require().NoError(errLoop)
 		s.True(delivered)
 		rq := <-retCh
-		s.Equal(wr.String(), rq.Message.String())
+		s.Equal(generatedData.AsRemoteWriteProto().String(), rq.Message.String())
 	}
 	advanceCancel()
 
@@ -230,6 +231,11 @@ func (s *ManagerKeeperSuite) TestWithRotate() {
 //revive:disable-next-line:cyclomatic this is test
 //revive:disable-next-line:cognitive-complexity this is test
 func (s *ManagerKeeperSuite) TestWithReject() {
+	s.testWithReject(protobufOpenHeadSender{})
+	s.testWithReject(goModelOpenHeadSender{})
+}
+
+func (s *ManagerKeeperSuite) testWithReject(sender OpenHeadSenderGenerator) {
 	count := 10
 	baseCtx := context.Background()
 	retCh := make(chan *server.Request, count*2)
@@ -387,14 +393,11 @@ func (s *ManagerKeeperSuite) TestWithReject() {
 	s.T().Log("client: send data")
 	for i := 0; i < count; i++ {
 		s.T().Log("client: send data", i)
-		wr := s.makeData(5000, int64(i))
-		data, errLoop := wr.Marshal()
-		s.Require().NoError(errLoop)
-		_, errLoop = managerKeeper.Send(baseCtx, newProtoDataTest(data))
+		generatedData, _, errLoop := sender.SendOpenHead(baseCtx, managerKeeper, testTimeSeriesCount, int64(i))
 		s.Require().NoError(errLoop)
 
 		rq := <-retCh
-		s.Equal(wr.String(), rq.Message.String())
+		s.Equal(generatedData.AsRemoteWriteProto().String(), rq.Message.String())
 	}
 
 	s.T().Log("client: start refil sender loop")

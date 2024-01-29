@@ -15,9 +15,11 @@ import (
 
 	"github.com/go-playground/validator/v10"
 	"github.com/jonboulle/clockwork"
-	"github.com/odarix/odarix-core-go/cppbridge"
-	"github.com/odarix/odarix-core-go/util"
 	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/odarix/odarix-core-go/cppbridge"
+	"github.com/odarix/odarix-core-go/model"
+	"github.com/odarix/odarix-core-go/util"
 )
 
 const (
@@ -51,7 +53,7 @@ var ErrShutdownTimeout = errors.New("ShutdownTimeout must be greater than the Un
 type ManagerCtor func(
 	ctx context.Context,
 	dialers []Dialer,
-	hashdexCtor HashdexCtor,
+	hashdexFactory HashdexFactory,
 	encoderCtor ManagerEncoderCtor,
 	refillCtor ManagerRefillCtor,
 	shardsNumberPower uint8,
@@ -121,7 +123,7 @@ type ManagerKeeper struct {
 	cfg                ManagerKeeperConfig
 	manager            *Manager
 	managerCtor        ManagerCtor
-	hashdexCtor        HashdexCtor
+	hashdexFactory     HashdexFactory
 	managerEncoderCtor ManagerEncoderCtor
 	managerRefillCtor  ManagerRefillCtor
 	mangerRefillSender ManagerRefillSender
@@ -152,7 +154,7 @@ func NewManagerKeeper(
 	ctx context.Context,
 	cfg ManagerKeeperConfig,
 	managerCtor ManagerCtor,
-	hashdexCtor HashdexCtor,
+	hashdexFactory HashdexFactory,
 	managerEncoderCtor ManagerEncoderCtor,
 	managerRefillCtor ManagerRefillCtor,
 	mangerRefillSenderCtor MangerRefillSenderCtor,
@@ -174,7 +176,7 @@ func NewManagerKeeper(
 	dk := &ManagerKeeper{
 		cfg:                cfg,
 		managerCtor:        managerCtor,
-		hashdexCtor:        hashdexCtor,
+		hashdexFactory:     hashdexFactory,
 		managerEncoderCtor: managerEncoderCtor,
 		managerRefillCtor:  managerRefillCtor,
 		clock:              clock,
@@ -210,7 +212,7 @@ func NewManagerKeeper(
 	dk.manager, err = dk.managerCtor(
 		dk.ctx,
 		dk.dialers,
-		dk.hashdexCtor,
+		dk.hashdexFactory,
 		dk.managerEncoderCtor,
 		dk.managerRefillCtor,
 		snp,
@@ -288,7 +290,7 @@ func (dk *ManagerKeeper) rotate() error {
 	newManager, err := dk.managerCtor(
 		dk.ctx,
 		dk.dialers,
-		dk.hashdexCtor,
+		dk.hashdexFactory,
 		dk.managerEncoderCtor,
 		dk.managerRefillCtor,
 		snp,
@@ -349,8 +351,8 @@ func (dk *ManagerKeeper) Send(ctx context.Context, data ProtoData) (bool, error)
 	return delivered, nil
 }
 
-// SendOpenHead - send metrics data to encode and send.
-func (dk *ManagerKeeper) SendOpenHead(ctx context.Context, data ProtoData) (bool, error) {
+// SendOpenHeadProtobuf - send metrics data to encode and send.
+func (dk *ManagerKeeper) SendOpenHeadProtobuf(ctx context.Context, data ProtoData) (bool, error) {
 	dk.inFlight.Inc()
 	defer dk.inFlight.Dec()
 	start := time.Now()
@@ -362,7 +364,36 @@ func (dk *ManagerKeeper) SendOpenHead(ctx context.Context, data ProtoData) (bool
 		return false, ErrShutdown
 	default:
 	}
-	delivered, err := dk.manager.SendOpenHead(ctx, data)
+	delivered, err := dk.manager.SendOpenHeadProtobuf(ctx, data)
+	if dk.manager.MaxBlockBytes() >= dk.currentState.Block().DesiredBlockSizeBytes {
+		dk.notifyOnLimits()
+	}
+	if err != nil {
+		dk.sendDuration.With(prometheus.Labels{"state": "error"}).Observe(time.Since(start).Seconds())
+		return delivered, err
+	}
+	if !delivered {
+		dk.sendDuration.With(prometheus.Labels{"state": "refill"}).Observe(time.Since(start).Seconds())
+		return delivered, err
+	}
+	dk.sendDuration.With(prometheus.Labels{"state": "success"}).Observe(time.Since(start).Seconds())
+	return delivered, nil
+}
+
+// SendOpenHeadGoModel - send metrics data to encode and send.
+func (dk *ManagerKeeper) SendOpenHeadGoModel(ctx context.Context, data []model.TimeSeries) (bool, error) {
+	dk.inFlight.Inc()
+	defer dk.inFlight.Dec()
+	start := time.Now()
+
+	dk.rwm.RLock()
+	defer dk.rwm.RUnlock()
+	select {
+	case <-dk.stop:
+		return false, ErrShutdown
+	default:
+	}
+	delivered, err := dk.manager.SendOpenHeadGoModel(ctx, data)
 	if dk.manager.MaxBlockBytes() >= dk.currentState.Block().DesiredBlockSizeBytes {
 		dk.notifyOnLimits()
 	}
@@ -557,7 +588,7 @@ func (l *BlockLimits) UnmarshalBinary(data []byte) error {
 type Limits struct {
 	OpenHead OpenHeadLimits
 	Block    BlockLimits
-	Hashdex  cppbridge.HashdexLimits
+	Hashdex  cppbridge.WALHashdexLimits
 }
 
 // DefaultLimits - generate default Limits.
@@ -565,7 +596,7 @@ func DefaultLimits() Limits {
 	return Limits{
 		OpenHead: DefaultOpenHeadLimits(),
 		Block:    DefaultBlockLimits(),
-		Hashdex:  cppbridge.DefaultHashdexLimits(),
+		Hashdex:  cppbridge.DefaultWALHashdexLimits(),
 	}
 }
 
