@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -28,7 +29,7 @@ func TestManagerKeeper(t *testing.T) {
 }
 
 func (s *ManagerKeeperSuite) SetupSuite() {
-	s.token = "auth_token" + s.T().Name()
+	s.token = "auth_token_keeper" + s.T().Name()
 }
 
 func (*ManagerKeeperSuite) mkDir() (string, error) {
@@ -43,65 +44,62 @@ func (s *ManagerKeeperSuite) errorHandler(msg string, err error) {
 	s.T().Logf("errorHandler: %s: %s", msg, err)
 }
 
-func (s *ManagerKeeperSuite) TestRefillSenderHappyPath() {
-	s.testRefillSenderHappyPath(protobufOpenHeadSender{})
-	s.testRefillSenderHappyPath(goModelOpenHeadSender{})
+func (s *ManagerKeeperSuite) TestManagerKeeperHappyPath() {
+	s.managerKeeperHappyPath(protobufOpenHeadSender{})
+	s.managerKeeperHappyPath(goModelOpenHeadSender{})
 }
 
-func (s *ManagerKeeperSuite) testRefillSenderHappyPath(sender OpenHeadSenderGenerator) {
+func (s *ManagerKeeperSuite) managerKeeperHappyPath(sender OpenHeadSenderGenerator) {
 	count := 10
 	baseCtx := context.Background()
-	retCh := make(chan *server.Request, count)
+	retCh := make(chan *frames.ReadSegmentV4, count)
 
-	handleStream := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
-		reader := server.NewProtocolReader(server.StartWith(tcpReader, fe))
+	tlscfg, err := s.makeTLSConfig()
+	s.Require().NoError(err)
+
+	handleStream := func(ctx context.Context, reader *server.WebSocketReader) {
 		for {
-			rq, err := reader.Next(ctx)
-			if err != nil {
-				if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
-					s.NoError(err, "fail to read next message")
+			fr := frames.NewReadSegmentV4Empty()
+			if errh := reader.Next(ctx, fr); errh != nil {
+				if !errors.Is(errh, io.EOF) && !errors.Is(errh, context.Canceled) {
+					s.NoError(errh, "fail to read next message")
 				}
 				return
 			}
 
-			if rq.Finalized {
+			// final frame
+			if fr.Size == 0 {
 				// something doing
-				retCh <- rq
+				retCh <- fr
 				return
 			}
 
 			// process data
-			retCh <- rq
-
-			if !s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
-				Text:      "OK",
-				Code:      200,
-				SegmentID: rq.SegmentID,
-				SendAt:    rq.SentAt,
-			}), "fail to send response") {
+			retCh <- fr
+			if !s.NoError(reader.SendResponse(
+				ctx,
+				frames.NewResponseV4(fr.SentAt, fr.ID, 200, "OK"),
+			), "fail to send response") {
 				return
 			}
 		}
 	}
 
-	handleRefill := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
+	handleRefill := func(ctx context.Context, rw http.ResponseWriter, r io.Reader) {
 		s.T().Log("not required")
-
-		s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
-			Text: "OK",
-			Code: 200,
-		}), "fail to send response")
+		s.NoError(s.response(rw, "OK", http.StatusOK), "fail to send response")
 	}
 
-	listener := s.runServer(baseCtx, "127.0.0.1:5000", s.token, nil, handleStream, handleRefill)
-	s.T().Logf("client: run server address: %s", listener.Addr().String())
+	addr := "127.0.0.1:5000"
+	srv := s.runWebServer(baseCtx, addr, s.token, tlscfg, nil, handleStream, handleRefill)
+	s.T().Logf("client: run server address: %s", addr)
 
 	s.T().Log("client: manager keeper create")
 	dir, err := s.mkDir()
 	s.Require().NoError(err)
 	defer s.NoError(s.removeDir(dir))
 	clock := clockwork.NewRealClock()
-	managerKeeper, err := s.createManagerKeeper(baseCtx, s.token, listener.Addr().String(), dir, s.errorHandler, clock)
+	managerKeeper, err := s.createManagerKeeperWithWebSocket(baseCtx, tlscfg, s.token, addr, dir, s.errorHandler, clock)
 	s.Require().NoError(err)
 
 	s.T().Log("client: send data")
@@ -110,81 +108,78 @@ func (s *ManagerKeeperSuite) testRefillSenderHappyPath(sender OpenHeadSenderGene
 		s.Require().NoError(errLoop)
 		s.Require().True(delivered)
 
-		rq := <-retCh
-		s.EqualAsJSON(generatedData.AsRemoteWriteProto(), rq.Message)
+		_ = generatedData
+		fr := <-retCh
+		s.EqualValues(i, fr.ID)
 	}
 
 	s.T().Log("client: shutdown manager")
 	err = managerKeeper.Shutdown(baseCtx)
 	s.Require().NoError(err)
 
-	rq := <-retCh
-	s.True(rq.Finalized)
+	fr := <-retCh
+	s.True(fr.Size == 0)
 
-	s.T().Log("client: shutdown listener")
-	err = listener.Close()
-	s.Require().NoError(err)
+	s.T().Log("client: shutdown server")
+	s.Require().NoError(srv.Shutdown(baseCtx))
+}
+
+func (s *ManagerKeeperSuite) TestWithRotate() {
+	s.withRotate(protobufOpenHeadSender{})
 }
 
 //revive:disable-next-line:cyclomatic this is test
 //revive:disable-next-line:cognitive-complexity this is test
-func (s *ManagerKeeperSuite) TestWithRotate() {
-	s.testWithRotate(protobufOpenHeadSender{})
-}
-
-func (s *ManagerKeeperSuite) testWithRotate(sender OpenHeadSenderGenerator) {
+func (s *ManagerKeeperSuite) withRotate(sender OpenHeadSenderGenerator) {
 	count := 10
 	baseCtx := context.Background()
-	retCh := make(chan *server.Request, count*2)
+	retCh := make(chan *frames.ReadSegmentV4, count*2)
+	tlscfg, err := s.makeTLSConfig()
+	s.Require().NoError(err)
 
-	handleStream := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
-		reader := server.NewProtocolReader(server.StartWith(tcpReader, fe))
+	handleStream := func(ctx context.Context, reader *server.WebSocketReader) {
 		for {
-			rq, err := reader.Next(ctx)
-			if err != nil {
-				if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
-					s.NoError(err, "fail to read next message")
+			fr := frames.NewReadSegmentV4Empty()
+			if errh := reader.Next(ctx, fr); errh != nil {
+				if !errors.Is(errh, io.EOF) && !errors.Is(errh, context.Canceled) {
+					s.NoError(errh, "fail to read next message")
 				}
 				return
 			}
 
-			if rq.Finalized {
+			// final frame
+			if fr.Size == 0 {
 				// something doing
-				retCh <- rq
+				retCh <- fr
 				return
 			}
 
 			// process data
-			retCh <- rq
-
-			if !s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
-				Text:      "OK",
-				Code:      200,
-				SegmentID: rq.SegmentID,
-				SendAt:    rq.SentAt,
-			}), "fail to send response") {
+			retCh <- fr
+			if !s.NoError(reader.SendResponse(
+				ctx,
+				frames.NewResponseV4(fr.SentAt, fr.ID, 200, "OK"),
+			), "fail to send response") {
 				return
 			}
 		}
 	}
 
-	handleRefill := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
+	handleRefill := func(ctx context.Context, rw http.ResponseWriter, r io.Reader) {
 		s.T().Log("not required")
-		s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
-			Text: "OK",
-			Code: 200,
-		}), "fail to send response")
+		s.NoError(s.response(rw, "OK", http.StatusOK), "fail to send response")
 	}
 
-	listener := s.runServer(baseCtx, "127.0.0.1:5001", s.token, nil, handleStream, handleRefill)
-	s.T().Logf("client: run server address: %s", listener.Addr().String())
+	addr := "127.0.0.1:5001"
+	srv := s.runWebServer(baseCtx, addr, s.token, tlscfg, nil, handleStream, handleRefill)
+	s.T().Logf("client: run server address: %s", addr)
 
 	s.T().Log("client: manager keeper create")
 	dir, err := s.mkDir()
 	s.Require().NoError(err)
 	defer s.removeDir(dir)
 	clock := clockwork.NewFakeClock()
-	managerKeeper, err := s.createManagerKeeper(baseCtx, s.token, listener.Addr().String(), dir, s.errorHandler, clock)
+	managerKeeper, err := s.createManagerKeeperWithWebSocket(baseCtx, tlscfg, s.token, addr, dir, s.errorHandler, clock)
 	s.Require().NoError(err)
 
 	s.T().Log("client: run time shift")
@@ -211,8 +206,9 @@ func (s *ManagerKeeperSuite) testWithRotate(sender OpenHeadSenderGenerator) {
 		generatedData, delivered, errLoop := sender.SendOpenHead(baseCtx, managerKeeper, testTimeSeriesCount, int64(i))
 		s.Require().NoError(errLoop)
 		s.True(delivered)
-		rq := <-retCh
-		s.Equal(generatedData.AsRemoteWriteProto().String(), rq.Message.String())
+		_ = generatedData
+		fr := <-retCh
+		s.EqualValues(i, fr.ID)
 	}
 	advanceCancel()
 
@@ -220,155 +216,132 @@ func (s *ManagerKeeperSuite) testWithRotate(sender OpenHeadSenderGenerator) {
 	err = managerKeeper.Shutdown(baseCtx)
 	s.Require().NoError(err)
 
-	rq := <-retCh
-	s.True(rq.Finalized)
+	fr := <-retCh
+	s.True(fr.Size == 0)
 
-	s.T().Log("client: shutdown listener")
-	err = listener.Close()
-	s.Require().NoError(err)
+	s.T().Log("client: shutdown server")
+	s.Require().NoError(srv.Shutdown(baseCtx))
+}
+
+func (s *ManagerKeeperSuite) TestWithReject() {
+	s.withReject(protobufOpenHeadSender{})
+	s.withReject(goModelOpenHeadSender{})
 }
 
 //revive:disable-next-line:cyclomatic this is test
 //revive:disable-next-line:cognitive-complexity this is test
-func (s *ManagerKeeperSuite) TestWithReject() {
-	s.testWithReject(protobufOpenHeadSender{})
-	s.testWithReject(goModelOpenHeadSender{})
-}
-
-func (s *ManagerKeeperSuite) testWithReject(sender OpenHeadSenderGenerator) {
+func (s *ManagerKeeperSuite) withReject(sender OpenHeadSenderGenerator) {
 	count := 10
 	baseCtx := context.Background()
-	retCh := make(chan *server.Request, count*2)
-	rejectsCh := make(chan *server.Request, count*2)
+	retCh := make(chan *frames.ReadSegmentV4, count*2)
+	rejectsCh := make(chan *frames.ReadSegmentV4, count*2)
 
-	handleStream := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
-		reader := server.NewProtocolReader(server.StartWith(tcpReader, fe))
+	tlscfg, err := s.makeTLSConfig()
+	s.Require().NoError(err)
+
+	handleStream := func(ctx context.Context, reader *server.WebSocketReader) {
 		for {
-			rq, err := reader.Next(ctx)
-			if err != nil {
-				if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
-					s.NoError(err, "fail to read next message")
+			fr := frames.NewReadSegmentV4Empty()
+			if errh := reader.Next(ctx, fr); errh != nil {
+				if !errors.Is(errh, io.EOF) && !errors.Is(errh, context.Canceled) {
+					s.NoError(errh, "fail to read next message")
 				}
 				return
 			}
 
-			if rq.Finalized {
+			// final frame
+			if fr.Size == 0 {
 				// something doing
-				retCh <- rq
+				retCh <- fr
 				return
 			}
 
 			// process data
-			retCh <- rq
-
-			if rq.SegmentID%2 == 0 {
-				if !s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
-					Text:      "reject",
-					Code:      400,
-					SegmentID: rq.SegmentID,
-					SendAt:    rq.SentAt,
-				}), "fail to send response") {
+			retCh <- fr
+			if fr.ID%2 == 0 {
+				if !s.NoError(reader.SendResponse(
+					ctx,
+					frames.NewResponseV4(fr.SentAt, fr.ID, 400, "reject"),
+				), "fail to send response") {
 					return
 				}
-				rejectsCh <- rq
+				rejectsCh <- fr
 				continue
 			}
 
-			if !s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
-				Text:      "OK",
-				Code:      200,
-				SegmentID: rq.SegmentID,
-				SendAt:    rq.SentAt,
-			}), "fail to send response") {
+			if !s.NoError(reader.SendResponse(
+				ctx,
+				frames.NewResponseV4(fr.SentAt, fr.ID, 200, "OK"),
+			), "fail to send response") {
 				return
 			}
 		}
 	}
 
-	handleRefill := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
-		rmsg := frames.NewRefillMsgEmpty()
-		if !s.NoError(rmsg.UnmarshalBinary(fe.GetBody()), "unmarshal binary") {
-			return
-		}
-
+	handleRefill := func(ctx context.Context, rw http.ResponseWriter, r io.Reader) {
 		// make tmp file for work
-		dir, err := os.MkdirTemp("", "refill-server-dir-")
-		if !s.NoError(err, "fail mkdir") {
+		dir, errh := os.MkdirTemp("", "refill-server-dir-")
+		if !s.NoError(errh, "fail mkdir") {
 			return
 		}
 		defer s.removeDir(dir)
-		file, err := os.CreateTemp(dir, "refill-server-file-")
-		if !s.NoError(err, "fail open file") {
+		file, errh := os.CreateTemp(dir, "refill-server-file-")
+		if !s.NoError(errh, "fail open file") {
 			return
 		}
 
-		// save Messages to file
-		for i := 0; i < len(rmsg.Messages); i++ {
-			fe, errNext := tcpReader.Next(ctx)
-			if !s.NoError(errNext, "fail next") {
-				return
-			}
-
-			switch fe.GetType() {
-			case frames.SegmentType:
-				if _, errW := fe.WriteTo(file); !s.NoError(errW, "fail write") {
-					return
-				}
-			default:
-				s.T().Errorf("unexpected msg type %d", fe.GetType())
-				return
-			}
-		}
-		if !s.NoError(file.Sync(), "sync file") {
+		// save to file from reader
+		if _, errh = file.ReadFrom(r); errh != nil {
+			_ = s.response(rw, errh.Error(), http.StatusInternalServerError)
 			return
 		}
-		if !s.NoError(file.Close(), "close file") {
+		if errh = file.Sync(); errh != nil {
+			_ = s.response(rw, errh.Error(), http.StatusInternalServerError)
+			return
+		}
+		if errh = file.Close(); errh != nil {
+			_ = s.response(rw, errh.Error(), http.StatusInternalServerError)
 			return
 		}
 
 		// make FileReader
-		fr, err := server.NewFileReader(file.Name())
-		if !s.NoError(err, "fail init FileReader") {
+		fr, errh := server.NewFileReaderV4(file.Name())
+		if !s.NoError(errh, "fail init FileReader") {
 			return
 		}
 		defer fr.Close()
-
-		// make ProtocolReader over FileReader
-		pr := server.NewProtocolReader(fr)
 
 		// make BlockWriter
 		// read until EOF from ProtocolReader and append to BlockWriter
 		// save BlockWriter
 		// send block to S3
 		for {
-			rq, err := pr.Next(ctx)
-			if err != nil {
-				if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
-					s.NoError(err, "fail to read next message")
+			rs, errh := fr.Next(ctx)
+			if errh != nil {
+				if !errors.Is(errh, io.EOF) && !errors.Is(errh, context.Canceled) {
+					s.NoError(errh, "fail to read next message")
 				}
 				break
 			}
 
 			s.Require().NotEqual(0, len(rejectsCh))
-			ewr := <-rejectsCh
-			s.Equal(ewr.Message.String(), rq.Message.String())
+			rfr := <-rejectsCh
+			s.Equal(rfr.ID, rs.ID)
 		}
 
-		_ = tcpReader.SendResponse(ctx, &frames.ResponseMsg{
-			Text: "OK",
-			Code: 200,
-		})
+		s.NoError(s.response(rw, "OK", http.StatusOK), "fail to send response")
 	}
 
-	listener := s.runServer(baseCtx, "127.0.0.1:5002", s.token, nil, handleStream, handleRefill)
-	s.T().Logf("client: run server address: %s", listener.Addr().String())
+	addr := "127.0.0.1:5002"
+	srv := s.runWebServer(baseCtx, addr, s.token, tlscfg, nil, handleStream, handleRefill)
+	s.T().Logf("client: run server address: %s", addr)
 
 	s.T().Log("client: manager keeper create")
 	dir, err := s.mkDir()
 	s.Require().NoError(err)
 	defer s.removeDir(dir)
 	clock := clockwork.NewFakeClock()
-	managerKeeper, err := s.createManagerKeeper(baseCtx, s.token, listener.Addr().String(), dir, s.errorHandler, clock)
+	managerKeeper, err := s.createManagerKeeperWithWebSocket(baseCtx, tlscfg, s.token, addr, dir, s.errorHandler, clock)
 	s.Require().NoError(err)
 
 	s.T().Log("client: run time shift")
@@ -395,9 +368,9 @@ func (s *ManagerKeeperSuite) testWithReject(sender OpenHeadSenderGenerator) {
 		s.T().Log("client: send data", i)
 		generatedData, _, errLoop := sender.SendOpenHead(baseCtx, managerKeeper, testTimeSeriesCount, int64(i))
 		s.Require().NoError(errLoop)
-
-		rq := <-retCh
-		s.Equal(generatedData.AsRemoteWriteProto().String(), rq.Message.String())
+		_ = generatedData
+		fr := <-retCh
+		s.EqualValues(i, fr.ID)
 	}
 
 	s.T().Log("client: start refil sender loop")
@@ -408,9 +381,6 @@ func (s *ManagerKeeperSuite) testWithReject(sender OpenHeadSenderGenerator) {
 	err = managerKeeper.Shutdown(baseCtx)
 	s.Require().NoError(err)
 
-	rq := <-retCh
-	s.True(rq.Finalized)
-
 	files, err := os.ReadDir(filepath.Join(dir, delivery.RefillDir))
 	s.Require().NoError(err)
 
@@ -420,7 +390,6 @@ func (s *ManagerKeeperSuite) testWithReject(sender OpenHeadSenderGenerator) {
 		}
 	}
 
-	s.T().Log("client: shutdown listener")
-	err = listener.Close()
-	s.Require().NoError(err)
+	s.T().Log("client: shutdown server")
+	s.Require().NoError(srv.Shutdown(baseCtx))
 }

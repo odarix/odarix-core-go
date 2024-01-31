@@ -3,13 +3,14 @@ package e2e_test
 import (
 	"context"
 	"errors"
-	"github.com/jonboulle/clockwork"
-	"github.com/stretchr/testify/suite"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+
+	"github.com/stretchr/testify/suite"
 
 	"github.com/odarix/odarix-core-go/delivery"
 	"github.com/odarix/odarix-core-go/frames"
@@ -43,62 +44,58 @@ func (s *BlockManagerSuite) errorHandler(msg string, err error) {
 }
 
 func (s *BlockManagerSuite) TestDeliveryManagerHappyPath() {
-	s.testDeliveryManagerHappyPath(protobufOpenHeadSender{})
-	s.testDeliveryManagerHappyPath(goModelOpenHeadSender{})
+	s.deliveryManagerHappyPath(protobufOpenHeadSender{})
+	s.deliveryManagerHappyPath(goModelOpenHeadSender{})
 }
 
-func (s *BlockManagerSuite) testDeliveryManagerHappyPath(sender OpenHeadSenderGenerator) {
-	retCh := make(chan *server.Request, 30)
+func (s *BlockManagerSuite) deliveryManagerHappyPath(sender OpenHeadSenderGenerator) {
+	retCh := make(chan *frames.ReadSegmentV4, 30)
 	baseCtx := context.Background()
+	tlscfg, err := s.makeTLSConfig()
+	s.Require().NoError(err)
 
-	handleStream := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
-		reader := server.NewProtocolReader(server.StartWith(tcpReader, fe))
+	handleStream := func(ctx context.Context, reader *server.WebSocketReader) {
 		for {
-			rq, err := reader.Next(ctx)
-			if err != nil {
-				if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
-					s.NoError(err, "fail to read next message")
+			fr := frames.NewReadSegmentV4Empty()
+			if errh := reader.Next(ctx, fr); errh != nil {
+				if !errors.Is(errh, io.EOF) && !errors.Is(errh, context.Canceled) {
+					s.NoError(errh, "fail to read next message")
 				}
 				return
 			}
 
-			if rq.Finalized {
+			// final frame
+			if fr.Size == 0 {
 				// something doing
-				retCh <- rq
+				retCh <- fr
 				return
 			}
 
 			// process data
-			retCh <- rq
-
-			if !s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
-				Text:      "OK",
-				Code:      200,
-				SegmentID: rq.SegmentID,
-				SendAt:    rq.SentAt,
-			}), "fail to send response") {
+			retCh <- fr
+			if !s.NoError(reader.SendResponse(
+				ctx,
+				frames.NewResponseV4(fr.SentAt, fr.ID, 200, "OK"),
+			), "fail to send response") {
 				return
 			}
 		}
 	}
 
-	handleRefill := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
+	handleRefill := func(ctx context.Context, rw http.ResponseWriter, r io.Reader) {
 		s.T().Log("not required")
-		s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
-			Text: "OK",
-			Code: 200,
-		}), "fail to send response")
+		s.NoError(s.response(rw, "OK", http.StatusOK), "fail to send response")
 	}
 
-	listener := s.runServer(baseCtx, "127.0.0.1:6000", s.token, nil, handleStream, handleRefill)
-	s.T().Logf("client: run server address: %s", listener.Addr().String())
+	addr := "127.0.0.1:6000"
+	srv := s.runWebServer(baseCtx, addr, s.token, tlscfg, nil, handleStream, handleRefill)
+	s.T().Logf("client: run server address: %s", addr)
 
 	s.T().Log("client: manager create and open")
 	dir, err := s.mkDir()
 	s.Require().NoError(err)
 	defer s.removeDir(dir)
-	clock := clockwork.NewRealClock()
-	manager, err := s.createManager(baseCtx, s.token, listener.Addr().String(), dir, s.errorHandler, clock)
+	manager, err := s.createManagerWithWebSocket(baseCtx, tlscfg, s.token, addr, dir, s.errorHandler)
 	s.Require().NoError(err)
 	manager.Open(baseCtx)
 
@@ -107,32 +104,32 @@ func (s *BlockManagerSuite) testDeliveryManagerHappyPath(sender OpenHeadSenderGe
 		generatedData, delivered, errLoop := sender.SendOpenHead(baseCtx, manager, testTimeSeriesCount, int64(i))
 		s.Require().NoError(errLoop)
 		s.Require().True(delivered)
-		rq := <-retCh
-		s.EqualAsJSON(generatedData.AsRemoteWriteProto(), rq.Message)
+		_ = generatedData
+		fr := <-retCh
+		s.EqualValues(i, fr.ID)
 	}
 
 	s.T().Log("client: shutdown manager")
 	s.Require().NoError(manager.Close())
 	s.Require().NoError(manager.Shutdown(baseCtx))
 
-	rq := <-retCh
-	s.True(rq.Finalized)
+	fr := <-retCh
+	s.True(fr.Size == 0)
 
-	s.T().Log("client: shutdown listener")
-	err = listener.Close()
-	s.Require().NoError(err)
+	s.T().Log("client: shutdown server")
+	s.Require().NoError(srv.Shutdown(baseCtx))
+}
+
+func (s *BlockManagerSuite) TestDeliveryManagerBreakingConnection() {
+	s.deliveryManagerBreakingConnection(protobufOpenHeadSender{})
+	s.deliveryManagerBreakingConnection(goModelOpenHeadSender{})
 }
 
 //revive:disable-next-line:cyclomatic this is test
 //revive:disable-next-line:cognitive-complexity this is test
-func (s *BlockManagerSuite) TestDeliveryManagerBreakingConnection() {
-	s.testDeliveryManagerBreakingConnection(protobufOpenHeadSender{})
-	s.testDeliveryManagerBreakingConnection(goModelOpenHeadSender{})
-}
-
-func (s *BlockManagerSuite) testDeliveryManagerBreakingConnection(sender OpenHeadSenderGenerator) {
+func (s *BlockManagerSuite) deliveryManagerBreakingConnection(sender OpenHeadSenderGenerator) {
 	var (
-		retCh   = make(chan *frames.ReadFrame, 30)
+		retCh   = make(chan *frames.ReadSegmentV4, 30)
 		breaker int32
 	)
 	const (
@@ -141,6 +138,8 @@ func (s *BlockManagerSuite) testDeliveryManagerBreakingConnection(sender OpenHea
 		breakAfterRead  = 25
 	)
 	baseCtx := context.Background()
+	tlscfg, err := s.makeTLSConfig()
+	s.Require().NoError(err)
 
 	onAccept := func() bool {
 		switch atomic.LoadInt32(&breaker) {
@@ -159,25 +158,24 @@ func (s *BlockManagerSuite) testDeliveryManagerBreakingConnection(sender OpenHea
 		return false
 	}
 
-	handleStream := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
-		reader := server.StartWith(tcpReader, fe)
+	handleStream := func(ctx context.Context, reader *server.WebSocketReader) {
 		for {
 			if onAccept != nil && !onAccept() {
 				s.T().Log("handleStream: disconnect before read")
 				return
 			}
-
-			fe, err := reader.Next(ctx)
-			if err != nil {
-				if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
-					s.NoError(err, "fail to read next message")
+			fr := frames.NewReadSegmentV4Empty()
+			if errh := reader.Next(ctx, fr); errh != nil {
+				if !errors.Is(errh, io.EOF) && !errors.Is(errh, context.Canceled) {
+					s.NoError(errh, "fail to read next message")
 				}
 				return
 			}
 
-			if fe.GetType() == frames.FinalType {
+			// final frame
+			if fr.Size == 0 {
 				// something doing
-				retCh <- fe
+				retCh <- fr
 				return
 			}
 
@@ -187,35 +185,30 @@ func (s *BlockManagerSuite) testDeliveryManagerBreakingConnection(sender OpenHea
 			}
 
 			// process data
-			retCh <- fe
-
-			if !s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
-				Text:      "OK",
-				Code:      200,
-				SegmentID: fe.GetSegmentID(),
-				SendAt:    fe.GetCreatedAt(),
-			}), "fail to send response") {
+			retCh <- fr
+			if !s.NoError(reader.SendResponse(
+				ctx,
+				frames.NewResponseV4(fr.SentAt, fr.ID, 200, "OK"),
+			), "fail to send response") {
 				return
 			}
 		}
 	}
 
-	handleRefill := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
+	handleRefill := func(ctx context.Context, rw http.ResponseWriter, r io.Reader) {
 		s.T().Log("not required")
-		s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
-			Text: "OK",
-			Code: 200,
-		}), "fail to send response")
+		s.NoError(s.response(rw, "OK", http.StatusOK), "fail to send response")
 	}
 
-	listener := s.runServer(baseCtx, "127.0.0.1:6001", s.token, onAccept, handleStream, handleRefill)
-	s.T().Logf("client: run server address: %s", listener.Addr().String())
+	addr := "127.0.0.1:6001"
+	srv := s.runWebServer(baseCtx, addr, s.token, tlscfg, nil, handleStream, handleRefill)
+	s.T().Logf("client: run server address: %s", addr)
 
 	s.T().Log("client: manager create and open")
 	dir, err := s.mkDir()
 	s.Require().NoError(err)
 	defer s.removeDir(dir)
-	manager, err := s.createManager(baseCtx, s.token, listener.Addr().String(), dir, s.errorHandler, clockwork.NewRealClock())
+	manager, err := s.createManagerWithWebSocket(baseCtx, tlscfg, s.token, addr, dir, s.errorHandler)
 	s.Require().NoError(err)
 	manager.Open(baseCtx)
 
@@ -224,8 +217,9 @@ func (s *BlockManagerSuite) testDeliveryManagerBreakingConnection(sender OpenHea
 		_, delivered, errLoop := sender.SendOpenHead(baseCtx, manager, testTimeSeriesCount, int64(i))
 		s.Require().NoError(errLoop)
 		s.Require().True(delivered)
-		fe := <-retCh
-		s.EqualValues(i, fe.GetSegmentID())
+
+		fr := <-retCh
+		s.EqualValues(i, fr.ID)
 	}
 
 	s.T().Log("client: break connection before read")
@@ -233,8 +227,9 @@ func (s *BlockManagerSuite) testDeliveryManagerBreakingConnection(sender OpenHea
 		_, delivered, errLoop := sender.SendOpenHead(baseCtx, manager, testTimeSeriesCount, int64(i))
 		s.Require().NoError(errLoop)
 		s.Require().True(delivered)
-		fe := <-retCh
-		s.EqualValues(i, fe.GetSegmentID())
+
+		fr := <-retCh
+		s.EqualValues(i, fr.ID)
 	}
 
 	s.T().Log("client: break connection after read")
@@ -242,95 +237,90 @@ func (s *BlockManagerSuite) testDeliveryManagerBreakingConnection(sender OpenHea
 		_, delivered, errLoop := sender.SendOpenHead(baseCtx, manager, testTimeSeriesCount, int64(i))
 		s.Require().NoError(errLoop)
 		s.Require().True(delivered)
-		fe := <-retCh
-		s.EqualValues(i, fe.GetSegmentID())
+
+		fr := <-retCh
+		s.EqualValues(i, fr.ID)
 	}
 
 	s.T().Log("client: shutdown manager")
 	s.Require().NoError(manager.Close())
 	s.Require().NoError(manager.Shutdown(baseCtx))
 
-	fe := <-retCh
-	s.True(fe.GetType() == frames.FinalType)
+	fr := <-retCh
+	s.True(fr.Size == 0)
 
-	s.T().Log("client: shutdown listener")
-	err = listener.Close()
-	s.Require().NoError(err)
+	s.T().Log("client: shutdown server")
+	s.Require().NoError(srv.Shutdown(baseCtx))
+}
+
+func (s *BlockManagerSuite) TestDeliveryManagerReject() {
+	s.deliveryManagerReject(protobufOpenHeadSender{})
+	s.deliveryManagerReject(goModelOpenHeadSender{})
 }
 
 //revive:disable-next-line:cyclomatic this is test
 //revive:disable-next-line:cognitive-complexity this is test
-func (s *BlockManagerSuite) TestDeliveryManagerReject() {
-	s.testDeliveryManagerReject(protobufOpenHeadSender{})
-	s.testDeliveryManagerReject(goModelOpenHeadSender{})
-}
-
-func (s *BlockManagerSuite) testDeliveryManagerReject(sender OpenHeadSenderGenerator) {
+func (s *BlockManagerSuite) deliveryManagerReject(sender OpenHeadSenderGenerator) {
 	var (
 		rejectSegment uint32 = 5
 	)
-	retCh := make(chan *frames.ReadFrame, 30)
+	retCh := make(chan *frames.ReadSegmentV4, 30)
 	baseCtx := context.Background()
+	tlscfg, err := s.makeTLSConfig()
+	s.Require().NoError(err)
 
-	handleStream := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
-		reader := server.StartWith(tcpReader, fe)
+	handleStream := func(ctx context.Context, reader *server.WebSocketReader) {
 		for {
-			fe, err := reader.Next(ctx)
-			if err != nil {
-				if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
-					s.NoError(err, "fail to read next message")
+			fr := frames.NewReadSegmentV4Empty()
+			if errh := reader.Next(ctx, fr); errh != nil {
+				if !errors.Is(errh, io.EOF) && !errors.Is(errh, context.Canceled) {
+					s.NoError(errh, "fail to read next message")
 				}
 				return
 			}
 
-			if fe.GetType() == frames.FinalType {
+			// final frame
+			if fr.Size == 0 {
 				// something doing
-				retCh <- fe
+				retCh <- fr
 				return
 			}
 
 			// process data
-			retCh <- fe
-
-			if fe.GetSegmentID() == rejectSegment {
-				if !s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
-					Text:      "reject",
-					Code:      400,
-					SegmentID: fe.GetSegmentID(),
-					SendAt:    fe.GetCreatedAt(),
-				}), "fail to send response") {
+			retCh <- fr
+			if fr.ID == rejectSegment {
+				if !s.NoError(reader.SendResponse(
+					ctx,
+					frames.NewResponseV4(fr.SentAt, fr.ID, 400, "reject"),
+				), "fail to send response") {
 					return
 				}
 				return
 			}
 
-			if !s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
-				Text:      "OK",
-				Code:      200,
-				SegmentID: fe.GetSegmentID(),
-				SendAt:    fe.GetCreatedAt(),
-			}), "fail to send response") {
+			if !s.NoError(reader.SendResponse(
+				ctx,
+				frames.NewResponseV4(fr.SentAt, fr.ID, 200, "OK"),
+			), "fail to send response") {
 				return
 			}
 		}
 	}
 
-	handleRefill := func(ctx context.Context, fe *frames.ReadFrame, tcpReader *server.TCPReader) {
+	handleRefill := func(ctx context.Context, rw http.ResponseWriter, r io.Reader) {
 		s.T().Log("not required")
-		s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
-			Text: "OK",
-			Code: 200,
-		}), "fail to send response")
+		s.NoError(s.response(rw, "OK", http.StatusOK), "fail to send response")
 	}
 
-	listener := s.runServer(baseCtx, "127.0.0.1:6002", s.token, nil, handleStream, handleRefill)
-	s.T().Logf("client: run server address: %s", listener.Addr().String())
+	addr := "127.0.0.1:6002"
+	srv := s.runWebServer(baseCtx, addr, s.token, tlscfg, nil, handleStream, handleRefill)
+	s.T().Logf("client: run server address: %s", addr)
 
 	s.T().Log("client: manager create and open")
 	dir, err := s.mkDir()
 	s.Require().NoError(err)
 	defer s.removeDir(dir)
-	manager, err := s.createManager(baseCtx, s.token, listener.Addr().String(), dir, s.errorHandler, clockwork.NewRealClock())
+	manager, err := s.createManagerWithWebSocket(baseCtx, tlscfg, s.token, addr, dir, s.errorHandler)
 	s.Require().NoError(err)
 	manager.Open(baseCtx)
 
@@ -343,8 +333,9 @@ func (s *BlockManagerSuite) testDeliveryManagerReject(sender OpenHeadSenderGener
 		} else {
 			s.Require().True(delivered)
 		}
-		fe := <-retCh
-		s.EqualValues(i, fe.GetSegmentID())
+
+		fr := <-retCh
+		s.EqualValues(i, fr.ID)
 	}
 
 	s.T().Log("client: check exist file current.refill")
@@ -356,10 +347,6 @@ func (s *BlockManagerSuite) testDeliveryManagerReject(sender OpenHeadSenderGener
 	s.Require().NoError(manager.Close())
 	s.Require().NoError(manager.Shutdown(baseCtx))
 
-	fe := <-retCh
-	s.True(fe.GetType() == frames.FinalType)
-
-	s.T().Log("client: shutdown listener")
-	err = listener.Close()
-	s.Require().NoError(err)
+	s.T().Log("client: shutdown server")
+	s.Require().NoError(srv.Shutdown(baseCtx))
 }

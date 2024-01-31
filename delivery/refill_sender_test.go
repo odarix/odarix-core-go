@@ -3,7 +3,9 @@ package delivery_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -17,7 +19,6 @@ import (
 	"github.com/odarix/odarix-core-go/cppbridge"
 	"github.com/odarix/odarix-core-go/delivery"
 	"github.com/odarix/odarix-core-go/frames"
-	"github.com/odarix/odarix-core-go/frames/framestest"
 )
 
 type RefillSenderSuite struct {
@@ -64,46 +65,32 @@ func (s *RefillSenderSuite) errorHandler(msg string, err error) {
 }
 
 //revive:disable-next-line:cognitive-complexity this is test
-func (*RefillSenderSuite) createDialerHappyPath(name string) delivery.Dialer {
+func (s *RefillSenderSuite) createDialerHappyPath(name string, recv chan struct{}) delivery.Dialer {
 	return &DialerMock{
 		StringFunc: func() string { return name },
-		DialFunc: func(ctx context.Context, s string, v uint16) (delivery.Transport, error) {
-			var ack func(uint32)
-			var numberOfMessage uint32
+		DialFunc: func(ctx context.Context, shardMeta delivery.ShardMeta) (delivery.Transport, error) {
 			transport := &TransportMock{
-				OnAckFunc: func(fn func(uint32)) {
-					ack = fn
-				},
+				OnAckFunc:       func(fn func(uint32)) {},
 				OnRejectFunc:    func(fn func(uint32)) {},
 				OnReadErrorFunc: func(fn func(error)) {},
-				SendFunc: func(ctx context.Context, frame *frames.WriteFrame) error {
-					rf, err := framestest.ReadFrame(ctx, frame)
-					if err != nil {
-						return err
-					}
-					if rf.GetType() == frames.RefillType {
-						br := bytes.NewReader(rf.GetBody())
-						msg, err := frames.ReadRefillMsg(ctx, br, int(rf.Header.GetSize()))
-						if err != nil {
-							return err
-						}
-						numberOfMessage = uint32(len(msg.Messages))
-					} else {
-						numberOfMessage--
-						if numberOfMessage == 0 {
-							ack(0)
-						}
-					}
+				SendFunc: func(ctx context.Context, frame frames.FrameWriter) error {
 					return nil
 				},
 				ListenFunc: func(ctx context.Context) {},
 				CloseFunc: func() error {
-					ack = func(u uint32) {}
 					return nil
 				},
 			}
 
 			return transport, nil
+		},
+		SendRefillFunc: func(ctx context.Context, r io.Reader, shardMeta delivery.ShardMeta) error {
+			buf := new(bytes.Buffer)
+			_, err := buf.ReadFrom(r)
+			s.Require().NoError(err)
+			s.NotEqual(0, buf.Len())
+			recv <- struct{}{}
+			return nil
 		},
 	}
 }
@@ -185,10 +172,12 @@ func (s *RefillSenderSuite) TestHappyPath() {
 	s.Require().NoError(err)
 	s.Equal(1, len(files))
 
+	recv := make(chan struct{}, len(s.destinationsNames)*2)
+
 	s.T().Log("init dialers")
 	dialers := make([]delivery.Dialer, len(s.destinationsNames))
 	for i, dname := range s.destinationsNames {
-		dialers[i] = s.createDialerHappyPath(dname)
+		dialers[i] = s.createDialerHappyPath(dname, recv)
 	}
 
 	ctx, cancel := context.WithCancelCause(s.baseCtx)
@@ -232,6 +221,8 @@ func (s *RefillSenderSuite) TestHappyPath() {
 
 	err = os.RemoveAll(filepath.Clean(s.workDir))
 	s.Require().NoError(err)
+
+	s.Equal(len(s.destinationsNames), len(recv))
 }
 
 func (s *RefillSenderSuite) TestHappyPathWithChangeDestinations() {
@@ -241,10 +232,12 @@ func (s *RefillSenderSuite) TestHappyPathWithChangeDestinations() {
 	s.Require().NoError(err)
 	s.Equal(1, len(files))
 
+	recv := make(chan struct{}, len(s.destinationsNames)*2)
+
 	s.T().Log("init dialers")
 	dialers := make([]delivery.Dialer, len(s.destinationsNames))
 	for i, dname := range s.destinationsNames {
-		dialers[i] = s.createDialerHappyPath(dname)
+		dialers[i] = s.createDialerHappyPath(dname, recv)
 	}
 
 	ctx, cancel := context.WithCancelCause(s.baseCtx)
@@ -288,59 +281,42 @@ func (s *RefillSenderSuite) TestHappyPathWithChangeDestinations() {
 
 	err = os.RemoveAll(filepath.Clean(s.workDir))
 	s.Require().NoError(err)
+
+	s.Equal(len(s.destinationsNames[2:]), len(recv))
 }
 
 //revive:disable-next-line:cognitive-complexity this is test
-func (*RefillSenderSuite) createDialerReject(name string) delivery.Dialer {
+func (s *RefillSenderSuite) createDialerReject(name string, recv chan struct{}) delivery.Dialer {
 	switcher := false
 	return &DialerMock{
 		StringFunc: func() string { return name },
-		DialFunc: func(ctx context.Context, s string, v uint16) (delivery.Transport, error) {
-			var ack func(uint32)
-			var reject func(uint32)
-			var numberOfMessage uint32
+		DialFunc: func(ctx context.Context, shardMeta delivery.ShardMeta) (delivery.Transport, error) {
 			transport := &TransportMock{
-				OnAckFunc: func(fn func(uint32)) {
-					ack = fn
-				},
-				OnRejectFunc: func(fn func(uint32)) {
-					reject = fn
-				},
+				OnAckFunc:       func(fn func(uint32)) {},
+				OnRejectFunc:    func(fn func(uint32)) {},
 				OnReadErrorFunc: func(fn func(error)) {},
-				SendFunc: func(ctx context.Context, frame *frames.WriteFrame) error {
-					rf, err := framestest.ReadFrame(ctx, frame)
-					if err != nil {
-						return err
-					}
-					if rf.GetType() == frames.RefillType {
-						br := bytes.NewReader(rf.GetBody())
-						msg, err := frames.ReadRefillMsg(ctx, br, int(rf.Header.GetSize()))
-						if err != nil {
-							return err
-						}
-						numberOfMessage = uint32(len(msg.Messages))
-					} else {
-						numberOfMessage--
-						if numberOfMessage == 0 {
-							if switcher {
-								ack(0)
-								return nil
-							}
-							switcher = true
-							reject(0)
-						}
-					}
+				SendFunc: func(ctx context.Context, frame frames.FrameWriter) error {
 					return nil
 				},
 				ListenFunc: func(ctx context.Context) {},
 				CloseFunc: func() error {
-					ack = func(u uint32) {}
-					reject = func(u uint32) {}
 					return nil
 				},
 			}
 
 			return transport, nil
+		},
+		SendRefillFunc: func(ctx context.Context, r io.Reader, shardMeta delivery.ShardMeta) error {
+			if !switcher {
+				switcher = true
+				return errors.New("some errors")
+			}
+			buf := new(bytes.Buffer)
+			_, err := buf.ReadFrom(r)
+			s.Require().NoError(err)
+			s.NotEqual(0, buf.Len())
+			recv <- struct{}{}
+			return nil
 		},
 	}
 }
@@ -352,10 +328,12 @@ func (s *RefillSenderSuite) TestRejectAndAck() {
 	s.Require().NoError(err)
 	s.LessOrEqual(1, len(files))
 
+	recv := make(chan struct{}, len(s.destinationsNames)*2)
+
 	s.T().Log("init dialers")
 	dialers := make([]delivery.Dialer, len(s.destinationsNames))
 	for i, dname := range s.destinationsNames {
-		dialers[i] = s.createDialerReject(dname)
+		dialers[i] = s.createDialerReject(dname, recv)
 	}
 
 	ctx, cancel := context.WithCancelCause(s.baseCtx)
@@ -400,6 +378,8 @@ func (s *RefillSenderSuite) TestRejectAndAck() {
 
 	err = os.RemoveAll(filepath.Clean(s.workDir))
 	s.Require().NoError(err)
+
+	s.Equal(len(s.destinationsNames), len(recv))
 }
 
 func (s *RefillSenderSuite) TestClearing() {
@@ -409,10 +389,12 @@ func (s *RefillSenderSuite) TestClearing() {
 	s.Require().NoError(err)
 	s.LessOrEqual(1, len(files))
 
+	recv := make(chan struct{}, len(s.destinationsNames)*2)
+
 	s.T().Log("init dialers")
 	dialers := make([]delivery.Dialer, len(s.destinationsNames))
 	for i, dname := range s.destinationsNames {
-		dialers[i] = s.createDialerReject(dname)
+		dialers[i] = s.createDialerReject(dname, recv)
 	}
 
 	ctx, cancel := context.WithCancelCause(s.baseCtx)
@@ -458,6 +440,8 @@ func (s *RefillSenderSuite) TestClearing() {
 
 	err = os.RemoveAll(filepath.Clean(s.workDir))
 	s.Require().NoError(err)
+
+	s.Equal(0, len(recv))
 }
 
 func TestSendMap(t *testing.T) {

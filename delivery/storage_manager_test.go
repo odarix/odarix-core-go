@@ -170,13 +170,12 @@ func (s *StorageManagerSuite) SetupTest() {
 		nil,
 		s.etalonsNames...,
 	)
-	s.NoError(err)
+	s.Require().NoError(err)
 	s.Equal(s.etalonBlockID.String(), s.sm.BlockID().String())
 }
 
 func (s *StorageManagerSuite) TearDownTest() {
 	s.NoError(os.RemoveAll(s.cfg.Dir))
-
 	s.NoError(s.sm.Close())
 }
 
@@ -297,25 +296,25 @@ func (s *StorageManagerSuite) TestRestore() {
 	s.NoError(err)
 	var shardsNumberPower uint8 = 1
 
-	s.sm, err = delivery.NewStorageManager(s.cfg, shardsNumberPower, newBlockID, nil, s.etalonsNames...)
-	s.NoError(err)
-	s.Equal(s.etalonBlockID.String(), s.sm.BlockID().String())
+	sm, err := delivery.NewStorageManager(s.cfg, shardsNumberPower, newBlockID, nil, s.etalonsNames...)
+	s.Require().NoError(err)
+	s.Equal(s.etalonBlockID.String(), sm.BlockID().String())
 
-	actualSeg, err := s.sm.GetSegment(s.ctx, segKey)
+	actualSeg, err := sm.GetSegment(s.ctx, segKey)
 	if s.NoError(err) {
 		if buf, errRead := framestest.ReadPayload(actualSeg); s.NoError(errRead) {
 			s.Equal(s.etalonsData.Bytes(), buf)
 		}
 	}
 
-	actualSnap, err := s.sm.GetSegment(s.ctx, segKey)
+	actualSnap, err := sm.GetSegment(s.ctx, segKey)
 	if s.NoError(err) {
 		if buf, err := framestest.ReadPayload(actualSnap); s.NoError(err) {
 			s.Equal(s.etalonsData.Bytes(), buf)
 		}
 	}
 
-	actualAckStatus := s.sm.GetAckStatus()
+	actualAckStatus := sm.GetAckStatus()
 	index, ok := actualAckStatus.Index("www.collector.com")
 	s.True(ok)
 	s.Equal(3, index)

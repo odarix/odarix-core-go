@@ -1,6 +1,7 @@
 package delivery
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -388,12 +389,9 @@ type PreparedData struct {
 type RefillSender struct {
 	dialer          Dialer
 	source          *RefillReader
-	transport       Transport
 	dataToSend      []uint32
 	lastSendSegment uint32
-	shardID         uint16
-	done            chan struct{}
-	errs            chan error
+	shardMeta       ShardMeta
 	errorHandler    ErrorHandler
 	// stat
 	successfulDelivery prometheus.Counter
@@ -415,10 +413,13 @@ func NewRefillSender(
 		source:          source,
 		dataToSend:      data,
 		lastSendSegment: math.MaxUint32,
-		shardID:         shardID,
-		done:            make(chan struct{}),
-		errs:            make(chan error, 1),
-		errorHandler:    errorHandler,
+		shardMeta: ShardMeta{
+			BlockID:                source.BlockID(),
+			ShardID:                shardID,
+			ShardsLog:              source.ShardsNumberPower(),
+			SegmentEncodingVersion: defaultSegmentEncodingVersion,
+		},
+		errorHandler: errorHandler,
 		successfulDelivery: factory.NewCounter(
 			prometheus.CounterOpts{
 				Name:        "odarix_core_delivery_refill_sender_successful_delivery",
@@ -445,112 +446,38 @@ func (rs *RefillSender) String() string {
 
 // Send - create a connection, prepare data for sending and send.
 func (rs *RefillSender) Send(ctx context.Context) error {
-	if err := rs.dial(ctx); err != nil {
-		return fmt.Errorf("%s: fail to dial: %w", rs, err)
-	}
-
-	pData, err := rs.collectedData()
+	pData, contentLength, err := rs.collectedData()
 	if err != nil {
 		return fmt.Errorf("%s: fail prepared data: %w", rs, err)
 	}
 
-	if err = rs.transport.Send(ctx, rs.makeRefillFrame(pData)); err != nil {
-		return fmt.Errorf("%s: fail send frame refill: %w", rs, err)
-	}
-
-	if err = rs.sendData(ctx, pData); err != nil {
+	if err = rs.dialer.SendRefill(
+		ctx,
+		NewSegmentReader(ctx, rs.source, pData, rs.shardMeta.ShardID),
+		rs.shardMeta.WithContentLength(contentLength),
+	); err != nil {
 		return fmt.Errorf("%s: fail send refill data: %w", rs, err)
 	}
 
-	select {
-	case <-ctx.Done():
-		if errors.Is(context.Cause(ctx), ErrShutdown) {
-			return rs.transport.Close()
-		}
-		return errors.Join(context.Cause(ctx), rs.transport.Close())
-	case <-rs.done:
-		return rs.transport.Close()
-	case err := <-rs.errs:
-		return errors.Join(err, rs.transport.Close())
+	if errWrite := rs.source.WriteRefillShardEOF(ctx, rs.String(), rs.shardMeta.ShardID); errWrite != nil {
+		rs.errorHandler(fmt.Sprintf("%s: fail to write shard EOF", rs), errWrite)
 	}
-}
-
-func (rs *RefillSender) makeRefillFrame(pData []PreparedData) *frames.WriteFrame {
-	data := make([]frames.MessageData, 0, len(pData))
-	for _, p := range pData {
-		data = append(data, frames.MessageData{
-			ID:      p.SegmentID,
-			Size:    p.Value.size,
-			Typemsg: p.MsgType,
-		})
-	}
-	msg := frames.NewRefillMsg(data)
-	return frames.NewWriteFrame(protocolVersion, frames.RefillType, rs.shardID, 0, msg)
-}
-
-// dial - dial and set respose parameter.
-func (rs *RefillSender) dial(ctx context.Context) (err error) {
-	ctxDial, cancel := context.WithTimeout(ctx, 10*time.Second)
-	rs.transport, err = rs.dialer.Dial(ctxDial, rs.source.BlockID().String(), rs.shardID)
-	cancel()
-	if err != nil {
-		return err
-	}
-
-	rs.transport.OnAck(func(_ uint32) {
-		if errWrite := rs.source.WriteRefillShardEOF(ctx, rs.String(), rs.shardID); errWrite != nil {
-			rs.errorHandler(fmt.Sprintf("%s: fail to write shard EOF", rs), errWrite)
-		}
-		rs.safeDone()
-		rs.successfulDelivery.Inc()
-	})
-
-	rs.transport.OnReject(func(_ uint32) {
-		// TODO add reason for rejection
-		rs.safeError(errors.New("refill rejected"))
-	})
-
-	rs.transport.OnReadError(func(err error) {
-		rs.safeError(err)
-	})
-
-	rs.transport.Listen(ctx)
 
 	return nil
-}
-
-// safeDone - set safely done.
-func (rs *RefillSender) safeDone() {
-	select {
-	case <-rs.done:
-	default:
-		close(rs.done)
-	}
-}
-
-// safeError - handle the error safely.
-func (rs *RefillSender) safeError(err error) {
-	select {
-	case rs.errs <- err:
-	default:
-		rs.errorHandler(
-			fmt.Sprintf("%s: error not handled", rs),
-			err,
-		)
-	}
 }
 
 // collectedData - collects all the necessary position data for sending.
 //
 //revive:disable-next-line:cyclomatic  but readable
-func (rs *RefillSender) collectedData() ([]PreparedData, error) {
+func (rs *RefillSender) collectedData() ([]PreparedData, int64, error) {
 	pData := make([]PreparedData, 0, len(rs.dataToSend))
 
+	var contentLength int64
 	for _, segment := range rs.dataToSend {
-		key := cppbridge.SegmentKey{ShardID: rs.shardID, Segment: segment}
+		key := cppbridge.SegmentKey{ShardID: rs.shardMeta.ShardID, Segment: segment}
 		mval := rs.source.SegmentPosition(key)
 		if mval == nil {
-			return nil, SegmentNotFoundInRefill(key)
+			return nil, 0, SegmentNotFoundInRefill(key)
 		}
 
 		pData = append(
@@ -561,40 +488,76 @@ func (rs *RefillSender) collectedData() ([]PreparedData, error) {
 				Value:     mval,
 			},
 		)
-		rs.needSend.With(prometheus.Labels{"type": "put"}).Observe(float64(mval.size))
+		segmentSize := mval.size
+		contentLength += int64(segmentSize + uint32(frames.RefillSegmentSizeV4))
+		if mval.contentVersion == frames.ContentVersion2 {
+			contentLength -= int64(frames.SegmentInfoSize)
+		}
+		rs.needSend.With(prometheus.Labels{"type": "put"}).Observe(float64(segmentSize))
 	}
 
-	return pData, nil
+	return pData, contentLength, nil
 }
 
-// sendData - sending prepared data.
-func (rs *RefillSender) sendData(ctx context.Context, pData []PreparedData) error {
-	for _, data := range pData {
+// SegmentReader - wrapper with implements io.Reader.
+type SegmentReader struct {
+	ctx     context.Context
+	source  *RefillReader
+	buf     *bytes.Buffer
+	data    []PreparedData
+	i       int64
+	shardID uint16
+}
+
+// NewSegmentReader - init new SegmentReader.
+func NewSegmentReader(ctx context.Context, source *RefillReader, data []PreparedData, shardID uint16) *SegmentReader {
+	return &SegmentReader{
+		ctx:     ctx,
+		source:  source,
+		buf:     new(bytes.Buffer),
+		data:    data,
+		i:       0,
+		shardID: shardID,
+	}
+}
+
+// Read - implements io.Reader.
+func (r *SegmentReader) Read(p []byte) (int, error) {
+	if r.i >= int64(len(r.data)) && r.buf.Len() == 0 {
+		return 0, io.EOF
+	}
+
+	if r.buf.Len() == 0 || r.buf.Len() < len(p) {
+		if err := r.fillBuffer(len(p)); err != nil {
+			return 0, err
+		}
+	}
+
+	return r.buf.Read(p)
+}
+
+// fillBuffer - auto fill buffer for read.
+func (r *SegmentReader) fillBuffer(size int) error {
+	for size > r.buf.Len() {
+		if r.i >= int64(len(r.data)) {
+			return nil
+		}
+		data := r.data[r.i]
 		if data.MsgType != frames.SegmentType {
+			r.i++
 			continue
 		}
-		if err := rs.sendSegment(ctx, data.SegmentID, data.Value); err != nil {
-			return fmt.Errorf("%s: fail send segment: %w", rs, err)
+		bb, err := r.source.Segment(r.ctx, data.Value)
+		if err != nil {
+			return fmt.Errorf("failed get segment: %w", err)
 		}
-	}
 
+		if _, err = frames.NewWriteRefillSegmentV4(bb.GetSegmentID(), bb.GetBody()).WriteTo(r.buf); err != nil {
+			return fmt.Errorf("failed write segment: %w", err)
+		}
+		r.i++
+	}
 	return nil
-}
-
-// sendSegment - restore and send segment.
-func (rs *RefillSender) sendSegment(ctx context.Context, segmentID uint32, mval *MarkupValue) error {
-	segment, err := rs.source.Segment(ctx, mval)
-	if err != nil {
-		return fmt.Errorf("%s: fail get segment: %w", rs, err)
-	}
-	frame := frames.NewWriteFrame(protocolVersion, frames.SegmentType, rs.shardID, segmentID, segment)
-	return rs.transport.Send(ctx, frame)
-}
-
-// MarkupValue - value for markup map.
-type MarkupValue struct {
-	pos  int64
-	size uint32
 }
 
 // SendMap - map for send grouping by destinations.
@@ -655,22 +618,12 @@ func (sm *SendMap) Range(fn func(dname string, shardID int, shardData []uint32) 
 
 // RefillReader - reader for refill files.
 type RefillReader struct {
-	// title frame
-	title *frames.Title
-	// last status of writers
-	ackStatus *AckStatus
+	// markup file
+	markupFile *Markup
 	// reader/writer for restore file
 	storage *FileStorage
 	// mutex for parallel writing
 	mx *sync.RWMutex
-	// marking positions of Segments
-	markupMap map[MarkupKey]*MarkupValue
-	// last frame for all segment send for shard
-	destinationsEOF map[string][]bool
-	// restored all rejects
-	rejects frames.RejectStatuses
-	// max written segment ID for shard
-	maxWriteSegments []uint32
 	// state open file
 	isOpenFile bool
 	// last position when writing to
@@ -681,22 +634,31 @@ type RefillReader struct {
 
 // NewRefillReader - init new RefillReader.
 func NewRefillReader(ctx context.Context, cfg FileStorageConfig, errorHandler ErrorHandler) (*RefillReader, error) {
-	storage, err := NewFileStorage(cfg)
+	var err error
+	rr := &RefillReader{
+		mx:           new(sync.RWMutex),
+		errorHandler: errorHandler,
+	}
+
+	rr.storage, err = NewFileStorage(cfg)
 	if err != nil {
 		return nil, err
 	}
-	rr := &RefillReader{
-		storage:      storage,
-		mx:           new(sync.RWMutex),
-		markupMap:    make(map[MarkupKey]*MarkupValue),
-		errorHandler: errorHandler,
-	}
-	if err := rr.openFile(); err != nil {
+
+	if err = rr.openFile(); err != nil {
 		return nil, err
 	}
-	if err := rr.readMarkup(ctx); err != nil {
+
+	rr.markupFile, err = NewMarkupReader(rr.storage).ReadFile(ctx)
+	if err != nil {
 		return nil, err
 	}
+
+	size, err := rr.storage.Size()
+	if err != nil {
+		return nil, err
+	}
+	rr.lastWriteOffset = size
 
 	return rr, nil
 }
@@ -708,13 +670,18 @@ func (rr *RefillReader) String() string {
 
 // BlockID - return if exist blockID or nil.
 func (rr *RefillReader) BlockID() uuid.UUID {
-	return rr.title.GetBlockID()
+	return rr.markupFile.BlockID()
+}
+
+// ShardsNumberPower - return shards of number power.
+func (rr *RefillReader) ShardsNumberPower() uint8 {
+	return rr.markupFile.ShardsNumberPower()
 }
 
 // MakeSendMap - distribute refill by destinations.
 func (rr *RefillReader) MakeSendMap() *SendMap {
 	// grouping by destinations
-	sm := NewSendMap(rr.ackStatus.Shards())
+	sm := NewSendMap(rr.markupFile.Shards())
 
 	// distribute rejects segment.
 	rr.distributeRejects(sm)
@@ -730,9 +697,8 @@ func (rr *RefillReader) MakeSendMap() *SendMap {
 
 // distributeRejects - distribute rejects segment.
 func (rr *RefillReader) distributeRejects(sm *SendMap) {
-	dnames := rr.ackStatus.GetNames()
-
-	for _, rj := range rr.rejects {
+	dnames := rr.markupFile.DestinationsNames()
+	for _, rj := range rr.markupFile.rejects {
 		sm.Append(
 			dnames.IDToString(int32(rj.NameID)),
 			rj.ShardID,
@@ -743,13 +709,13 @@ func (rr *RefillReader) distributeRejects(sm *SendMap) {
 
 // distributeNotAck - distribute not ack segment.
 func (rr *RefillReader) distributeNotAck(sm *SendMap) {
-	shards := uint16(rr.ackStatus.Shards())
+	shards := uint16(rr.markupFile.Shards())
 
-	for _, dname := range rr.ackStatus.GetNames().ToString() {
+	for _, dname := range rr.markupFile.DestinationsNames().ToString() {
 		for shardID := uint16(0); shardID < shards; shardID++ {
 			// we need to check if at least some segments have been recorded
-			if n := rr.maxWriteSegments[shardID]; n != math.MaxUint32 {
-				for sid := rr.ackStatus.Last(shardID, dname) + 1; sid <= n; sid++ {
+			if n := rr.markupFile.maxWriteSegments[shardID]; n != math.MaxUint32 {
+				for sid := rr.markupFile.Last(shardID, dname) + 1; sid <= n; sid++ {
 					sm.Append(dname, shardID, sid)
 				}
 			}
@@ -758,62 +724,13 @@ func (rr *RefillReader) distributeNotAck(sm *SendMap) {
 }
 
 func (rr *RefillReader) clearingToSent(sm *SendMap) {
-	for d := range rr.destinationsEOF {
-		for s, eof := range rr.destinationsEOF[d] {
+	for d := range rr.markupFile.destinationsEOF {
+		for s, eof := range rr.markupFile.destinationsEOF[d] {
 			if eof {
 				sm.Remove(d, uint16(s))
 			}
 		}
 	}
-}
-
-// readMarkup - read MarkupMap from storage.
-//
-//revive:disable-next-line:cyclomatic  but readable
-func (rr *RefillReader) readMarkup(ctx context.Context) error {
-	var off int64
-	fsize, err := rr.storage.Size()
-	if err != nil {
-		return err
-	}
-	for {
-		h, err := frames.ReadHeader(ctx, util.NewOffsetReader(rr.storage, off))
-		if errors.Is(err, io.EOF) || errors.Is(err, frames.ErrUnknownFrameType) {
-			break
-		}
-		if err != nil {
-			return err
-		}
-		if fsize < off+int64(h.FullSize()) {
-			rr.errorHandler("truncated file by frame", ErrCorruptedFile)
-			if err = rr.storage.Truncate(off); err != nil {
-				return err
-			}
-			break
-		}
-		off += int64(h.SizeOf())
-		// read data from body
-		if err = rr.readFromBody(ctx, h, off, int(h.GetSize())); err != nil {
-			return err
-		}
-		// move cursor position
-		off += int64(h.GetSize())
-		if fsize > off+int64(h.SizeOf()) {
-			continue
-		}
-		if fsize != off {
-			rr.errorHandler("truncated file by header", ErrCorruptedFile)
-			if err = rr.storage.Truncate(off); err != nil {
-				return err
-			}
-		}
-		break
-	}
-	rr.lastWriteOffset = off
-	if !rr.checkRestoredServiceData() {
-		return ErrServiceDataNotRestored{}
-	}
-	return rr.restoreStatuses()
 }
 
 // openFile - open file refill for read/write.
@@ -830,174 +747,8 @@ func (rr *RefillReader) openFile() error {
 	return nil
 }
 
-// restoreFromBody - restore from body frame.
-func (rr *RefillReader) readFromBody(ctx context.Context, h *frames.Header, off int64, size int) error {
-	switch h.GetType() {
-	case frames.TitleType:
-		return rr.readTitle(ctx, off, size)
-	case frames.DestinationNamesType:
-		return rr.readDestinationsNames(ctx, off, size)
-	case frames.SegmentType:
-		return rr.setMarkupSegment(h, off)
-	case frames.StatusType:
-		return rr.setMarkupStatus(h, off)
-	case frames.RejectStatusType:
-		return rr.restoreRejectStatuses(h, off)
-	case frames.RefillShardEOFType:
-		return rr.restoreRefillShardEOF(h, off)
-	}
-
-	return nil
-}
-
-// readTitle - read title from file.
-func (rr *RefillReader) readTitle(ctx context.Context, off int64, size int) error {
-	var err error
-	rr.title, err = frames.ReadAtTitle(ctx, rr.storage, off, size)
-	if err != nil {
-		return err
-	}
-
-	// init maxWriteSegments for future reference and not to panic
-	rr.maxWriteSegments = newShardStatuses(1 << rr.title.GetShardsNumberPower())
-
-	return nil
-}
-
-// readDestinationsNames - restore Destinations Names from file.
-func (rr *RefillReader) readDestinationsNames(ctx context.Context, off int64, size int) error {
-	// init lastWriteSegment for future reference and not to panic
-	// init with shardsNumberPower to init statuses for null values
-	rr.ackStatus = NewAckStatusEmpty(rr.title.GetShardsNumberPower())
-	err := rr.ackStatus.ReadDestinationsNames(ctx, rr.storage, off, size)
-	if err != nil {
-		return err
-	}
-
-	rr.makeDestinationsEOF()
-
-	return nil
-}
-
-// makeDestinationsEOF - make DestinationsEOF.
-func (rr *RefillReader) makeDestinationsEOF() {
-	shards := rr.ackStatus.Shards()
-	dnames := rr.ackStatus.GetNames()
-
-	rr.destinationsEOF = make(map[string][]bool, dnames.Len())
-	for _, dname := range dnames.ToString() {
-		rr.destinationsEOF[dname] = make([]bool, shards)
-	}
-}
-
-// setMarkupSegment - fill position and size Segment
-func (rr *RefillReader) setMarkupSegment(h *frames.Header, off int64) error {
-	if !rr.checkRestoredServiceData() {
-		return ErrServiceDataNotRestored{}
-	}
-
-	segKey := cppbridge.SegmentKey{
-		ShardID: h.GetShardID(),
-		Segment: h.GetSegmentID(),
-	}
-	mk := MarkupKey{
-		typeFrame:  frames.SegmentType,
-		SegmentKey: segKey,
-	}
-	rr.markupMap[mk] = &MarkupValue{
-		pos:  off - int64(h.SizeOf()),
-		size: h.GetSize(),
-	}
-
-	if rr.maxWriteSegments[segKey.ShardID] == math.MaxUint32 ||
-		segKey.Segment > rr.maxWriteSegments[segKey.ShardID] {
-		rr.maxWriteSegments[segKey.ShardID] = segKey.Segment
-	}
-
-	return nil
-}
-
-// we just save status frame position until the EOF and then read the last one
-func (rr *RefillReader) setMarkupStatus(h *frames.Header, off int64) error {
-	key := MarkupKey{typeFrame: frames.StatusType}
-	rr.markupMap[key] = &MarkupValue{
-		pos:  off,
-		size: h.GetSize(),
-	}
-	return nil
-}
-
-// restoreStatuses - restore states of writers from last status frame
-func (rr *RefillReader) restoreStatuses() error {
-	key := MarkupKey{typeFrame: frames.StatusType}
-	val, ok := rr.markupMap[key]
-	if !ok {
-		return nil
-	}
-
-	buf := make([]byte, val.size)
-	if _, err := rr.storage.ReadAt(buf, val.pos); err != nil {
-		return err
-	}
-
-	return rr.ackStatus.status.UnmarshalBinary(buf)
-}
-
-// restoreRejectStatues - restore reject statues from file.
-func (rr *RefillReader) restoreRejectStatuses(h *frames.Header, off int64) error {
-	if !rr.checkRestoredServiceData() {
-		return ErrServiceDataNotRestored{}
-	}
-
-	buf := make([]byte, h.GetSize())
-	if _, err := rr.storage.ReadAt(buf, off); err != nil {
-		return err
-	}
-
-	var rs frames.RejectStatuses
-	if err := rs.UnmarshalBinary(buf); err != nil {
-		return err
-	}
-
-	rr.rejects = append(rr.rejects, rs...)
-
-	return nil
-}
-
-// restoreRefillShardEOF - restore refill shard EOF from file.
-func (rr *RefillReader) restoreRefillShardEOF(h *frames.Header, off int64) error {
-	if !rr.checkRestoredServiceData() {
-		return ErrServiceDataNotRestored{}
-	}
-
-	buf := make([]byte, h.GetSize())
-	if _, err := rr.storage.ReadAt(buf, off); err != nil {
-		return err
-	}
-
-	rs := frames.NewRefillShardEOFEmpty()
-	if err := rs.UnmarshalBinary(buf); err != nil {
-		return err
-	}
-
-	dname := rr.ackStatus.names.IDToString(int32(rs.NameID))
-	if dname == "" {
-		return nil
-	}
-
-	rr.destinationsEOF[dname][rs.ShardID] = true
-
-	return nil
-}
-
-// checkRestoredServiceData - check restored service data(title, destinations names),
-// these data are required to be restored, without them you cant read the rest
-func (rr *RefillReader) checkRestoredServiceData() bool {
-	return rr.title != nil && rr.ackStatus != nil
-}
-
 // Segment - return segment from storage.
-func (rr *RefillReader) Segment(ctx context.Context, mval *MarkupValue) (*frames.BinaryBody, error) {
+func (rr *RefillReader) Segment(ctx context.Context, mval *MarkupValue) (frames.BinaryBody, error) {
 	rr.mx.RLock()
 	defer rr.mx.RUnlock()
 
@@ -1012,32 +763,14 @@ func (rr *RefillReader) SegmentPosition(segKey cppbridge.SegmentKey) *MarkupValu
 	return rr.getSegmentPosition(segKey)
 }
 
-// GetSegment - return segment from storage.
-func (rr *RefillReader) GetSegment(ctx context.Context, segKey cppbridge.SegmentKey) (*frames.BinaryBody, error) {
-	rr.mx.RLock()
-	defer rr.mx.RUnlock()
-
-	// get position
-	mval := rr.getSegmentPosition(segKey)
-	if mval == nil {
-		return nil, SegmentNotFoundInRefill(segKey)
-	}
-
-	return frames.ReadFrameSegment(ctx, util.NewOffsetReader(rr.storage, mval.pos))
-}
-
 // getSegmentPosition - return position in storage.
 func (rr *RefillReader) getSegmentPosition(segKey cppbridge.SegmentKey) *MarkupValue {
 	mk := MarkupKey{
 		typeFrame:  frames.SegmentType,
 		SegmentKey: segKey,
 	}
-	mval, ok := rr.markupMap[mk]
-	if ok {
-		return mval
-	}
 
-	return nil
+	return rr.markupFile.GetMarkupValue(mk)
 }
 
 // WriteRefillShardEOF - write message to mark that all segments have been sent to storage.
@@ -1052,7 +785,7 @@ func (rr *RefillReader) WriteRefillShardEOF(ctx context.Context, dname string, s
 		}
 	}
 
-	dnameID := rr.ackStatus.names.StringToID(dname)
+	dnameID := rr.markupFile.StringToID(dname)
 	if dnameID == frames.NotFoundName {
 		return fmt.Errorf(
 			"StringToID: unknown name %s",
@@ -1076,7 +809,7 @@ func (rr *RefillReader) WriteRefillShardEOF(ctx context.Context, dname string, s
 	rr.lastWriteOffset += n
 
 	// set last frame
-	rr.destinationsEOF[dname][shardID] = true
+	rr.markupFile.SetLastFrame(dname, shardID)
 
 	return nil
 }

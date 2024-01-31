@@ -1,29 +1,56 @@
 package delivery
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"github.com/google/uuid"
 	"github.com/jonboulle/clockwork"
 	"github.com/prometheus/client_golang/prometheus"
+	"golang.org/x/net/websocket"
 
 	"github.com/odarix/odarix-core-go/frames"
 	"github.com/odarix/odarix-core-go/transport"
 	"github.com/odarix/odarix-core-go/util"
 )
 
+// ShardMeta - shard metadata.
+type ShardMeta struct {
+	BlockID                uuid.UUID
+	ShardID                uint16
+	ShardsLog              uint8
+	SegmentEncodingVersion uint8
+	ContentLength          int64
+}
+
+// WithContentLength - return copy ShardMeta with ContentLength.
+func (sm *ShardMeta) WithContentLength(cl int64) ShardMeta {
+	newsm := *sm
+	newsm.ContentLength = cl
+	return newsm
+}
+
 // Dialer used for connect to backend
 //
 // We suppose that dialer has its own backoff and returns only permanent error.
 type Dialer interface {
+	// String - dialer name.
 	String() string
-	Dial(context.Context, string, uint16) (Transport, error)
+	// Dial - create a connection and init stream.
+	Dial(ctx context.Context, shardMeta ShardMeta) (Transport, error)
+	// SendRefill - send refill via http.
+	SendRefill(ctx context.Context, r io.Reader, shardMeta ShardMeta) error
 }
 
 // Transport is a destination connection interface
@@ -32,7 +59,7 @@ type Dialer interface {
 // - authorized
 // - setted timeouts
 type Transport interface {
-	Send(context.Context, *frames.WriteFrame) error
+	Send(context.Context, frames.FrameWriter) error
 	Listen(ctx context.Context)
 	OnAck(func(uint32))
 	OnReject(func(uint32))
@@ -41,7 +68,11 @@ type Transport interface {
 }
 
 const (
-	protocolVersion uint8 = 3
+	protocolVersion       uint8 = 3
+	protocolVersionSocket uint8 = 4
+	streamMethod                = "stream"
+	refillMethod                = "refill"
+	refillPath                  = "/refill"
 )
 
 // ConnDialer - underlying dialer interface.
@@ -52,8 +83,8 @@ type ConnDialer interface {
 	Dial(ctx context.Context) (net.Conn, error)
 }
 
-// TCPDialerConfig - config for RandomDialer.
-type TCPDialerConfig struct {
+// DialerConfig - config for Dialer.
+type DialerConfig struct {
 	Transport          transport.Config
 	AuthToken          string
 	AgentUUID          string
@@ -66,7 +97,7 @@ type TCPDialerConfig struct {
 // TCPDialer - dialer for connect to a host.
 type TCPDialer struct {
 	connDialer ConnDialer
-	config     TCPDialerConfig
+	config     DialerConfig
 	backoff    backoff.BackOff
 	clock      clockwork.Clock
 	registerer prometheus.Registerer
@@ -100,7 +131,12 @@ func (bwl backoffWithLock) Reset() {
 var _ Dialer = (*TCPDialer)(nil)
 
 // NewTCPDialer - init new TCPDialer.
-func NewTCPDialer(dialer ConnDialer, config TCPDialerConfig, clock clockwork.Clock, registerer prometheus.Registerer) *TCPDialer {
+func NewTCPDialer(
+	dialer ConnDialer,
+	config DialerConfig,
+	clock clockwork.Clock,
+	registerer prometheus.Registerer,
+) *TCPDialer {
 	ebo := backoff.NewExponentialBackOff()
 	ebo.InitialInterval = time.Second
 	ebo.RandomizationFactor = 0.5 //revive:disable-line:add-constant it's explained in field name
@@ -127,7 +163,7 @@ func (dialer *TCPDialer) String() string {
 }
 
 // Dial - create a connection and init stream.
-func (dialer *TCPDialer) Dial(ctx context.Context, blockID string, shardID uint16) (Transport, error) {
+func (dialer *TCPDialer) Dial(ctx context.Context, shardMeta ShardMeta) (Transport, error) {
 	var bo backoff.BackOff = backoff.WithContext(dialer.backoff, ctx)
 	if dialer.config.BackoffMaxTries > 0 {
 		bo = backoff.WithMaxRetries(bo, dialer.config.BackoffMaxTries)
@@ -145,8 +181,8 @@ func (dialer *TCPDialer) Dial(ctx context.Context, blockID string, shardID uint1
 			dialer.config.AgentUUID,
 			dialer.config.ProductName,
 			dialer.config.AgentHostname,
-			blockID,
-			shardID,
+			shardMeta.BlockID.String(),
+			shardMeta.ShardID,
 		); err != nil {
 			_ = tr.Close()
 			return nil, err
@@ -157,6 +193,11 @@ func (dialer *TCPDialer) Dial(ctx context.Context, blockID string, shardID uint1
 		return nil, err
 	}
 	return tr, nil
+}
+
+// SendRefill - send refill via http.
+func (*TCPDialer) SendRefill(_ context.Context, _ io.Reader, _ ShardMeta) error {
+	return errors.New("not implemented")
 }
 
 // ResetBackoff resets next delay to zero
@@ -172,7 +213,7 @@ type TCPTransport struct {
 	// dependencies
 	clock clockwork.Clock
 	// state
-	nt              *transport.Transport
+	nt              *transport.NetTransport
 	dialer          interface{ ResetBackoff() }
 	onAckFunc       func(id uint32)
 	onRejectFunc    func(id uint32)
@@ -195,7 +236,7 @@ func NewTCPTransport(
 	factory := util.NewUnconflictRegisterer(registerer)
 	return &TCPTransport{
 		clock:  clock,
-		nt:     transport.New(cfg, conn),
+		nt:     transport.NewNetTransport(cfg, conn),
 		dialer: dialer,
 		roundtripDuration: factory.NewHistogram(
 			prometheus.HistogramOpts{
@@ -211,12 +252,12 @@ func NewTCPTransport(
 // auth - request for authentication connection.
 func (tt *TCPTransport) auth(
 	ctx context.Context,
-	token, uuid, productName, agentHostname, blockID string,
+	token, agentUUID, productName, agentHostname, blockID string,
 	shardID uint16,
 ) error {
 	fe, err := frames.NewAuthFrameWithMsg(
-		protocolVersion,
-		frames.NewAuthMsg(token, uuid, productName, agentHostname, blockID, shardID),
+		protocolVersionSocket,
+		frames.NewAuthMsg(token, agentUUID, productName, agentHostname, blockID, shardID),
 	)
 	if err != nil {
 		return err
@@ -231,19 +272,15 @@ func (tt *TCPTransport) auth(
 		return fmt.Errorf("receive auth response: %w", err)
 	}
 
-	if rfe.GetVersion() != protocolVersion {
+	if rfe.GetVersion() != protocolVersionSocket {
 		return fmt.Errorf(
 			"invalid response version %d, expected %d",
 			rfe.GetVersion(),
-			protocolVersion,
+			protocolVersionSocket,
 		)
 	}
 	if rfe.GetType() != frames.ResponseType {
-		return fmt.Errorf(
-			"unknown msg type %d, expected %d",
-			rfe.GetType(),
-			frames.ResponseType,
-		)
+		return UnknownMsgType(frames.ResponseType, fe.GetType())
 	}
 
 	respm := frames.NewResponseMsgEmpty()
@@ -259,7 +296,7 @@ func (tt *TCPTransport) auth(
 }
 
 // Send frame to server
-func (tt *TCPTransport) Send(ctx context.Context, frame *frames.WriteFrame) error {
+func (tt *TCPTransport) Send(ctx context.Context, frame frames.FrameWriter) error {
 	_, err := frame.WriteTo(tt.nt.Writer(ctx))
 	return err
 }
@@ -294,7 +331,7 @@ func (tt *TCPTransport) incomeStream(ctx context.Context) {
 		}
 
 		if fe.GetType() != frames.ResponseType {
-			tt.onReadErrorFunc(fmt.Errorf("unknown msg type %d, expected %d", fe.GetType(), frames.ResponseType))
+			tt.onReadErrorFunc(UnknownMsgType(frames.ResponseType, fe.GetType()))
 			return
 		}
 
@@ -430,5 +467,331 @@ func (t *defaultTimer) Start(duration time.Duration) {
 func (t *defaultTimer) Stop() {
 	if t.timer != nil {
 		t.timer.Stop()
+	}
+}
+
+// WebSocketDialer - dialer for connect with web socket to a host.
+type WebSocketDialer struct {
+	connDialer ConnDialer
+	config     DialerConfig
+	host       string
+	backoff    backoff.BackOff
+	clock      clockwork.Clock
+	registerer prometheus.Registerer
+}
+
+var _ Dialer = (*WebSocketDialer)(nil)
+
+// NewWebSocketDialer - init new WebSocketDialer.
+func NewWebSocketDialer(
+	dialer ConnDialer,
+	hostName string, port string,
+	config DialerConfig,
+	clock clockwork.Clock,
+	registerer prometheus.Registerer,
+) *WebSocketDialer {
+	ebo := backoff.NewExponentialBackOff()
+	ebo.InitialInterval = time.Second
+	ebo.RandomizationFactor = 0.5 //revive:disable-line:add-constant it's explained in field name
+	ebo.Multiplier = 1.5          //revive:disable-line:add-constant it's explained in field name
+	ebo.MaxElapsedTime = 0
+	if config.BackoffMaxInterval > 0 {
+		ebo.MaxInterval = config.BackoffMaxInterval
+	}
+	var buf strings.Builder
+	_, _ = buf.WriteString(hostName)
+	if port != "" {
+		_ = buf.WriteByte(':')
+		_, _ = buf.WriteString(port)
+	}
+	return &WebSocketDialer{
+		connDialer: dialer,
+		config:     config,
+		host:       buf.String(),
+		// reset backoff may be called concurrent with it use
+		// so here we add mutex on this operations.
+		// WithStartDuration with dur=0 start immediately.
+		backoff:    BackoffWithLock(WithStartDuration(ebo, 0)),
+		clock:      clock,
+		registerer: registerer,
+	}
+}
+
+// String - dialer name.
+func (d *WebSocketDialer) String() string {
+	return d.connDialer.String()
+}
+
+// Dial - create a connection and init stream.
+func (d *WebSocketDialer) Dial(ctx context.Context, shardMeta ShardMeta) (Transport, error) {
+	var bo backoff.BackOff = backoff.WithContext(d.backoff, ctx)
+	if d.config.BackoffMaxTries > 0 {
+		bo = backoff.WithMaxRetries(bo, d.config.BackoffMaxTries)
+	}
+
+	wsconfig := d.makeConfig(streamMethod, shardMeta)
+	tr, err := PostRetryWithData(ctx, func() (*WebSocketTransport, error) {
+		conn, errDial := d.connDialer.Dial(ctx)
+		if errDial != nil {
+			return nil, errDial
+		}
+
+		wsconn, errClient := websocket.NewClient(wsconfig, conn)
+		if errClient != nil {
+			_ = conn.Close()
+			return nil, errClient
+		}
+
+		return NewWebSocketTransport(
+			&d.config.Transport,
+			wsconn,
+			d.ResetBackoff,
+			d.clock,
+			d.registerer,
+		), nil
+	}, bo)
+	if err != nil {
+		return nil, err
+	}
+	return tr, nil
+}
+
+// SendRefill - send refill via http.
+func (d *WebSocketDialer) SendRefill(ctx context.Context, r io.Reader, shardMeta ShardMeta) error {
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		"https://"+d.host+refillPath,
+		r,
+	)
+	if err != nil {
+		return err
+	}
+
+	client := http.Client{
+		Transport: &http.Transport{
+			DialTLSContext: func(dctx context.Context, _ string, _ string) (net.Conn, error) {
+				return d.connDialer.Dial(dctx)
+			},
+		},
+	}
+	req.Header = d.makeHeader(refillMethod, shardMeta)
+	req.ContentLength = shardMeta.ContentLength
+	res, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = res.Body.Close()
+	}()
+
+	if res.StatusCode != http.StatusOK {
+		return d.makeHTTPError(res)
+	}
+
+	return nil
+}
+
+// makeConfig - create *websocket.Config.
+func (d *WebSocketDialer) makeConfig(method string, shardMeta ShardMeta) *websocket.Config {
+	return &websocket.Config{
+		Location: &url.URL{Scheme: "wss", Host: d.host},
+		Origin:   &url.URL{Scheme: "https", Host: d.host},
+		Version:  websocket.ProtocolVersionHybi13,
+		Header:   d.makeHeader(method, shardMeta),
+	}
+}
+
+// makeHeader - create http.Header.
+func (d *WebSocketDialer) makeHeader(method string, shardMeta ShardMeta) http.Header {
+	return http.Header{
+		"Authorization": []string{"Bearer " + d.config.AuthToken},
+		"User-Agent":    []string{d.config.ProductName},
+		"Content-Type": []string{
+			fmt.Sprintf(
+				"application/opcore.%s;version=%d;segment_encoding_version=%d",
+				method,
+				protocolVersionSocket,
+				shardMeta.SegmentEncodingVersion,
+			),
+		},
+		"X-Agent-UUID":     []string{d.config.AgentUUID},
+		"X-Agent-Hostname": []string{d.config.AgentHostname},
+		"X-Block-ID":       []string{shardMeta.BlockID.String()},
+		"X-Shard-ID":       []string{strconv.Itoa(int(shardMeta.ShardID))},
+		"X-Shards-Log":     []string{strconv.Itoa(int(shardMeta.ShardsLog))},
+	}
+}
+
+// makeHTTPError - make error from response.
+func (*WebSocketDialer) makeHTTPError(res *http.Response) error {
+	buf := new(bytes.Buffer)
+	_, _ = buf.ReadFrom(res.Body)
+	return &httpError{
+		code: res.StatusCode,
+		blob: buf.String(),
+	}
+}
+
+// ResetBackoff resets next delay to zero
+func (d *WebSocketDialer) ResetBackoff() {
+	d.backoff.Reset()
+}
+
+// WebSocketTransport - transport implementation.
+type WebSocketTransport struct {
+	// dependencies
+	clock clockwork.Clock
+	// state
+	wt              *transport.WebSocketTransport
+	resetBackoff    func()
+	onAckFunc       func(id uint32)
+	onRejectFunc    func(id uint32)
+	onReadErrorFunc func(err error)
+	cancel          context.CancelFunc
+	// metrics
+	roundtripDuration prometheus.Histogram
+}
+
+// NewWebSocketTransport - init new WebSocketTransport.
+func NewWebSocketTransport(
+	cfg *transport.Config,
+	wsconn *websocket.Conn,
+	resetBackoff func(),
+	clock clockwork.Clock,
+	registerer prometheus.Registerer,
+) *WebSocketTransport {
+	factory := util.NewUnconflictRegisterer(registerer)
+	return &WebSocketTransport{
+		clock:        clock,
+		wt:           transport.NewWebSocketTransport(cfg, wsconn),
+		resetBackoff: resetBackoff,
+		roundtripDuration: factory.NewHistogram(
+			prometheus.HistogramOpts{
+				Name:        "odarix_core_delivery_wstransport_roundtrip_duration_seconds",
+				Help:        "Roundtrip of duration(s).",
+				Buckets:     prometheus.ExponentialBucketsRange(0.01, 15, 10),
+				ConstLabels: prometheus.Labels{"host": wsconn.RemoteAddr().String()},
+			},
+		),
+	}
+}
+
+// Send frame to server
+func (tt *WebSocketTransport) Send(ctx context.Context, frame frames.FrameWriter) error {
+	_, err := frame.WriteTo(tt.wt.Writer(ctx))
+	return err
+}
+
+// Listen - start listening for an incoming connection.
+// Will return an error if no callbacks are set.
+func (tt *WebSocketTransport) Listen(ctx context.Context) {
+	if tt.onAckFunc == nil {
+		panic("callback not set: onAckFunc")
+	}
+
+	if tt.onRejectFunc == nil {
+		panic("callback not set: onRejectFunc")
+	}
+
+	if tt.onReadErrorFunc == nil {
+		panic("callback not set: onReadErrorFunc")
+	}
+
+	ctx, tt.cancel = context.WithCancel(ctx)
+	go tt.incomeStream(ctx)
+}
+
+// incomeStream - listener for income message.
+func (tt *WebSocketTransport) incomeStream(ctx context.Context) {
+	for {
+		respmsg := frames.NewResponseV4Empty()
+		if err := tt.wt.Read(ctx, respmsg); err != nil {
+			// TODO use of closed network connection when you close connection from the outside (close)
+			tt.onReadErrorFunc(err)
+			return
+		}
+		tt.roundtripDuration.Observe(float64(time.Now().UnixNano()-respmsg.SentAt) / float64(time.Second))
+
+		switch respmsg.Code {
+		case http.StatusOK:
+			tt.resetBackoff()
+			tt.onAckFunc(respmsg.SegmentID)
+		default:
+			tt.onRejectFunc(respmsg.SegmentID)
+		}
+	}
+}
+
+// OnAck - read messages from the connection and acknowledges the send status via fn.
+func (tt *WebSocketTransport) OnAck(fn func(id uint32)) {
+	tt.onAckFunc = fn
+}
+
+// OnReject - read messages from connection and reject send status via fn.
+func (tt *WebSocketTransport) OnReject(fn func(id uint32)) {
+	tt.onRejectFunc = fn
+}
+
+// OnReadError - check error on income stream via fn.
+func (tt *WebSocketTransport) OnReadError(fn func(err error)) {
+	tt.onReadErrorFunc = fn
+}
+
+// Close - close connection.
+func (tt *WebSocketTransport) Close() error {
+	if tt.cancel != nil {
+		tt.cancel()
+	}
+
+	return tt.wt.Close()
+}
+
+// ErrUnknownMsgType - msg type mismatch error.
+type ErrUnknownMsgType struct {
+	expected frames.TypeFrame
+	received frames.TypeFrame
+}
+
+// UnknownMsgType - create ErrUnknownMsgType error.
+func UnknownMsgType(exp, dec frames.TypeFrame) *ErrUnknownMsgType {
+	return &ErrUnknownMsgType{exp, dec}
+}
+
+// Error - implements error.
+func (err ErrUnknownMsgType) Error() string {
+	return fmt.Sprintf("unknown msg type %d, expected %d", err.received, err.expected)
+}
+
+// Is - implements errors.Is interface.
+func (*ErrUnknownMsgType) Is(target error) bool {
+	_, ok := target.(*ErrUnknownMsgType)
+	return ok
+}
+
+// httpError - wrapper for http error.
+type httpError struct {
+	code int
+	blob string
+}
+
+// Error - implements error.
+func (he *httpError) Error() string {
+	return fmt.Sprintf("HTTP Error Code %d", he.code)
+}
+
+// Format - implements error.
+func (he *httpError) Format(s fmt.State, verb rune) {
+	switch verb {
+	case 'v':
+		if s.Flag('+') {
+			_, _ = fmt.Fprintf(s, "%s\n\n%s", he.Error(), he.blob)
+			return
+		}
+		fallthrough
+	case 's':
+		_, _ = io.WriteString(s, he.Error())
+	case 'q':
+		_, _ = fmt.Fprintf(s, "%q", he.Error())
 	}
 }

@@ -2,7 +2,6 @@ package delivery
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -18,26 +17,14 @@ import (
 
 const posNotFound int64 = -1
 
-// MarkupKey - key for search position.
-type MarkupKey struct {
-	typeFrame frames.TypeFrame
-	cppbridge.SegmentKey
-}
-
 // StorageManager - manager for file refill. Contains file markup for quick access to data.
 type StorageManager struct {
-	// title frame
-	title *frames.Title
-	// marking positions of Segments
-	markupMap map[MarkupKey]int64
-	// last status of writers
-	ackStatus *AckStatus
-	// last statuses write, need write frame if have differents
-	statuses frames.Statuses
-	// last statuses write
-	lastWriteSegment []uint32
+	// markup file
+	markupFile *Markup
 	// storage for save data
 	storage *FileStorage
+	// last statuses write, need write frame if have differents
+	statuses frames.Statuses
 	// last position when writing to
 	lastWriteOffset int64
 	// state open file
@@ -64,7 +51,6 @@ func NewStorageManager(
 	var err error
 	factory := util.NewUnconflictRegisterer(registerer)
 	sm := &StorageManager{
-		markupMap:  make(map[MarkupKey]int64),
 		hasRejects: atomic.Bool{},
 		currentSize: factory.NewGauge(
 			prometheus.GaugeOpts{
@@ -112,19 +98,17 @@ func NewStorageManager(
 		}
 	}
 	if !ok {
-		sm.title = frames.NewTitle(shardsNumberPower, blockID)
-		sm.ackStatus = NewAckStatus(names, shardsNumberPower)
-		sm.lastWriteSegment = newShardStatuses(1 << shardsNumberPower)
+		sm.markupFile = NewMarkup(names, blockID, shardsNumberPower)
 		sm.setLastWriteOffset(0)
 	}
 
-	sm.statuses = sm.ackStatus.GetCopyAckStatuses()
+	sm.statuses = sm.markupFile.GetCopyAckStatuses()
 
-	if sm.ackStatus.Shards() != 1<<shardsNumberPower {
+	if sm.markupFile.Shards() != 1<<shardsNumberPower {
 		return sm, ErrShardsNotEqual
 	}
 
-	if !sm.ackStatus.names.Equal(names...) {
+	if !sm.markupFile.EqualDestinationsNames(names) {
 		return sm, ErrDestinationsNamesNotEqual
 	}
 
@@ -133,22 +117,22 @@ func NewStorageManager(
 
 // BlockID - return if exist blockID or nil.
 func (sm *StorageManager) BlockID() uuid.UUID {
-	return sm.title.GetBlockID()
+	return sm.markupFile.BlockID()
 }
 
 // Shards - return number of Shards.
 func (sm *StorageManager) Shards() int {
-	return sm.ackStatus.Shards()
+	return sm.markupFile.Shards()
 }
 
 // Destinations - return number of Destinations.
 func (sm *StorageManager) Destinations() int {
-	return sm.ackStatus.Destinations()
+	return sm.markupFile.Destinations()
 }
 
 // LastSegment - return last ack segment by shard and destination.
 func (sm *StorageManager) LastSegment(shardID uint16, dest string) uint32 {
-	return sm.ackStatus.Last(shardID, dest)
+	return sm.markupFile.Last(shardID, dest)
 }
 
 // CheckSegmentsSent - checking if all segments have been sent.
@@ -158,16 +142,17 @@ func (sm *StorageManager) CheckSegmentsSent() bool {
 		return false
 	}
 
-	for d := 0; d < sm.ackStatus.Destinations(); d++ {
-		for shardID := range sm.lastWriteSegment {
-			i := d*len(sm.lastWriteSegment) + shardID
+	maxWriteSegments := sm.markupFile.MaxWriteSegments()
+	for d := 0; d < sm.markupFile.Destinations(); d++ {
+		for shardID := range maxWriteSegments {
+			i := d*len(maxWriteSegments) + shardID
 			// check first status
-			if sm.statuses[i] == math.MaxUint32 && sm.lastWriteSegment[shardID] != math.MaxUint32 {
+			if sm.statuses[i] == math.MaxUint32 && maxWriteSegments[shardID] != math.MaxUint32 {
 				return false
 			}
 
 			// check not first status
-			if sm.statuses[i] < sm.lastWriteSegment[shardID] {
+			if sm.statuses[i] < maxWriteSegments[shardID] {
 				return false
 			}
 		}
@@ -178,13 +163,13 @@ func (sm *StorageManager) CheckSegmentsSent() bool {
 
 // Ack - increment status by destination and shard if segment is next for current value.
 func (sm *StorageManager) Ack(key cppbridge.SegmentKey, dest string) {
-	sm.ackStatus.Ack(key, dest)
+	sm.markupFile.Ack(key, dest)
 }
 
 // Reject - accumulates rejects and serializes and writes to refill while recording statuses.
 func (sm *StorageManager) Reject(segKey cppbridge.SegmentKey, dest string) {
 	sm.hasRejects.Store(true)
-	sm.ackStatus.Reject(segKey, dest)
+	sm.markupFile.Reject(segKey, dest)
 }
 
 // getSegmentPosition - return position in storage.
@@ -193,12 +178,12 @@ func (sm *StorageManager) getSegmentPosition(segKey cppbridge.SegmentKey) int64 
 		typeFrame:  frames.SegmentType,
 		SegmentKey: segKey,
 	}
-	pos, ok := sm.markupMap[mk]
-	if ok {
-		return pos
+	mval := sm.markupFile.GetMarkupValue(mk)
+	if mval == nil {
+		return posNotFound
 	}
 
-	return posNotFound
+	return mval.pos
 }
 
 // setSegmentPosition - set segment position in storage.
@@ -207,11 +192,9 @@ func (sm *StorageManager) setSegmentPosition(segKey cppbridge.SegmentKey, positi
 		typeFrame:  frames.SegmentType,
 		SegmentKey: segKey,
 	}
-	sm.markupMap[mk] = position
 
-	if sm.lastWriteSegment[segKey.ShardID] == math.MaxUint32 || segKey.Segment > sm.lastWriteSegment[segKey.ShardID] {
-		sm.lastWriteSegment[segKey.ShardID] = segKey.Segment
-	}
+	sm.markupFile.SetMarkupValue(mk, position, 0)
+	sm.markupFile.SetMaxSegments(mk)
 }
 
 // GetSegment - return segment from storage.
@@ -223,98 +206,19 @@ func (sm *StorageManager) GetSegment(ctx context.Context, segKey cppbridge.Segme
 	}
 
 	// read frame
-	segmentData, err := frames.ReadFrameSegment(ctx, util.NewOffsetReader(sm.storage, pos))
+	bb, err := frames.ReadFrameSegment(ctx, util.NewOffsetReader(sm.storage, pos))
 	if err != nil {
 		return nil, err
 	}
 
-	sm.readBytes.Observe(float64(segmentData.Size()))
+	sm.readBytes.Observe(float64(bb.GetBody().Size()))
 
-	return segmentData, nil
+	return bb.GetBody(), nil
 }
 
 // GetAckStatus - return last AckStatus.
 func (sm *StorageManager) GetAckStatus() *AckStatus {
-	return sm.ackStatus
-}
-
-// restoreFromBody - restore from body frame.
-func (sm *StorageManager) restoreFromBody(ctx context.Context, h *frames.Header, off int64, size int) error {
-	// TODO restore bad frame
-	switch h.GetType() {
-	case frames.TitleType:
-		return sm.restoreTitle(ctx, off, size)
-	case frames.DestinationNamesType:
-		return sm.restoreDestinationsNames(ctx, off, size)
-	case frames.SegmentType:
-		return sm.restoreSegment(h, off)
-	case frames.StatusType:
-		return sm.restoreStatuses(h, off)
-	case frames.RejectStatusType:
-		sm.hasRejects.Store(true)
-		// skip reject statuses
-		return nil
-	}
-
-	return nil
-}
-
-// restore - restore title from frame.
-func (sm *StorageManager) restoreTitle(ctx context.Context, off int64, size int) error {
-	var err error
-	sm.title, err = frames.ReadAtTitle(ctx, sm.storage, off, size)
-	if err != nil {
-		return err
-	}
-
-	// init lastWriteSegment for future reference and not to panic
-	sm.lastWriteSegment = newShardStatuses(1 << sm.title.GetShardsNumberPower())
-
-	return nil
-}
-
-// restore - restore Destinations Names from frame.
-func (sm *StorageManager) restoreDestinationsNames(ctx context.Context, off int64, size int) error {
-	// init lastWriteSegment for future reference and not to panic
-	// init with shardsNumberPower to init statuses for null values
-	sm.ackStatus = NewAckStatusEmpty(sm.title.GetShardsNumberPower())
-	return sm.ackStatus.ReadDestinationsNames(ctx, sm.storage, off, size)
-}
-
-// checkRestoredServiceData - check restored service data(title, destinations names),
-// these data are required to be restored, without them you cant read the rest
-func (sm *StorageManager) checkRestoredServiceData() bool {
-	return sm.title != nil && sm.ackStatus != nil
-}
-
-// restore - restore Segment from frame.
-func (sm *StorageManager) restoreSegment(h *frames.Header, off int64) error {
-	if !sm.checkRestoredServiceData() {
-		return ErrServiceDataNotRestored{}
-	}
-
-	sm.setSegmentPosition(
-		cppbridge.SegmentKey{
-			ShardID: h.GetShardID(),
-			Segment: h.GetSegmentID(),
-		},
-		off-int64(h.SizeOf()),
-	)
-
-	return nil
-}
-
-// restoreStatuses - restore states of writers from frame.
-func (sm *StorageManager) restoreStatuses(h *frames.Header, off int64) error {
-	if !sm.checkRestoredServiceData() {
-		return ErrServiceDataNotRestored{}
-	}
-
-	buf := make([]byte, h.GetSize())
-	if _, err := sm.storage.ReadAt(buf, off); err != nil {
-		return err
-	}
-	return sm.ackStatus.status.UnmarshalBinary(buf)
+	return sm.markupFile.AckStatus()
 }
 
 // restore - restore MarkupMap from storage.
@@ -335,40 +239,29 @@ func (sm *StorageManager) restore() (bool, error) {
 	}
 	sm.isOpenFile = true
 
-	var off int64
-	for {
-		// read header frame
-		h, err := frames.ReadHeader(ctx, util.NewOffsetReader(sm.storage, off))
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return false, err
-		}
-		off += int64(h.SizeOf())
-
-		// restore data from body
-		err = sm.restoreFromBody(ctx, h, off, int(h.GetSize()))
-		if err != nil {
-			return false, err
-		}
-
-		// move cursor position
-		off += int64(h.GetSize())
-		sm.setLastWriteOffset(off)
+	sm.markupFile, err = NewMarkupReader(sm.storage).ReadFile(ctx)
+	if err != nil {
+		return false, err
 	}
 
-	// check for nil file
-	if !sm.checkRestoredServiceData() {
-		return false, ErrServiceDataNotRestored{}
+	// seek to end file
+	if _, err = sm.storage.Seek(0, io.SeekEnd); err != nil {
+		return false, err
 	}
+
+	size, err := sm.storage.Size()
+	if err != nil {
+		return false, err
+	}
+	sm.setLastWriteOffset(size)
+	sm.hasRejects.Store(sm.markupFile.HasRejects())
 
 	return true, nil
 }
 
 // writeTitle - write title in storage.
 func (sm *StorageManager) writeTitle(ctx context.Context) error {
-	fe, err := frames.NewTitleFrame(sm.title.GetShardsNumberPower(), sm.BlockID())
+	fe, err := frames.NewTitleFrameV1(sm.markupFile.ShardsNumberPower(), sm.BlockID())
 	if err != nil {
 		return err
 	}
@@ -386,7 +279,7 @@ func (sm *StorageManager) writeTitle(ctx context.Context) error {
 
 // writeDestinationNames - write destination names in storage.
 func (sm *StorageManager) writeDestinationNames(ctx context.Context) error {
-	fe, err := frames.NewDestinationsNamesFrameWithMsg(protocolVersion, sm.ackStatus.names)
+	fe, err := frames.NewDestinationsNamesFrameWithMsg(protocolVersionSocket, sm.markupFile.DestinationsNames())
 	if err != nil {
 		return err
 	}
@@ -434,7 +327,15 @@ func (sm *StorageManager) WriteSegment(ctx context.Context, key cppbridge.Segmen
 		}
 	}
 
-	fe := frames.NewWriteFrame(protocolVersion, frames.SegmentType, key.ShardID, key.Segment, seg)
+	fe, err := frames.NewWriteFrame(
+		protocolVersionSocket,
+		frames.ContentVersion2,
+		frames.SegmentType,
+		frames.NewBinaryWrapper(key.ShardID, key.Segment, seg),
+	)
+	if err != nil {
+		return err
+	}
 	n, err := fe.WriteTo(sm.storage.Writer(ctx, sm.lastWriteOffset))
 	sm.writeBytes.Observe(float64(n))
 	if err != nil {
@@ -455,21 +356,21 @@ func (sm *StorageManager) WriteAckStatus(ctx context.Context) error {
 	}
 	// lock and get copy all statuses
 	// TODO: separate acks and rejects
-	sm.ackStatus.Lock()
-	ss := sm.ackStatus.GetCopyAckStatuses()
-	rejects := sm.ackStatus.RotateRejects()
-	sm.ackStatus.Unlock()
+	sm.markupFile.AckStatusLock()
+	ss := sm.markupFile.CopyAckStatuses()
+	rejects := sm.markupFile.RotateRejects()
+	sm.markupFile.AckStatusUnlock()
 
 	if len(rejects) != 0 {
 		fe, err := frames.NewRejectStatusesFrame(rejects)
 		if err != nil {
-			sm.ackStatus.UnrotateRejects(rejects)
+			sm.markupFile.UnrotateRejects(rejects)
 			return err
 		}
 		n, err := fe.WriteTo(sm.storage.Writer(ctx, sm.lastWriteOffset))
 		sm.writeBytes.Observe(float64(n))
 		if err != nil {
-			sm.ackStatus.UnrotateRejects(rejects)
+			sm.markupFile.UnrotateRejects(rejects)
 			return err
 		}
 		sm.moveLastWriteOffset(n)
@@ -524,11 +425,10 @@ func (sm *StorageManager) GetIntermediateName() (string, bool) {
 	return sm.storage.GetIntermediateName()
 }
 
-// DeleteCurrentFile - close and delete current file..
+// DeleteCurrentFile - close and delete current file.
 func (sm *StorageManager) DeleteCurrentFile() error {
 	// reinit, because file deleted
-	sm.lastWriteSegment = newShardStatuses(1 << sm.title.GetShardsNumberPower())
-	sm.markupMap = make(map[MarkupKey]int64)
+	sm.markupFile.Reset()
 	sm.statuses.Reset()
 	sm.setLastWriteOffset(0)
 
@@ -651,6 +551,25 @@ func NewAckStatusEmpty(shardsNumberPower uint8) *AckStatus {
 	}
 }
 
+// NewAckStatusWithDNames - init AckStatus with DestinationsNames.
+func NewAckStatusWithDNames(dnames *frames.DestinationsNames, shardsNumberPower uint8) *AckStatus {
+	shardsNumber := 1 << shardsNumberPower
+	status := frames.NewStatusesEmpty(shardsNumberPower, dnames.Len())
+	dnames.Range(func(_ string, id int) bool {
+		for i := 0; i < shardsNumber; i++ {
+			status[id*shardsNumber+i] = math.MaxUint32
+		}
+		return true
+	})
+
+	return &AckStatus{
+		names:   dnames,
+		status:  status,
+		rejects: NewRejects(),
+		rwmx:    new(sync.RWMutex),
+	}
+}
+
 // Destinations returns number of destinations
 func (as *AckStatus) Destinations() int {
 	return as.names.Len()
@@ -744,12 +663,12 @@ func (as *AckStatus) GetCopyAckStatuses() frames.Statuses {
 	return newss
 }
 
-// RotateRejects - rotate rejects statuses..
+// RotateRejects - rotate rejects statuses.
 func (as *AckStatus) RotateRejects() frames.RejectStatuses {
 	return as.rejects.Rotate()
 }
 
-// UnrotateRejects - unrotate rejects statuses..
+// UnrotateRejects - unrotate rejects statuses.
 func (as *AckStatus) UnrotateRejects(rejects frames.RejectStatuses) {
 	as.rejects.Unrotate(rejects)
 }
@@ -766,6 +685,11 @@ func (as *AckStatus) ReadDestinationsNames(ctx context.Context, r io.ReaderAt, o
 	}
 
 	return nil
+}
+
+// UnmarshalBinaryStatuses - unmarshal statuses from bytes.
+func (as *AckStatus) UnmarshalBinaryStatuses(data []byte) error {
+	return as.status.UnmarshalBinary(data)
 }
 
 // Lock - locks rw for writing.

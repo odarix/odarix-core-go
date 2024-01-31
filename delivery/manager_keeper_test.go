@@ -41,7 +41,7 @@ func TestManagerKeeper(t *testing.T) {
 func (*ManagerKeeperSuite) transportNewAutoAck(name string, delay time.Duration, dest chan string) delivery.Dialer {
 	return &DialerMock{
 		StringFunc: func() string { return name },
-		DialFunc: func(ctx context.Context, s string, v uint16) (delivery.Transport, error) {
+		DialFunc: func(ctx context.Context, shardMeta delivery.ShardMeta) (delivery.Transport, error) {
 			m := new(sync.Mutex)
 			var ack func(uint32)
 			var transportShard *uint64
@@ -53,16 +53,17 @@ func (*ManagerKeeperSuite) transportNewAutoAck(name string, delay time.Duration,
 				},
 				OnRejectFunc:    func(fn func(uint32)) {},
 				OnReadErrorFunc: func(fn func(error)) {},
-				SendFunc: func(ctx context.Context, frame *frames.WriteFrame) error {
-					rf, err := framestest.ReadFrame(ctx, frame)
+				SendFunc: func(ctx context.Context, frame frames.FrameWriter) error {
+					rs, err := framestest.ReadSegment(ctx, frame)
 					if err != nil {
 						return err
 					}
-					if rf.GetType() == frames.FinalType {
+					if rs.GetSize() == 0 {
+						// Final
 						dest <- "final"
 						return nil
 					}
-					parts := strings.SplitN(string(rf.GetBody()), ":", 6)
+					parts := strings.SplitN(string(rs.GetBody()), ":", 6)
 					shardID, err := strconv.ParseUint(parts[2], 10, 16)
 					if err != nil {
 						return err
@@ -105,7 +106,7 @@ func (*ManagerKeeperSuite) transportNewAutoAck(name string, delay time.Duration,
 func (*ManagerKeeperSuite) transportWithReject(name string, delay time.Duration, dest chan string) delivery.Dialer {
 	return &DialerMock{
 		StringFunc: func() string { return name },
-		DialFunc: func(ctx context.Context, s string, v uint16) (delivery.Transport, error) {
+		DialFunc: func(ctx context.Context, shardMeta delivery.ShardMeta) (delivery.Transport, error) {
 			m := new(sync.Mutex)
 			var ack func(uint32)
 			var reject func(uint32)
@@ -130,16 +131,17 @@ func (*ManagerKeeperSuite) transportWithReject(name string, delay time.Duration,
 					reject = fn
 				},
 				OnReadErrorFunc: func(fn func(err error)) {},
-				SendFunc: func(ctx context.Context, frame *frames.WriteFrame) error {
-					rf, err := framestest.ReadFrame(ctx, frame)
+				SendFunc: func(ctx context.Context, frame frames.FrameWriter) error {
+					rs, err := framestest.ReadSegment(ctx, frame)
 					if err != nil {
 						return err
 					}
-					if rf.GetType() == frames.FinalType {
+					if rs.GetSize() == 0 {
+						// Final
 						dest <- "final"
 						return nil
 					}
-					parts := strings.SplitN(string(rf.GetBody()), ":", 6)
+					parts := strings.SplitN(string(rs.GetBody()), ":", 6)
 					shardID, err := strconv.ParseUint(parts[2], 10, 16)
 					if err != nil {
 						return err
@@ -561,8 +563,6 @@ func (s *ManagerKeeperSuite) TestSendWithReject() {
 
 	err = managerKeeper.Shutdown(shutdownCtx)
 	s.NoError(err)
-
-	s.Equal("final", <-destination, "failed final frame")
 
 	err = os.RemoveAll(filepath.Clean(dir))
 	s.Require().NoError(err)

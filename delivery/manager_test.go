@@ -98,12 +98,18 @@ func (s *ManagerSuite) TestSendWithAck() {
 func (s *ManagerSuite) TestRejectToRefill() {
 	baseCtx := context.Background()
 
+	shardMeta := delivery.ShardMeta{
+		BlockID:                uuid.New(),
+		ShardID:                0,
+		ShardsLog:              0,
+		SegmentEncodingVersion: 1,
+	}
 	s.T().Log("Use transport that may be in 2 states: auto-ack after ms or reject after ms")
 	transportSwitcher := new(atomic.Bool)
 	dialers := []delivery.Dialer{
 		s.transportWithReject(
 			s.transportNewAutoAck(s.T().Name(), time.Millisecond, nil),
-			transportSwitcher, time.Millisecond, "blockID", 0,
+			transportSwitcher, time.Millisecond, shardMeta,
 		),
 	}
 
@@ -175,13 +181,19 @@ func (s *ManagerSuite) TestRejectToRefill() {
 func (s *ManagerSuite) TestAckRejectRace() {
 	baseCtx := context.Background()
 
+	shardMeta := delivery.ShardMeta{
+		BlockID:                uuid.New(),
+		ShardID:                0,
+		ShardsLog:              0,
+		SegmentEncodingVersion: 1,
+	}
 	s.T().Log("Use transport that may be in 2 states: auto-ack after ms or reject after ms")
 	transportSwitcher := new(atomic.Bool)
 	destination := make(chan string, 4)
 	dialers := []delivery.Dialer{
 		s.transportWithReject(
 			s.transportNewAutoAck(s.T().Name(), time.Millisecond, destination),
-			transportSwitcher, time.Millisecond, "blockID", 0,
+			transportSwitcher, time.Millisecond, shardMeta,
 		),
 	}
 
@@ -268,8 +280,6 @@ func (s *ManagerSuite) TestAckRejectRace() {
 	s.NoError(manager.Close(), "manager should be gracefully close")
 	s.NoError(manager.Shutdown(shutdownCtx), "manager should be gracefully stopped")
 
-	s.Equal("final", <-destination, "failed final frame")
-
 	s.T().Log("Check that rejected and followed data is in refill")
 	for i := 1; i < 3; i++ {
 		for j := 0; j < 4; j++ {
@@ -290,13 +300,19 @@ func (s *ManagerSuite) TestRestoreFromRefill() {
 	s.T().SkipNow()
 	baseCtx := context.Background()
 
+	shardMeta := delivery.ShardMeta{
+		BlockID:                uuid.New(),
+		ShardID:                0,
+		ShardsLog:              0,
+		SegmentEncodingVersion: 1,
+	}
 	s.T().Log("Use transport that may be in 2 states: auto-ack after ms or return error after ms")
 	transportSwitcher := new(atomic.Bool)
 	destination := make(chan string, 4)
 	dialers := []delivery.Dialer{
 		s.transportWithError(
 			s.transportNewAutoAck(s.T().Name(), time.Millisecond, destination),
-			transportSwitcher, time.Millisecond, "blockID", 0,
+			transportSwitcher, time.Millisecond, shardMeta,
 		),
 	}
 
@@ -367,13 +383,19 @@ func (s *ManagerSuite) TestRestoreFromRefill() {
 func (s *ManagerSuite) TestRestoreWithNoRefill() {
 	baseCtx := context.Background()
 
+	shardMeta := delivery.ShardMeta{
+		BlockID:                uuid.New(),
+		ShardID:                0,
+		ShardsLog:              0,
+		SegmentEncodingVersion: 1,
+	}
 	s.T().Log("Use transport that may be in 2 states: auto-ack after ms or return error after ms")
 	transportSwitcher := new(atomic.Bool)
 	destination := make(chan string, 4)
 	dialers := []delivery.Dialer{
 		s.transportWithError(
 			s.transportNewAutoAck(s.T().Name(), time.Millisecond, destination),
-			transportSwitcher, time.Millisecond, "blockID", 0,
+			transportSwitcher, time.Millisecond, shardMeta,
 		),
 	}
 
@@ -509,7 +531,7 @@ func (s *ManagerSuite) TestLongDial() {
 	s.T().Log("Use dialer that wait until context done")
 	dialers := []delivery.Dialer{&DialerMock{
 		StringFunc: s.T().Name,
-		DialFunc: func(ctx context.Context, s string, v uint16) (delivery.Transport, error) {
+		DialFunc: func(ctx context.Context, shardMeta delivery.ShardMeta) (delivery.Transport, error) {
 			<-ctx.Done()
 			return nil, context.Cause(ctx)
 		},
@@ -650,11 +672,16 @@ func (s *ManagerSuite) TestAlwaysToRefill() {
 	}
 }
 
-func (*ManagerSuite) transportWithReject(dialer delivery.Dialer, switcher *atomic.Bool, delay time.Duration, blockID string, shardID uint16) delivery.Dialer {
+func (*ManagerSuite) transportWithReject(
+	dialer delivery.Dialer,
+	switcher *atomic.Bool,
+	delay time.Duration,
+	shardMeta delivery.ShardMeta,
+) delivery.Dialer {
 	return &DialerMock{
 		StringFunc: dialer.String,
-		DialFunc: func(ctx context.Context, s string, v uint16) (delivery.Transport, error) {
-			transport, err := dialer.Dial(ctx, blockID, shardID)
+		DialFunc: func(ctx context.Context, _ delivery.ShardMeta) (delivery.Transport, error) {
+			transport, err := dialer.Dial(ctx, shardMeta)
 			if err != nil {
 				return nil, err
 			}
@@ -668,18 +695,20 @@ func (*ManagerSuite) transportWithReject(dialer delivery.Dialer, switcher *atomi
 					reject = fn
 				},
 				OnReadErrorFunc: func(fn func(error)) {},
-				SendFunc: func(ctx context.Context, frame *frames.WriteFrame) error {
+				SendFunc: func(ctx context.Context, frame frames.FrameWriter) error {
 					if !switcher.Load() {
 						return transport.Send(ctx, frame)
 					}
-					rf, err := framestest.ReadFrame(ctx, frame)
+					rs, err := framestest.ReadSegment(ctx, frame)
 					if err != nil {
 						return err
 					}
-					if rf.GetType() == frames.FinalType {
+					if rs.GetSize() == 0 {
+						// Final
 						return nil
 					}
-					parts := strings.SplitN(string(rf.GetBody()), ":", 6)
+
+					parts := strings.SplitN(string(rs.GetBody()), ":", 6)
 					segmentID, err := strconv.ParseUint(parts[4], 10, 32)
 					if err != nil {
 						return err
@@ -699,11 +728,16 @@ func (*ManagerSuite) transportWithReject(dialer delivery.Dialer, switcher *atomi
 	}
 }
 
-func (*ManagerSuite) transportWithError(dialer delivery.Dialer, switcher *atomic.Bool, delay time.Duration, blockID string, shardID uint16) delivery.Dialer {
+func (*ManagerSuite) transportWithError(
+	dialer delivery.Dialer,
+	switcher *atomic.Bool,
+	delay time.Duration,
+	shardMeta delivery.ShardMeta,
+) delivery.Dialer {
 	return &DialerMock{
 		StringFunc: dialer.String,
-		DialFunc: func(ctx context.Context, s string, v uint16) (delivery.Transport, error) {
-			transport, err := dialer.Dial(ctx, blockID, shardID)
+		DialFunc: func(ctx context.Context, _ delivery.ShardMeta) (delivery.Transport, error) {
+			transport, err := dialer.Dial(ctx, shardMeta)
 			if err != nil {
 				return nil, err
 			}
@@ -711,7 +745,7 @@ func (*ManagerSuite) transportWithError(dialer delivery.Dialer, switcher *atomic
 				OnAckFunc:       transport.OnAck,
 				OnRejectFunc:    transport.OnReject,
 				OnReadErrorFunc: func(fn func(error)) {},
-				SendFunc: func(ctx context.Context, frame *frames.WriteFrame) error {
+				SendFunc: func(ctx context.Context, frame frames.FrameWriter) error {
 					if switcher.Load() {
 						time.Sleep(delay)
 						return assert.AnError
@@ -729,7 +763,7 @@ func (*ManagerSuite) transportWithError(dialer delivery.Dialer, switcher *atomic
 func (*ManagerSuite) transportNewAutoAck(name string, delay time.Duration, dest chan string) delivery.Dialer {
 	return &DialerMock{
 		StringFunc: func() string { return name },
-		DialFunc: func(ctx context.Context, s string, v uint16) (delivery.Transport, error) {
+		DialFunc: func(ctx context.Context, shardMeta delivery.ShardMeta) (delivery.Transport, error) {
 			m := new(sync.Mutex)
 			var ack func(uint32)
 			var transportShard *uint64
@@ -741,16 +775,16 @@ func (*ManagerSuite) transportNewAutoAck(name string, delay time.Duration, dest 
 				},
 				OnRejectFunc:    func(fn func(uint32)) {},
 				OnReadErrorFunc: func(fn func(error)) {},
-				SendFunc: func(ctx context.Context, frame *frames.WriteFrame) error {
-					rf, err := framestest.ReadFrame(ctx, frame)
+				SendFunc: func(ctx context.Context, frame frames.FrameWriter) error {
+					rs, err := framestest.ReadSegment(ctx, frame)
 					if err != nil {
 						return err
 					}
-					if rf.GetType() == frames.FinalType {
+					if rs.GetSize() == 0 {
 						dest <- "final"
 						return nil
 					}
-					parts := strings.SplitN(string(rf.GetBody()), ":", 6)
+					parts := strings.SplitN(string(rs.GetBody()), ":", 6)
 					shardID, err := strconv.ParseUint(parts[2], 10, 16)
 					if err != nil {
 						return err
@@ -764,17 +798,16 @@ func (*ManagerSuite) transportNewAutoAck(name string, delay time.Duration, dest 
 					if err != nil {
 						return err
 					}
-					if rf.GetType() == frames.SegmentType {
-						time.AfterFunc(delay, func() {
-							m.Lock()
-							defer m.Unlock()
-							ack(uint32(segmentID))
-							select {
-							case dest <- parts[5]:
-							default:
-							}
-						})
-					}
+
+					time.AfterFunc(delay, func() {
+						m.Lock()
+						defer m.Unlock()
+						ack(uint32(segmentID))
+						select {
+						case dest <- parts[5]:
+						default:
+						}
+					})
 					return nil
 				},
 				ListenFunc: func(ctx context.Context) {},

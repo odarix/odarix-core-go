@@ -2,12 +2,19 @@ package e2e_test
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
-	"errors"
 	"io"
+	"math/big"
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,10 +22,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/stretchr/testify/suite"
+	"golang.org/x/net/websocket"
 
 	"github.com/odarix/odarix-core-go/cppbridge"
 	"github.com/odarix/odarix-core-go/delivery"
-	"github.com/odarix/odarix-core-go/frames"
 	"github.com/odarix/odarix-core-go/model"
 	"github.com/odarix/odarix-core-go/server"
 	"github.com/odarix/odarix-core-go/transport"
@@ -121,19 +128,81 @@ func (*MainSuite) makeGoModelData(count int, sid int64) (timeSeriesSlice []model
 	return timeSeriesSlice
 }
 
-func (*MainSuite) createDialers(token, address string) []delivery.Dialer {
+func (s *MainSuite) EqualAsJSON(expected, actual interface{}, args ...interface{}) bool {
+	e, err := json.Marshal(expected)
+	s.Require().NoError(err)
+	a, err := json.Marshal(actual)
+	s.Require().NoError(err)
+	return s.JSONEq(string(e), string(a), args...)
+}
+
+func (s *MainSuite) EqualAsJSONf(expected, actual interface{}, msg string, args ...interface{}) bool {
+	e, err := json.Marshal(expected)
+	s.Require().NoError(err)
+	a, err := json.Marshal(actual)
+	s.Require().NoError(err)
+	return s.JSONEqf(string(e), string(a), msg, args...)
+}
+
+func (s *MainSuite) makeTLSConfig() (*tls.Config, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	s.Require().NoError(err)
+
+	template := &x509.Certificate{
+		Subject: pkix.Name{
+			CommonName: "localhost",
+		},
+		DNSNames: []string{"localhost"},
+		ExtKeyUsage: []x509.ExtKeyUsage{
+			x509.ExtKeyUsageServerAuth,
+			x509.ExtKeyUsageClientAuth,
+		},
+		KeyUsage: x509.KeyUsageDigitalSignature |
+			x509.KeyUsageKeyEncipherment |
+			x509.KeyUsageKeyAgreement |
+			x509.KeyUsageCertSign,
+		SerialNumber:          big.NewInt(1),
+		NotBefore:             time.Now().Add(-1 * time.Second),
+		NotAfter:              time.Now().Add(1 * time.Hour),
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	certBytes, err := x509.CreateCertificate(rand.Reader, template, template, key.Public(), key)
+	s.Require().NoError(err)
+	cert, err := x509.ParseCertificate(certBytes)
+	s.Require().NoError(err)
+	certPool := x509.NewCertPool()
+	certPool.AddCert(cert)
+
+	return &tls.Config{
+		Certificates: []tls.Certificate{
+			{Certificate: [][]byte{certBytes}, PrivateKey: key},
+		},
+		RootCAs:    certPool,
+		ServerName: "localhost",
+		ClientAuth: tls.RequireAndVerifyClientCert,
+		ClientCAs:  certPool,
+		MinVersion: tls.VersionTLS12,
+	}, nil
+}
+
+func (*MainSuite) createDialersWebSocket(tlscfg *tls.Config, token, address string) []delivery.Dialer {
 	dialer := &ConnDialerMock{
 		StringFunc: func() string { return address },
 		DialFunc: func(ctx context.Context) (net.Conn, error) {
-			var d net.Dialer
+			d := &tls.Dialer{Config: tlscfg}
 			return d.DialContext(ctx, "tcp", address)
 		},
 	}
 
+	addrPort := strings.Split(address, ":")
+
 	return []delivery.Dialer{
-		delivery.NewTCPDialer(
+		delivery.NewWebSocketDialer(
 			dialer,
-			delivery.TCPDialerConfig{
+			addrPort[0],
+			addrPort[1],
+			delivery.DialerConfig{
 				AuthToken:          token,
 				AgentUUID:          uuid.NewString(),
 				BackoffMaxInterval: 10 * time.Second,
@@ -149,13 +218,13 @@ func (*MainSuite) createDialers(token, address string) []delivery.Dialer {
 	}
 }
 
-func (s *MainSuite) createManager(
+func (s *MainSuite) createManagerWithWebSocket(
 	ctx context.Context,
+	tlscfg *tls.Config,
 	token, address, dir string,
 	errorHandler delivery.ErrorHandler,
-	clock clockwork.Clock,
 ) (*delivery.Manager, error) {
-	dialers := s.createDialers(token, address)
+	dialers := s.createDialersWebSocket(tlscfg, token, address)
 
 	encoderCtor := func(
 		blockID uuid.UUID,
@@ -184,6 +253,7 @@ func (s *MainSuite) createManager(
 	}
 
 	shardsNumberPower := uint8(0)
+	clock := clockwork.NewRealClock()
 	haTracker := delivery.NewHighAvailabilityTracker(ctx, nil, clock)
 	rejectNotifyer := delivery.NewRotateTimer(
 		clock,
@@ -212,91 +282,14 @@ func (s *MainSuite) createManager(
 	return manager, nil
 }
 
-// onAccept function called after authorization
-// handleStream function called on each segment receiving by server
-// handleRefill function called on each refill receiving by server
-//
-//revive:disable-next-line:cyclomatic this is test
-//revive:disable-next-line:cognitive-complexity this is test
-func (s *MainSuite) runServer(
+func (s *MainSuite) createManagerKeeperWithWebSocket(
 	ctx context.Context,
-	listen, token string,
-	onAccept func() bool,
-	handleStream func(ctx context.Context, msg *frames.ReadFrame, tcpReader *server.TCPReader),
-	handleRefill func(ctx context.Context, msg *frames.ReadFrame, tcpReader *server.TCPReader),
-) net.Listener {
-	lc := net.ListenConfig{}
-	listener, err := lc.Listen(ctx, "tcp", listen)
-	s.Require().NoError(err)
-
-	go func() {
-		for {
-			conn, err := listener.Accept()
-			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
-				return
-			}
-			s.Require().NoError(err)
-
-			go func(conn net.Conn) {
-				defer conn.Close()
-				tcpReader := server.NewTCPReader(
-					&transport.Config{
-						ReadTimeout:  5 * time.Second,
-						WriteTimeout: time.Second,
-					},
-					conn,
-				)
-				auth, err := tcpReader.Authorization(ctx)
-				if errors.Is(err, io.EOF) {
-					return
-				}
-				s.Require().NoError(err, "fail to read auth message")
-
-				s.T().Log("server: authorization")
-				if !s.Equal(token, auth.Token) {
-					s.NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
-						Text: "Unauthorized",
-						Code: http.StatusUnauthorized,
-					}))
-					return
-				}
-				s.Require().NoError(tcpReader.SendResponse(ctx, &frames.ResponseMsg{
-					Text: "OK",
-					Code: 200,
-				}))
-				s.T().Log("server: logged in")
-
-				if onAccept != nil && !onAccept() {
-					s.T().Log("server: disconnect after auth")
-					return
-				}
-
-				fe, err := tcpReader.Next(ctx)
-				if err != nil {
-					if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
-						s.NoError(err, "fail to read next message")
-					}
-					return
-				}
-
-				if fe.GetType() == frames.RefillType {
-					handleRefill(ctx, fe, tcpReader)
-				} else {
-					handleStream(ctx, fe, tcpReader)
-				}
-			}(conn)
-		}
-	}()
-	return listener
-}
-
-func (s *MainSuite) createManagerKeeper(
-	ctx context.Context,
+	tlscfg *tls.Config,
 	token, address, dir string,
 	errorHandler delivery.ErrorHandler,
 	clock clockwork.Clock,
 ) (*delivery.ManagerKeeper, error) {
-	dialers := s.createDialers(token, address)
+	dialers := s.createDialersWebSocket(tlscfg, token, address)
 
 	rsmanagerCtor := func(
 		rsmCfg delivery.RefillSendManagerConfig,
@@ -365,20 +358,94 @@ func (s *MainSuite) createManagerKeeper(
 	return managerKeeper, nil
 }
 
-func (s *MainSuite) EqualAsJSON(expected, actual interface{}, args ...interface{}) bool {
-	e, err := json.Marshal(expected)
+// onAccept function called after authorization
+// handleStream function called on each segment receiving by server
+// handleRefill function called on each refill receiving by server
+func (s *MainSuite) runWebServer(
+	ctx context.Context,
+	listen, token string,
+	tlscfg *tls.Config,
+	onAccept func() bool,
+	handleStream func(ctx context.Context, reader *server.WebSocketReader),
+	handleRefill func(ctx context.Context, rw http.ResponseWriter, r io.Reader),
+) *http.Server {
+	l, err := tls.Listen("tcp", listen, tlscfg)
 	s.Require().NoError(err)
-	a, err := json.Marshal(actual)
-	s.Require().NoError(err)
-	return s.JSONEq(string(e), string(a), args...)
+	router := http.NewServeMux()
+	router.Handle("/", s.authMiddleware(token, s.streamHandler(ctx, handleStream, onAccept)))
+	router.Handle("/refill", s.authMiddleware(token, s.refillHandler(ctx, handleRefill)))
+	srv := &http.Server{
+		Handler: router,
+		//revive:disable-next-line:add-constant not need const
+		ReadHeaderTimeout: 10 * time.Second,
+		BaseContext: func(l net.Listener) context.Context {
+			return ctx
+		},
+	}
+
+	go func() {
+		if err := srv.Serve(l); err != nil && err != http.ErrServerClosed {
+			s.T().Error("failed listen port", listen, err)
+			s.Require().NoError(err)
+		}
+	}()
+
+	return srv
 }
 
-func (s *MainSuite) EqualAsJSONf(expected, actual interface{}, msg string, args ...interface{}) bool {
-	e, err := json.Marshal(expected)
-	s.Require().NoError(err)
-	a, err := json.Marshal(actual)
-	s.Require().NoError(err)
-	return s.JSONEqf(string(e), string(a), msg, args...)
+func (s *MainSuite) authMiddleware(expToken string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		_, token, _ := strings.Cut(r.Header.Get("Authorization"), "Bearer ")
+		if token != expToken {
+			http.Error(rw, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		s.T().Log("server: authorization")
+		next.ServeHTTP(rw, r)
+	})
+}
+
+func (s *MainSuite) streamHandler(
+	ctx context.Context,
+	handleStream func(ctx context.Context, reader *server.WebSocketReader),
+	onAccept func() bool,
+) http.Handler {
+	return websocket.Handler(func(wconn *websocket.Conn) {
+		defer wconn.Close()
+		reader := server.NewWebSocketReader(
+			&transport.Config{
+				ReadTimeout:  5 * time.Second,
+				WriteTimeout: time.Second,
+			},
+			wconn,
+		)
+
+		if onAccept != nil && !onAccept() {
+			s.T().Log("server: disconnect after auth")
+			return
+		}
+
+		handleStream(ctx, reader)
+	})
+}
+
+func (*MainSuite) refillHandler(
+	ctx context.Context,
+	handleRefill func(ctx context.Context, rw http.ResponseWriter, r io.Reader),
+) http.Handler {
+	return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		handleRefill(ctx, rw, r.Body)
+	})
+}
+
+func (*MainSuite) response(rw http.ResponseWriter, msg string, code int) error {
+	rw.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	rw.Header().Set("X-Content-Type-Options", "nosniff")
+	rw.WriteHeader(code)
+	if _, errw := rw.Write([]byte(msg)); errw != nil {
+		return errw
+	}
+	return nil
 }
 
 // protoDataTest - test data.
@@ -424,7 +491,7 @@ func (d *protobufGeneratedData) AsRemoteWriteProto() *prompb.WriteRequest {
 	return d.wr
 }
 
-func (s protobufOpenHeadSender) SendOpenHead(ctx context.Context, sender Sender, count int, sid int64) (generatedData GeneratedData, delivered bool, err error) {
+func (protobufOpenHeadSender) SendOpenHead(ctx context.Context, sender Sender, count int, sid int64) (generatedData GeneratedData, delivered bool, err error) {
 	wr := (&MainSuite{}).makeProtobufData(count, sid)
 	encodedData, err := wr.Marshal()
 	if err != nil {

@@ -17,7 +17,9 @@ import (
 )
 
 // defaultRTT - default value RTT.
-const defaultRTT = 120 * time.Second
+const (
+	defaultRTT = 120 * time.Second
+)
 
 var (
 	// ErrBlockFinalization - signal if the current block is finalized.
@@ -37,8 +39,7 @@ type Source interface {
 type Sender struct {
 	dialer        Dialer
 	source        Source
-	blockID       uuid.UUID
-	shardID       uint16
+	shardMeta     ShardMeta
 	lastDelivered uint32
 	done          chan struct{}
 	errorHandler  ErrorHandler
@@ -57,6 +58,7 @@ func NewSender(
 	ctx context.Context,
 	blockID uuid.UUID,
 	shardID uint16,
+	shardsLog, segmentEncodingVersion uint8,
 	dialer Dialer,
 	lastAck uint32,
 	source Source,
@@ -65,10 +67,14 @@ func NewSender(
 ) *Sender {
 	factory := util.NewUnconflictRegisterer(registerer)
 	sender := &Sender{
-		dialer:        dialer,
-		source:        source,
-		blockID:       blockID,
-		shardID:       shardID,
+		dialer: dialer,
+		source: source,
+		shardMeta: ShardMeta{
+			BlockID:                blockID,
+			ShardID:                shardID,
+			ShardsLog:              shardsLog,
+			SegmentEncodingVersion: segmentEncodingVersion,
+		},
 		lastDelivered: lastAck,
 		done:          make(chan struct{}),
 		errorHandler:  errorHandler,
@@ -146,13 +152,13 @@ func (sender *Sender) mainLoop(ctx context.Context) {
 		}
 		transport.OnAck(func(id uint32) {
 			sender.responsedSegment.With(prometheus.Labels{"state": "ack"}).Set(float64(id))
-			sender.source.Ack(cppbridge.SegmentKey{ShardID: sender.shardID, Segment: id}, sender.String())
+			sender.source.Ack(cppbridge.SegmentKey{ShardID: sender.shardMeta.ShardID, Segment: id}, sender.String())
 			onResponse(id)
 		})
 		transport.OnReject(func(id uint32) {
 			sender.hasRejects.Store(true)
 			sender.responsedSegment.With(prometheus.Labels{"state": "reject"}).Set(float64(id))
-			sender.source.Reject(cppbridge.SegmentKey{ShardID: sender.shardID, Segment: id}, sender.String())
+			sender.source.Reject(cppbridge.SegmentKey{ShardID: sender.shardMeta.ShardID, Segment: id}, sender.String())
 			onResponse(id)
 		})
 		writeCtx, cancel := context.WithCancelCause(ctx)
@@ -184,7 +190,7 @@ func (sender *Sender) mainLoop(ctx context.Context) {
 }
 
 func (sender *Sender) dial(ctx context.Context) (transport Transport, closeFn func(), err error) {
-	transport, err = sender.dialer.Dial(ctx, sender.blockID.String(), sender.shardID)
+	transport, err = sender.dialer.Dial(ctx, sender.shardMeta)
 	if err != nil {
 		if !errors.Is(err, ErrShutdown) && !errors.Is(err, context.Canceled) {
 			sender.errorHandler(fmt.Sprintf("%s: fail to dial", sender), err)
@@ -206,20 +212,11 @@ func (sender *Sender) writeLoop(ctx context.Context, transport Transport, from u
 	for ; ctx.Err() == nil; id++ {
 		segment, err := sender.getSegment(ctx, id)
 		if err != nil && errors.Is(err, ErrBlockFinalization) {
-			ctxt, cancel := context.WithTimeout(
-				context.Background(),
-				100*time.Millisecond,
-			)
-			errFinal := transport.Send(
-				ctxt,
-				frames.NewWriteFrame(
-					protocolVersion,
-					frames.FinalType,
-					sender.shardID,
-					id,
-					frames.NewFinalMsg(sender.hasRejects.Load()),
-				),
-			)
+			if sender.hasRejects.Load() {
+				return id - 1, nil
+			}
+			ctxt, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			errFinal := transport.Send(ctxt, frames.NewWriteSegmentV4(id, nil))
 			cancel()
 			return id - 1, errFinal
 		}
@@ -230,8 +227,8 @@ func (sender *Sender) writeLoop(ctx context.Context, transport Transport, from u
 			sender.exceededRTT.Inc()
 			return id - 1, ErrExceededRTT
 		}
-		frame := frames.NewWriteFrame(protocolVersion, frames.SegmentType, sender.shardID, id, segment)
-		if err = transport.Send(ctx, frame); err != nil {
+
+		if err = transport.Send(ctx, frames.NewWriteSegmentV4(id, segment)); err != nil {
 			return id - 1, err
 		}
 		sender.writeAt.Store(time.Now().UnixMilli())
@@ -250,7 +247,7 @@ func (sender *Sender) writeLoop(ctx context.Context, transport Transport, from u
 // So, it's correct to check that segment is nil, it is equivalent permanent state.
 func (sender *Sender) getSegment(ctx context.Context, id uint32) (Segment, error) {
 	key := cppbridge.SegmentKey{
-		ShardID: sender.shardID,
+		ShardID: sender.shardMeta.ShardID,
 		Segment: id,
 	}
 	eb := backoff.NewExponentialBackOff()

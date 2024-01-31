@@ -30,6 +30,8 @@ var (
 	ErrShutdown = errors.New("shutdown")
 )
 
+const defaultSegmentEncodingVersion uint8 = 1
+
 // Manager - general circuit manager.
 type Manager struct {
 	dialers map[string]Dialer
@@ -41,22 +43,23 @@ type Manager struct {
 	errorHandler          ErrorHandler
 	clock                 clockwork.Clock
 
-	destinations   []string
-	blockID        uuid.UUID
-	encodersLock   *sync.Mutex
-	hashdexFactory HashdexFactory
-	encoders       []ManagerEncoder
-	ohCreatedAt    time.Time
-	ohPromise      *OpenHeadPromise
-	exchange       *Exchange
-	refill         ManagerRefill
-	refillSignal   chan struct{}
-	cancelRefill   context.CancelCauseFunc
-	refillDone     chan struct{}
-	senders        []*Sender
-	rejectNotifyer RejectNotifyer
-	haTracker      HATracker
-	walsSizes      []int64
+	destinations      []string
+	blockID           uuid.UUID
+	encodersLock      *sync.Mutex
+	hashdexFactory    HashdexFactory
+	encoders          []ManagerEncoder
+	ohCreatedAt       time.Time
+	ohPromise         *OpenHeadPromise
+	exchange          *Exchange
+	refill            ManagerRefill
+	refillSignal      chan struct{}
+	cancelRefill      context.CancelCauseFunc
+	refillDone        chan struct{}
+	senders           []*Sender
+	rejectNotifyer    RejectNotifyer
+	haTracker         HATracker
+	walsSizes         []int64
+	shardsNumberPower uint8
 	// stat
 	registerer               prometheus.Registerer
 	encodeDuration           prometheus.Histogram
@@ -207,19 +210,20 @@ func NewManager(
 		errorHandler: errorHandler,
 		clock:        clock,
 
-		destinations:   destinations,
-		blockID:        blockID,
-		encodersLock:   new(sync.Mutex),
-		hashdexFactory: hashdexFactory,
-		encoders:       encoders,
-		exchange:       exchange,
-		refill:         refill,
-		refillSignal:   make(chan struct{}, 1),
-		refillDone:     make(chan struct{}),
-		rejectNotifyer: rejectNotifyer,
-		haTracker:      haTracker,
-		walsSizes:      make([]int64, 1<<shardsNumberPower),
-		registerer:     registerer,
+		destinations:      destinations,
+		blockID:           blockID,
+		encodersLock:      new(sync.Mutex),
+		hashdexFactory:    hashdexFactory,
+		encoders:          encoders,
+		exchange:          exchange,
+		refill:            refill,
+		refillSignal:      make(chan struct{}, 1),
+		refillDone:        make(chan struct{}),
+		rejectNotifyer:    rejectNotifyer,
+		haTracker:         haTracker,
+		walsSizes:         make([]int64, 1<<shardsNumberPower),
+		shardsNumberPower: shardsNumberPower,
+		registerer:        registerer,
 		encodeDuration: factory.NewHistogram(
 			prometheus.HistogramOpts{
 				Name:    "odarix_core_delivery_manager_encode_duration_milliseconds",
@@ -536,6 +540,8 @@ func (mgr *Manager) Open(ctx context.Context) {
 				ctx,
 				mgr.blockID,
 				uint16(shardID),
+				mgr.shardsNumberPower,
+				defaultSegmentEncodingVersion,
 				dialer,
 				lastAck,
 				mgr,

@@ -9,6 +9,7 @@ import (
 	"github.com/odarix/odarix-core-go/cppbridge"
 	"github.com/odarix/odarix-core-go/delivery"
 	"github.com/odarix/odarix-core-go/frames"
+	"io"
 	"sync"
 )
 
@@ -22,8 +23,11 @@ var _ delivery.Dialer = &DialerMock{}
 //
 //		// make and configure a mocked delivery.Dialer
 //		mockedDialer := &DialerMock{
-//			DialFunc: func(contextMoqParam context.Context, s string, v uint16) (delivery.Transport, error) {
+//			DialFunc: func(ctx context.Context, shardMeta delivery.ShardMeta) (delivery.Transport, error) {
 //				panic("mock out the Dial method")
+//			},
+//			SendRefillFunc: func(ctx context.Context, r io.Reader, shardMeta delivery.ShardMeta) error {
+//				panic("mock out the SendRefill method")
 //			},
 //			StringFunc: func() string {
 //				panic("mock out the String method")
@@ -36,7 +40,10 @@ var _ delivery.Dialer = &DialerMock{}
 //	}
 type DialerMock struct {
 	// DialFunc mocks the Dial method.
-	DialFunc func(contextMoqParam context.Context, s string, v uint16) (delivery.Transport, error)
+	DialFunc func(ctx context.Context, shardMeta delivery.ShardMeta) (delivery.Transport, error)
+
+	// SendRefillFunc mocks the SendRefill method.
+	SendRefillFunc func(ctx context.Context, r io.Reader, shardMeta delivery.ShardMeta) error
 
 	// StringFunc mocks the String method.
 	StringFunc func() string
@@ -45,39 +52,45 @@ type DialerMock struct {
 	calls struct {
 		// Dial holds details about calls to the Dial method.
 		Dial []struct {
-			// ContextMoqParam is the contextMoqParam argument value.
-			ContextMoqParam context.Context
-			// S is the s argument value.
-			S string
-			// V is the v argument value.
-			V uint16
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// ShardMeta is the shardMeta argument value.
+			ShardMeta delivery.ShardMeta
+		}
+		// SendRefill holds details about calls to the SendRefill method.
+		SendRefill []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// R is the r argument value.
+			R io.Reader
+			// ShardMeta is the shardMeta argument value.
+			ShardMeta delivery.ShardMeta
 		}
 		// String holds details about calls to the String method.
 		String []struct {
 		}
 	}
-	lockDial   sync.RWMutex
-	lockString sync.RWMutex
+	lockDial       sync.RWMutex
+	lockSendRefill sync.RWMutex
+	lockString     sync.RWMutex
 }
 
 // Dial calls DialFunc.
-func (mock *DialerMock) Dial(contextMoqParam context.Context, s string, v uint16) (delivery.Transport, error) {
+func (mock *DialerMock) Dial(ctx context.Context, shardMeta delivery.ShardMeta) (delivery.Transport, error) {
 	if mock.DialFunc == nil {
 		panic("DialerMock.DialFunc: method is nil but Dialer.Dial was just called")
 	}
 	callInfo := struct {
-		ContextMoqParam context.Context
-		S               string
-		V               uint16
+		Ctx       context.Context
+		ShardMeta delivery.ShardMeta
 	}{
-		ContextMoqParam: contextMoqParam,
-		S:               s,
-		V:               v,
+		Ctx:       ctx,
+		ShardMeta: shardMeta,
 	}
 	mock.lockDial.Lock()
 	mock.calls.Dial = append(mock.calls.Dial, callInfo)
 	mock.lockDial.Unlock()
-	return mock.DialFunc(contextMoqParam, s, v)
+	return mock.DialFunc(ctx, shardMeta)
 }
 
 // DialCalls gets all the calls that were made to Dial.
@@ -85,18 +98,56 @@ func (mock *DialerMock) Dial(contextMoqParam context.Context, s string, v uint16
 //
 //	len(mockedDialer.DialCalls())
 func (mock *DialerMock) DialCalls() []struct {
-	ContextMoqParam context.Context
-	S               string
-	V               uint16
+	Ctx       context.Context
+	ShardMeta delivery.ShardMeta
 } {
 	var calls []struct {
-		ContextMoqParam context.Context
-		S               string
-		V               uint16
+		Ctx       context.Context
+		ShardMeta delivery.ShardMeta
 	}
 	mock.lockDial.RLock()
 	calls = mock.calls.Dial
 	mock.lockDial.RUnlock()
+	return calls
+}
+
+// SendRefill calls SendRefillFunc.
+func (mock *DialerMock) SendRefill(ctx context.Context, r io.Reader, shardMeta delivery.ShardMeta) error {
+	if mock.SendRefillFunc == nil {
+		panic("DialerMock.SendRefillFunc: method is nil but Dialer.SendRefill was just called")
+	}
+	callInfo := struct {
+		Ctx       context.Context
+		R         io.Reader
+		ShardMeta delivery.ShardMeta
+	}{
+		Ctx:       ctx,
+		R:         r,
+		ShardMeta: shardMeta,
+	}
+	mock.lockSendRefill.Lock()
+	mock.calls.SendRefill = append(mock.calls.SendRefill, callInfo)
+	mock.lockSendRefill.Unlock()
+	return mock.SendRefillFunc(ctx, r, shardMeta)
+}
+
+// SendRefillCalls gets all the calls that were made to SendRefill.
+// Check the length with:
+//
+//	len(mockedDialer.SendRefillCalls())
+func (mock *DialerMock) SendRefillCalls() []struct {
+	Ctx       context.Context
+	R         io.Reader
+	ShardMeta delivery.ShardMeta
+} {
+	var calls []struct {
+		Ctx       context.Context
+		R         io.Reader
+		ShardMeta delivery.ShardMeta
+	}
+	mock.lockSendRefill.RLock()
+	calls = mock.calls.SendRefill
+	mock.lockSendRefill.RUnlock()
 	return calls
 }
 
@@ -152,7 +203,7 @@ var _ delivery.Transport = &TransportMock{}
 //			OnRejectFunc: func(fn func(uint32))  {
 //				panic("mock out the OnReject method")
 //			},
-//			SendFunc: func(contextMoqParam context.Context, writeFrame *frames.WriteFrame) error {
+//			SendFunc: func(contextMoqParam context.Context, frameWriter frames.FrameWriter) error {
 //				panic("mock out the Send method")
 //			},
 //		}
@@ -178,7 +229,7 @@ type TransportMock struct {
 	OnRejectFunc func(fn func(uint32))
 
 	// SendFunc mocks the Send method.
-	SendFunc func(contextMoqParam context.Context, writeFrame *frames.WriteFrame) error
+	SendFunc func(contextMoqParam context.Context, frameWriter frames.FrameWriter) error
 
 	// calls tracks calls to the methods.
 	calls struct {
@@ -209,8 +260,8 @@ type TransportMock struct {
 		Send []struct {
 			// ContextMoqParam is the contextMoqParam argument value.
 			ContextMoqParam context.Context
-			// WriteFrame is the writeFrame argument value.
-			WriteFrame *frames.WriteFrame
+			// FrameWriter is the frameWriter argument value.
+			FrameWriter frames.FrameWriter
 		}
 	}
 	lockClose       sync.RWMutex
@@ -377,21 +428,21 @@ func (mock *TransportMock) OnRejectCalls() []struct {
 }
 
 // Send calls SendFunc.
-func (mock *TransportMock) Send(contextMoqParam context.Context, writeFrame *frames.WriteFrame) error {
+func (mock *TransportMock) Send(contextMoqParam context.Context, frameWriter frames.FrameWriter) error {
 	if mock.SendFunc == nil {
 		panic("TransportMock.SendFunc: method is nil but Transport.Send was just called")
 	}
 	callInfo := struct {
 		ContextMoqParam context.Context
-		WriteFrame      *frames.WriteFrame
+		FrameWriter     frames.FrameWriter
 	}{
 		ContextMoqParam: contextMoqParam,
-		WriteFrame:      writeFrame,
+		FrameWriter:     frameWriter,
 	}
 	mock.lockSend.Lock()
 	mock.calls.Send = append(mock.calls.Send, callInfo)
 	mock.lockSend.Unlock()
-	return mock.SendFunc(contextMoqParam, writeFrame)
+	return mock.SendFunc(contextMoqParam, frameWriter)
 }
 
 // SendCalls gets all the calls that were made to Send.
@@ -400,11 +451,11 @@ func (mock *TransportMock) Send(contextMoqParam context.Context, writeFrame *fra
 //	len(mockedTransport.SendCalls())
 func (mock *TransportMock) SendCalls() []struct {
 	ContextMoqParam context.Context
-	WriteFrame      *frames.WriteFrame
+	FrameWriter     frames.FrameWriter
 } {
 	var calls []struct {
 		ContextMoqParam context.Context
-		WriteFrame      *frames.WriteFrame
+		FrameWriter     frames.FrameWriter
 	}
 	mock.lockSend.RLock()
 	calls = mock.calls.Send
@@ -1222,5 +1273,177 @@ func (mock *RejectNotifyerMock) NotifyOnRejectCalls() []struct {
 	mock.lockNotifyOnReject.RLock()
 	calls = mock.calls.NotifyOnReject
 	mock.lockNotifyOnReject.RUnlock()
+	return calls
+}
+
+// Ensure, that SourceMock does implement delivery.Source.
+// If this is not the case, regenerate this file with moq.
+var _ delivery.Source = &SourceMock{}
+
+// SourceMock is a mock implementation of delivery.Source.
+//
+//	func TestSomethingThatUsesSource(t *testing.T) {
+//
+//		// make and configure a mocked delivery.Source
+//		mockedSource := &SourceMock{
+//			AckFunc: func(key cppbridge.SegmentKey, dest string)  {
+//				panic("mock out the Ack method")
+//			},
+//			GetFunc: func(ctx context.Context, key cppbridge.SegmentKey) (delivery.Segment, error) {
+//				panic("mock out the Get method")
+//			},
+//			RejectFunc: func(key cppbridge.SegmentKey, dest string)  {
+//				panic("mock out the Reject method")
+//			},
+//		}
+//
+//		// use mockedSource in code that requires delivery.Source
+//		// and then make assertions.
+//
+//	}
+type SourceMock struct {
+	// AckFunc mocks the Ack method.
+	AckFunc func(key cppbridge.SegmentKey, dest string)
+
+	// GetFunc mocks the Get method.
+	GetFunc func(ctx context.Context, key cppbridge.SegmentKey) (delivery.Segment, error)
+
+	// RejectFunc mocks the Reject method.
+	RejectFunc func(key cppbridge.SegmentKey, dest string)
+
+	// calls tracks calls to the methods.
+	calls struct {
+		// Ack holds details about calls to the Ack method.
+		Ack []struct {
+			// Key is the key argument value.
+			Key cppbridge.SegmentKey
+			// Dest is the dest argument value.
+			Dest string
+		}
+		// Get holds details about calls to the Get method.
+		Get []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// Key is the key argument value.
+			Key cppbridge.SegmentKey
+		}
+		// Reject holds details about calls to the Reject method.
+		Reject []struct {
+			// Key is the key argument value.
+			Key cppbridge.SegmentKey
+			// Dest is the dest argument value.
+			Dest string
+		}
+	}
+	lockAck    sync.RWMutex
+	lockGet    sync.RWMutex
+	lockReject sync.RWMutex
+}
+
+// Ack calls AckFunc.
+func (mock *SourceMock) Ack(key cppbridge.SegmentKey, dest string) {
+	if mock.AckFunc == nil {
+		panic("SourceMock.AckFunc: method is nil but Source.Ack was just called")
+	}
+	callInfo := struct {
+		Key  cppbridge.SegmentKey
+		Dest string
+	}{
+		Key:  key,
+		Dest: dest,
+	}
+	mock.lockAck.Lock()
+	mock.calls.Ack = append(mock.calls.Ack, callInfo)
+	mock.lockAck.Unlock()
+	mock.AckFunc(key, dest)
+}
+
+// AckCalls gets all the calls that were made to Ack.
+// Check the length with:
+//
+//	len(mockedSource.AckCalls())
+func (mock *SourceMock) AckCalls() []struct {
+	Key  cppbridge.SegmentKey
+	Dest string
+} {
+	var calls []struct {
+		Key  cppbridge.SegmentKey
+		Dest string
+	}
+	mock.lockAck.RLock()
+	calls = mock.calls.Ack
+	mock.lockAck.RUnlock()
+	return calls
+}
+
+// Get calls GetFunc.
+func (mock *SourceMock) Get(ctx context.Context, key cppbridge.SegmentKey) (delivery.Segment, error) {
+	if mock.GetFunc == nil {
+		panic("SourceMock.GetFunc: method is nil but Source.Get was just called")
+	}
+	callInfo := struct {
+		Ctx context.Context
+		Key cppbridge.SegmentKey
+	}{
+		Ctx: ctx,
+		Key: key,
+	}
+	mock.lockGet.Lock()
+	mock.calls.Get = append(mock.calls.Get, callInfo)
+	mock.lockGet.Unlock()
+	return mock.GetFunc(ctx, key)
+}
+
+// GetCalls gets all the calls that were made to Get.
+// Check the length with:
+//
+//	len(mockedSource.GetCalls())
+func (mock *SourceMock) GetCalls() []struct {
+	Ctx context.Context
+	Key cppbridge.SegmentKey
+} {
+	var calls []struct {
+		Ctx context.Context
+		Key cppbridge.SegmentKey
+	}
+	mock.lockGet.RLock()
+	calls = mock.calls.Get
+	mock.lockGet.RUnlock()
+	return calls
+}
+
+// Reject calls RejectFunc.
+func (mock *SourceMock) Reject(key cppbridge.SegmentKey, dest string) {
+	if mock.RejectFunc == nil {
+		panic("SourceMock.RejectFunc: method is nil but Source.Reject was just called")
+	}
+	callInfo := struct {
+		Key  cppbridge.SegmentKey
+		Dest string
+	}{
+		Key:  key,
+		Dest: dest,
+	}
+	mock.lockReject.Lock()
+	mock.calls.Reject = append(mock.calls.Reject, callInfo)
+	mock.lockReject.Unlock()
+	mock.RejectFunc(key, dest)
+}
+
+// RejectCalls gets all the calls that were made to Reject.
+// Check the length with:
+//
+//	len(mockedSource.RejectCalls())
+func (mock *SourceMock) RejectCalls() []struct {
+	Key  cppbridge.SegmentKey
+	Dest string
+} {
+	var calls []struct {
+		Key  cppbridge.SegmentKey
+		Dest string
+	}
+	mock.lockReject.RLock()
+	calls = mock.calls.Reject
+	mock.lockReject.RUnlock()
 	return calls
 }
