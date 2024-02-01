@@ -114,6 +114,7 @@ type (
 		blockID uuid.UUID,
 		destinations []string,
 		shardsNumberPower uint8,
+		segmentEncodingVersion uint8,
 		alwaysToRefill bool,
 		registerer prometheus.Registerer,
 	) (ManagerRefill, error)
@@ -172,7 +173,15 @@ func NewManager(
 		return nil, fmt.Errorf("generate block id: %w", err)
 	}
 	alwaysToRefill := uncommittedTimeWindow == AlwaysToRefill
-	refill, err := refillCtor(workingDir, blockID, destinations, shardsNumberPower, alwaysToRefill, registerer)
+	refill, err := refillCtor(
+		workingDir,
+		blockID,
+		destinations,
+		shardsNumberPower,
+		defaultSegmentEncodingVersion,
+		alwaysToRefill,
+		registerer,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("create refill: %w", err)
 	}
@@ -181,7 +190,15 @@ func NewManager(
 			return nil, fmt.Errorf("rename refill: %w", err)
 		}
 
-		refill, err = refillCtor(workingDir, blockID, destinations, shardsNumberPower, alwaysToRefill, registerer)
+		refill, err = refillCtor(
+			workingDir,
+			blockID,
+			destinations,
+			shardsNumberPower,
+			defaultSegmentEncodingVersion,
+			alwaysToRefill,
+			registerer,
+		)
 		if err != nil {
 			return nil, fmt.Errorf("create refill: %w", err)
 		}

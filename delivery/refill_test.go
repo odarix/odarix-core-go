@@ -20,6 +20,7 @@ type RefillSuite struct {
 	etalonNewFileName    string
 	etalonsNames         []string
 	etalonNumberOfShards uint8
+	etalonSEVersion      uint8
 	etalonBlockID        uuid.UUID
 	etalonsData          *dataTest
 	workingDir           string
@@ -46,6 +47,7 @@ func (s *RefillSuite) SetupSuite() {
 		"www.collector-replica.com",
 	}
 	s.etalonNumberOfShards = 1
+	s.etalonSEVersion = 1
 	s.etalonBlockID, err = uuid.NewRandom()
 	s.NoError(err)
 	s.etalonsData = newDataTest([]byte{
@@ -99,6 +101,7 @@ func (s *RefillSuite) SetupTest() {
 	s.mr, err = delivery.NewRefill(
 		s.workingDir,
 		s.etalonNumberOfShards,
+		s.etalonSEVersion,
 		s.etalonBlockID,
 		false,
 		nil,
@@ -127,6 +130,7 @@ func (s *RefillSuite) TestManagerInitIsContinuable() {
 	mr1, err := delivery.NewRefill(
 		s.workingDir,
 		2,
+		s.etalonSEVersion,
 		s.etalonBlockID,
 		false,
 		nil,
@@ -138,6 +142,7 @@ func (s *RefillSuite) TestManagerInitIsContinuable() {
 	mr2, err := delivery.NewRefill(
 		s.workingDir,
 		s.etalonNumberOfShards,
+		s.etalonSEVersion,
 		s.etalonBlockID,
 		false,
 		nil,

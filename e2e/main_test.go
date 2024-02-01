@@ -238,13 +238,14 @@ func (s *MainSuite) createManagerWithWebSocket(
 		workingDir string,
 		blockID uuid.UUID,
 		destinations []string,
-		shardsNumberPower uint8,
+		shardsNumberPower, segmentEncodingVersion uint8,
 		alwaysToRefill bool,
 		registerer prometheus.Registerer,
 	) (delivery.ManagerRefill, error) {
 		return delivery.NewRefill(
 			workingDir,
 			shardsNumberPower,
+			segmentEncodingVersion,
 			blockID,
 			alwaysToRefill,
 			registerer,
@@ -314,13 +315,14 @@ func (s *MainSuite) createManagerKeeperWithWebSocket(
 		workinDir string,
 		blockID uuid.UUID,
 		destinations []string,
-		shardsNumberPower uint8,
+		shardsNumberPower, segmentEncodingVersion uint8,
 		alwaysToRefill bool,
 		registerer prometheus.Registerer,
 	) (delivery.ManagerRefill, error) {
 		return delivery.NewRefill(
 			workinDir,
 			shardsNumberPower,
+			segmentEncodingVersion,
 			blockID,
 			alwaysToRefill,
 			registerer,

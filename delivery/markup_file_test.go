@@ -22,6 +22,7 @@ type MarkupFileSuite struct {
 	etalonShardsNumberPower uint8
 	etalonBlockID           uuid.UUID
 	etalonsData             *dataTest
+	etalonSEVersion         uint8
 }
 
 func TestMarkupFileSuite(t *testing.T) {
@@ -47,6 +48,7 @@ func (s *MarkupFileSuite) SetupSuite() {
 		"www.collector-replica.com",
 	}
 	s.etalonShardsNumberPower = 1
+	s.etalonSEVersion = 1
 	s.etalonBlockID, err = uuid.NewRandom()
 	s.NoError(err)
 	data := make([]byte, 42)
@@ -65,6 +67,7 @@ func (s *MarkupFileSuite) TestSegment() {
 	sm, err := delivery.NewStorageManager(
 		s.cfg,
 		s.etalonShardsNumberPower,
+		s.etalonSEVersion,
 		s.etalonBlockID,
 		nil,
 		s.etalonsNames...,
@@ -111,7 +114,7 @@ func (s *MarkupFileSuite) TestSegment() {
 	m, err := delivery.NewMarkupReader(reader).ReadFile(ctx)
 	s.Require().NoError(err)
 
-	actualStatuses := m.GetCopyAckStatuses()
+	actualStatuses := m.CopyAckStatuses()
 	s.Equal(expectAckStatus.GetCopyAckStatuses(), actualStatuses)
 	s.Equal(s.etalonBlockID, m.BlockID())
 	s.Equal(s.etalonsNames, m.DestinationsNames().ToString())

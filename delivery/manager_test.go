@@ -903,7 +903,7 @@ func (*ManagerSuite) corruptedRefill() *ManagerRefillMock {
 
 //revive:disable-next-line:cognitive-complexity this is test
 func (*ManagerSuite) constructorForRefill(refill *ManagerRefillMock) delivery.ManagerRefillCtor {
-	return func(_ string, blockID uuid.UUID, destinations []string, shardsNumberPower uint8, alwaysToRefill bool, registerer prometheus.Registerer) (delivery.ManagerRefill, error) {
+	return func(_ string, blockID uuid.UUID, destinations []string, shardsNumberPower uint8, segmentEncodingVersion uint8, alwaysToRefill bool, registerer prometheus.Registerer) (delivery.ManagerRefill, error) {
 		if refill.BlockIDFunc == nil {
 			refill.BlockIDFunc = func() uuid.UUID { return blockID }
 		}

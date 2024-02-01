@@ -122,6 +122,7 @@ type StorageManagerSuite struct {
 	etalonNewFileName       string
 	etalonsNames            []string
 	etalonShardsNumberPower uint8
+	etalonSEVersion         uint8
 	etalonBlockID           uuid.UUID
 	etalonsData             *dataTest
 	sm                      *delivery.StorageManager
@@ -152,6 +153,7 @@ func (s *StorageManagerSuite) SetupSuite() {
 		"www.collector-replica.com",
 	}
 	s.etalonShardsNumberPower = 1
+	s.etalonSEVersion = 1
 	s.etalonBlockID, err = uuid.NewRandom()
 	s.NoError(err)
 	data := make([]byte, 42)
@@ -166,6 +168,7 @@ func (s *StorageManagerSuite) SetupTest() {
 	s.sm, err = delivery.NewStorageManager(
 		s.cfg,
 		s.etalonShardsNumberPower,
+		s.etalonSEVersion,
 		s.etalonBlockID,
 		nil,
 		s.etalonsNames...,
@@ -296,7 +299,14 @@ func (s *StorageManagerSuite) TestRestore() {
 	s.NoError(err)
 	var shardsNumberPower uint8 = 1
 
-	sm, err := delivery.NewStorageManager(s.cfg, shardsNumberPower, newBlockID, nil, s.etalonsNames...)
+	sm, err := delivery.NewStorageManager(
+		s.cfg,
+		shardsNumberPower,
+		s.etalonSEVersion,
+		newBlockID,
+		nil,
+		s.etalonsNames...,
+	)
 	s.Require().NoError(err)
 	s.Equal(s.etalonBlockID.String(), sm.BlockID().String())
 

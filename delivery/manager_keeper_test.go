@@ -182,7 +182,7 @@ func (*ManagerKeeperSuite) transportWithReject(name string, delay time.Duration,
 }
 
 func (*ManagerKeeperSuite) constructorForRefill(refill *ManagerRefillMock) delivery.ManagerRefillCtor {
-	return func(_ string, blockID uuid.UUID, destinations []string, shardsNumberPower uint8, alwaysToRefill bool, registerer prometheus.Registerer) (delivery.ManagerRefill, error) {
+	return func(_ string, blockID uuid.UUID, destinations []string, shardsNumberPower, segmentEncodingVersion uint8, alwaysToRefill bool, registerer prometheus.Registerer) (delivery.ManagerRefill, error) {
 		if refill.BlockIDFunc == nil {
 			refill.BlockIDFunc = func() uuid.UUID { return blockID }
 		}

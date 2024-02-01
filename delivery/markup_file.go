@@ -62,9 +62,9 @@ type Markup struct {
 }
 
 // NewMarkup - init new *Markup.
-func NewMarkup(names []string, blockID uuid.UUID, shardsNumberPower uint8) *Markup {
+func NewMarkup(names []string, blockID uuid.UUID, shardsNumberPower, segmentEncodingVersion uint8) *Markup {
 	return &Markup{
-		title:            frames.NewTitleV1(shardsNumberPower, blockID),
+		title:            frames.NewTitleV2(shardsNumberPower, segmentEncodingVersion, blockID),
 		ackStatus:        NewAckStatus(names, shardsNumberPower),
 		maxWriteSegments: newShardStatuses(1 << shardsNumberPower),
 		markupMap:        make(map[MarkupKey]*MarkupValue),
@@ -155,11 +155,6 @@ func (m *Markup) Destinations() int {
 // EncodersVersion - return version encoders.
 func (m *Markup) EncodersVersion() uint8 {
 	return m.title.GetEncodersVersion()
-}
-
-// GetCopyAckStatuses - retrun copy statuses.
-func (m *Markup) GetCopyAckStatuses() frames.Statuses {
-	return m.ackStatus.GetCopyAckStatuses()
 }
 
 // EqualDestinationsNames - equal current DestinationsNames with new.
@@ -373,7 +368,7 @@ func (mr *MarkupReader) readStatuses(ctx context.Context, h *frames.Header) erro
 		return ctx.Err()
 	}
 	buf := make([]byte, h.GetSize())
-	if _, err := mr.r.Read(buf); err != nil {
+	if _, err := io.ReadFull(mr.r, buf); err != nil {
 		return err
 	}
 
@@ -390,7 +385,7 @@ func (mr *MarkupReader) readRejectStatuses(ctx context.Context, h *frames.Header
 		return ctx.Err()
 	}
 	buf := make([]byte, h.GetSize())
-	if _, err := mr.r.Read(buf); err != nil {
+	if _, err := io.ReadFull(mr.r, buf); err != nil {
 		return err
 	}
 
@@ -414,7 +409,7 @@ func (mr *MarkupReader) readRefillShardEOF(ctx context.Context, h *frames.Header
 		return ctx.Err()
 	}
 	buf := make([]byte, h.GetSize())
-	if _, err := mr.r.Read(buf); err != nil {
+	if _, err := io.ReadFull(mr.r, buf); err != nil {
 		return err
 	}
 

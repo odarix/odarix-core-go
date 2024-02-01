@@ -43,7 +43,7 @@ type StorageManager struct {
 //revive:disable-next-line:function-length long but readable
 func NewStorageManager(
 	cfg FileStorageConfig,
-	shardsNumberPower uint8,
+	shardsNumberPower, segmentEncodingVersion uint8,
 	blockID uuid.UUID,
 	registerer prometheus.Registerer,
 	names ...string,
@@ -98,11 +98,15 @@ func NewStorageManager(
 		}
 	}
 	if !ok {
-		sm.markupFile = NewMarkup(names, blockID, shardsNumberPower)
+		sm.markupFile = NewMarkup(names, blockID, shardsNumberPower, segmentEncodingVersion)
 		sm.setLastWriteOffset(0)
 	}
 
-	sm.statuses = sm.markupFile.GetCopyAckStatuses()
+	sm.statuses = sm.markupFile.CopyAckStatuses()
+
+	if sm.markupFile.title.GetEncodersVersion() != segmentEncodingVersion {
+		return sm, ErrSegmentEncodingVersionNotEqual
+	}
 
 	if sm.markupFile.Shards() != 1<<shardsNumberPower {
 		return sm, ErrShardsNotEqual
@@ -261,7 +265,11 @@ func (sm *StorageManager) restore() (bool, error) {
 
 // writeTitle - write title in storage.
 func (sm *StorageManager) writeTitle(ctx context.Context) error {
-	fe, err := frames.NewTitleFrameV1(sm.markupFile.ShardsNumberPower(), sm.BlockID())
+	fe, err := frames.NewTitleFrameV2(
+		sm.markupFile.ShardsNumberPower(),
+		sm.markupFile.EncodersVersion(),
+		sm.BlockID(),
+	)
 	if err != nil {
 		return err
 	}

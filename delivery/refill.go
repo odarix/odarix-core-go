@@ -25,6 +25,8 @@ var (
 	ErrShardsNotEqual = errors.New("number of shards not equal")
 	// ErrDestinationsNamesNotEqual - error when destinations names not equal.
 	ErrDestinationsNamesNotEqual = errors.New("destinations names not equal")
+	// ErrSegmentEncodingVersionNotEqual - error when segment encoding version not equal.
+	ErrSegmentEncodingVersionNotEqual = errors.New("segment encoding version not equal")
 )
 
 // Refill - manager for refills.
@@ -40,7 +42,7 @@ var _ ManagerRefill = (*Refill)(nil)
 // NewRefill - init new RefillManager.
 func NewRefill(
 	workingDir string,
-	shardsNumberPower uint8,
+	shardsNumberPower, segmentEncodingVersion uint8,
 	blockID uuid.UUID,
 	alwaysToRefill bool,
 	registerer prometheus.Registerer,
@@ -57,11 +59,13 @@ func NewRefill(
 		FileName: RefillFileName,
 	}
 
-	rm.sm, err = NewStorageManager(fsCfg, shardsNumberPower, blockID, registerer, names...)
+	rm.sm, err = NewStorageManager(fsCfg, shardsNumberPower, segmentEncodingVersion, blockID, registerer, names...)
 	switch err {
 	case nil:
 		rm.isContinuable = true
 	case ErrShardsNotEqual:
+		rm.isContinuable = false
+	case ErrSegmentEncodingVersionNotEqual:
 		rm.isContinuable = false
 	case ErrDestinationsNamesNotEqual:
 		rm.isContinuable = false

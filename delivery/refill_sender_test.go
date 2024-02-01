@@ -102,6 +102,7 @@ func (s *RefillSenderSuite) makeRefill(destinationsNames []string) {
 	mr, err := delivery.NewRefill(
 		s.workDir,
 		1,
+		1,
 		blockID,
 		false,
 		nil,
