@@ -63,8 +63,8 @@ func (*ManagerKeeperSuite) transportNewAutoAck(name string, delay time.Duration,
 						dest <- "final"
 						return nil
 					}
-					parts := strings.SplitN(string(rs.GetBody()), ":", 6)
-					shardID, err := strconv.ParseUint(parts[2], 10, 16)
+					parts := strings.SplitN(string(rs.GetBody()), ":", 5)
+					shardID, err := strconv.ParseUint(parts[1], 10, 16)
 					if err != nil {
 						return err
 					}
@@ -73,7 +73,7 @@ func (*ManagerKeeperSuite) transportNewAutoAck(name string, delay time.Duration,
 					} else if *transportShard != shardID {
 						return fmt.Errorf("invalid shardID: expected %d got %d", *transportShard, shardID)
 					}
-					segmentID, err := strconv.ParseUint(parts[4], 10, 32)
+					segmentID, err := strconv.ParseUint(parts[3], 10, 32)
 					if err != nil {
 						return err
 					}
@@ -82,7 +82,7 @@ func (*ManagerKeeperSuite) transportNewAutoAck(name string, delay time.Duration,
 						defer m.Unlock()
 						ack(uint32(segmentID))
 						select {
-						case dest <- parts[5]:
+						case dest <- parts[4]:
 						default:
 						}
 					})
@@ -142,7 +142,7 @@ func (*ManagerKeeperSuite) transportWithReject(name string, delay time.Duration,
 						return nil
 					}
 					parts := strings.SplitN(string(rs.GetBody()), ":", 6)
-					shardID, err := strconv.ParseUint(parts[2], 10, 16)
+					shardID, err := strconv.ParseUint(parts[1], 10, 16)
 					if err != nil {
 						return err
 					}
@@ -151,7 +151,7 @@ func (*ManagerKeeperSuite) transportWithReject(name string, delay time.Duration,
 					} else if *transportShard != shardID {
 						return fmt.Errorf("invalid shardID: expected %d got %d", *transportShard, shardID)
 					}
-					segmentID, err := strconv.ParseUint(parts[4], 10, 32)
+					segmentID, err := strconv.ParseUint(parts[3], 10, 32)
 					if err != nil {
 						return err
 					}
@@ -160,7 +160,7 @@ func (*ManagerKeeperSuite) transportWithReject(name string, delay time.Duration,
 						defer m.Unlock()
 						switcher(uint32(segmentID))
 						select {
-						case dest <- parts[5]:
+						case dest <- parts[4]:
 						default:
 						}
 					})
@@ -228,7 +228,7 @@ func (*ManagerKeeperSuite) constructorForRefillSender(mrs *ManagerRefillSenderMo
 
 //revive:disable-next-line:cognitive-complexity this is test
 func (*ManagerKeeperSuite) simpleEncoder() delivery.ManagerEncoderCtor {
-	return func(blockID uuid.UUID, shardID uint16, shardsNumberPower uint8) (delivery.ManagerEncoder, error) {
+	return func(shardID uint16, shardsNumberPower uint8) delivery.ManagerEncoder {
 		var nextSegmentID uint32
 		shards := 1 << shardsNumberPower
 
@@ -243,14 +243,14 @@ func (*ManagerKeeperSuite) simpleEncoder() delivery.ManagerEncoderCtor {
 				}
 				segment := &dataTest{
 					data: []byte(fmt.Sprintf(
-						"segment:%s:%d:%d:%d:%+v",
-						blockID, shardID, shards, nextSegmentID, data.(*shardedDataTest).data,
+						"segment:%d:%d:%d:%+v",
+						shardID, shards, nextSegmentID, data.(*shardedDataTest).data,
 					)),
 				}
 				nextSegmentID++
 				return key, segment, nil
 			},
-		}, nil
+		}
 	}
 }
 

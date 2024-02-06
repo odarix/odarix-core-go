@@ -227,11 +227,10 @@ func (s *MainSuite) createManagerWithWebSocket(
 	dialers := s.createDialersWebSocket(tlscfg, token, address)
 
 	encoderCtor := func(
-		blockID uuid.UUID,
 		shardID uint16,
 		logShards uint8,
-	) (delivery.ManagerEncoder, error) {
-		return cppbridge.NewWALEncoder(shardID, logShards), nil
+	) delivery.ManagerEncoder {
+		return cppbridge.NewWALEncoder(shardID, logShards)
 	}
 
 	refillCtor := func(
@@ -304,11 +303,10 @@ func (s *MainSuite) createManagerKeeperWithWebSocket(
 	}
 
 	encoderCtor := func(
-		blockID uuid.UUID,
 		shardID uint16,
 		logShards uint8,
-	) (delivery.ManagerEncoder, error) {
-		return cppbridge.NewWALEncoder(shardID, logShards), nil
+	) delivery.ManagerEncoder {
+		return cppbridge.NewWALEncoder(shardID, logShards)
 	}
 
 	refillCtor := func(

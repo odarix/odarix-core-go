@@ -417,7 +417,7 @@ func NewRefillSender(
 			BlockID:                source.BlockID(),
 			ShardID:                shardID,
 			ShardsLog:              source.ShardsNumberPower(),
-			SegmentEncodingVersion: defaultSegmentEncodingVersion,
+			SegmentEncodingVersion: source.EncodersVersion(),
 		},
 		errorHandler: errorHandler,
 		successfulDelivery: factory.NewCounter(
@@ -676,6 +676,11 @@ func (rr *RefillReader) BlockID() uuid.UUID {
 // ShardsNumberPower - return shards of number power.
 func (rr *RefillReader) ShardsNumberPower() uint8 {
 	return rr.markupFile.ShardsNumberPower()
+}
+
+// EncodersVersion - return encoders version.
+func (rr *RefillReader) EncodersVersion() uint8 {
+	return rr.markupFile.EncodersVersion()
 }
 
 // MakeSendMap - distribute refill by destinations.

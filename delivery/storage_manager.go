@@ -104,7 +104,7 @@ func NewStorageManager(
 
 	sm.statuses = sm.markupFile.CopyAckStatuses()
 
-	if sm.markupFile.title.GetEncodersVersion() != segmentEncodingVersion {
+	if sm.markupFile.EncodersVersion() != segmentEncodingVersion {
 		return sm, ErrSegmentEncodingVersionNotEqual
 	}
 

@@ -152,7 +152,7 @@ func (m *Markup) Destinations() int {
 	return m.ackStatus.Destinations()
 }
 
-// EncodersVersion - return version encoders.
+// EncodersVersion - return encoders version.
 func (m *Markup) EncodersVersion() uint8 {
 	return m.title.GetEncodersVersion()
 }

@@ -169,10 +169,10 @@ func (s *ManagerSuite) TestRejectToRefill() {
 		if s.NoError(err, "segment should be in refill") {
 			data, err := framestest.ReadPayload(segment)
 			if s.NoError(err) {
-				parts := strings.SplitN(string(data), ":", 6)
+				parts := strings.SplitN(string(data), ":", 5)
 				s.Equal("segment", parts[0])
-				s.Equal(strconv.Itoa(i), parts[2])
-				s.Equal(expectedData, parts[5])
+				s.Equal(strconv.Itoa(i), parts[1])
+				s.Equal(expectedData, parts[4])
 			}
 		}
 	}
@@ -287,9 +287,9 @@ func (s *ManagerSuite) TestAckRejectRace() {
 			if s.NoError(err, "segment should be in refill") {
 				data, err := framestest.ReadPayload(segment)
 				if s.NoError(err) {
-					parts := strings.SplitN(string(data), ":", 6)
+					parts := strings.SplitN(string(data), ":", 5)
 					s.Equal("segment", parts[0], "%q")
-					s.Equal(strconv.Itoa(j), parts[2])
+					s.Equal(strconv.Itoa(j), parts[1])
 				}
 			}
 		}
@@ -516,10 +516,10 @@ func (s *ManagerSuite) TestNotOpened() {
 		if s.NoError(err, "segment should be in refill") {
 			data, err := framestest.ReadPayload(segment)
 			if s.NoError(err) {
-				parts := strings.SplitN(string(data), ":", 6)
+				parts := strings.SplitN(string(data), ":", 5)
 				s.Equal("segment", parts[0])
-				s.Equal(strconv.Itoa(i), parts[2])
-				s.Equal(expectedData, parts[5])
+				s.Equal(strconv.Itoa(i), parts[1])
+				s.Equal(expectedData, parts[4])
 			}
 		}
 	}
@@ -589,10 +589,10 @@ func (s *ManagerSuite) TestLongDial() {
 		if s.NoError(err, "segment should be in refill") {
 			data, err := framestest.ReadPayload(segment)
 			if s.NoError(err) {
-				parts := strings.SplitN(string(data), ":", 6)
+				parts := strings.SplitN(string(data), ":", 5)
 				s.Equal("segment", parts[0])
-				s.Equal(strconv.Itoa(i), parts[2])
-				s.Equal(expectedData, parts[5])
+				s.Equal(strconv.Itoa(i), parts[1])
+				s.Equal(expectedData, parts[4])
 			}
 		}
 	}
@@ -663,9 +663,9 @@ func (s *ManagerSuite) TestAlwaysToRefill() {
 			if s.NoError(err, "segment should be in refill") {
 				data, err := framestest.ReadPayload(segment)
 				if s.NoError(err) {
-					parts := strings.SplitN(string(data), ":", 6)
+					parts := strings.SplitN(string(data), ":", 5)
 					s.Equal("segment", parts[0], "%q")
-					s.Equal(strconv.Itoa(j), parts[2])
+					s.Equal(strconv.Itoa(j), parts[1])
 				}
 			}
 		}
@@ -708,8 +708,8 @@ func (*ManagerSuite) transportWithReject(
 						return nil
 					}
 
-					parts := strings.SplitN(string(rs.GetBody()), ":", 6)
-					segmentID, err := strconv.ParseUint(parts[4], 10, 32)
+					parts := strings.SplitN(string(rs.GetBody()), ":", 5)
+					segmentID, err := strconv.ParseUint(parts[3], 10, 32)
 					if err != nil {
 						return err
 					}
@@ -784,8 +784,8 @@ func (*ManagerSuite) transportNewAutoAck(name string, delay time.Duration, dest 
 						dest <- "final"
 						return nil
 					}
-					parts := strings.SplitN(string(rs.GetBody()), ":", 6)
-					shardID, err := strconv.ParseUint(parts[2], 10, 16)
+					parts := strings.SplitN(string(rs.GetBody()), ":", 5)
+					shardID, err := strconv.ParseUint(parts[1], 10, 16)
 					if err != nil {
 						return err
 					}
@@ -794,7 +794,7 @@ func (*ManagerSuite) transportNewAutoAck(name string, delay time.Duration, dest 
 					} else if *transportShard != shardID {
 						return fmt.Errorf("invalid shardID: expected %d got %d", *transportShard, shardID)
 					}
-					segmentID, err := strconv.ParseUint(parts[4], 10, 32)
+					segmentID, err := strconv.ParseUint(parts[3], 10, 32)
 					if err != nil {
 						return err
 					}
@@ -804,7 +804,7 @@ func (*ManagerSuite) transportNewAutoAck(name string, delay time.Duration, dest 
 						defer m.Unlock()
 						ack(uint32(segmentID))
 						select {
-						case dest <- parts[5]:
+						case dest <- parts[4]:
 						default:
 						}
 					})
@@ -928,7 +928,7 @@ func (*ManagerSuite) constructorForRefill(refill *ManagerRefillMock) delivery.Ma
 
 //revive:disable-next-line:cognitive-complexity this is test
 func (*ManagerSuite) simpleEncoder() delivery.ManagerEncoderCtor {
-	return func(blockID uuid.UUID, shardID uint16, shardsNumberPower uint8) (delivery.ManagerEncoder, error) {
+	return func(shardID uint16, shardsNumberPower uint8) delivery.ManagerEncoder {
 		var nextSegmentID uint32
 		shards := 1 << shardsNumberPower
 		headData := ""
@@ -945,8 +945,8 @@ func (*ManagerSuite) simpleEncoder() delivery.ManagerEncoderCtor {
 				}
 				segment := &dataTest{
 					data: []byte(fmt.Sprintf(
-						"segment:%s:%d:%d:%d:%+v",
-						blockID, shardID, shards, nextSegmentID, data.(*shardedDataTest).data,
+						"segment:%d:%d:%d:%+v",
+						shardID, shards, nextSegmentID, data.(*shardedDataTest).data,
 					)),
 				}
 				nextSegmentID++
@@ -970,14 +970,14 @@ func (*ManagerSuite) simpleEncoder() delivery.ManagerEncoderCtor {
 				mx.Unlock()
 				segment := &dataTest{
 					data: []byte(fmt.Sprintf(
-						"segment:%s:%d:%d:%d:%+v",
-						blockID, shardID, shards, nextSegmentID, data,
+						"segment:%d:%d:%d:%+v",
+						shardID, shards, nextSegmentID, data,
 					)),
 				}
 				nextSegmentID++
 				return key, segment, nil
 			},
-		}, nil
+		}
 	}
 }
 
