@@ -651,14 +651,20 @@ func NewRefillReader(ctx context.Context, cfg FileStorageConfig, errorHandler Er
 
 	rr.markupFile, err = NewMarkupReader(rr.storage).ReadFile(ctx)
 	if err != nil {
-		return nil, err
+		switch {
+		case errors.Is(err, frames.ErrUnknownFrameType):
+			if err = rr.storage.Truncate(rr.markupFile.LastOffset()); err != nil {
+				return nil, err
+			}
+		case errors.Is(err, &ErrNotContinuableRefill{}):
+			if err = rr.storage.Truncate(rr.markupFile.LastOffset()); err != nil {
+				return nil, err
+			}
+		default:
+			return nil, err
+		}
 	}
-
-	size, err := rr.storage.Size()
-	if err != nil {
-		return nil, err
-	}
-	rr.lastWriteOffset = size
+	rr.lastWriteOffset = rr.markupFile.LastOffset()
 
 	return rr, nil
 }

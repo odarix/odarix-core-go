@@ -60,14 +60,16 @@ func NewRefill(
 	}
 
 	rm.sm, err = NewStorageManager(fsCfg, shardsNumberPower, segmentEncodingVersion, blockID, registerer, names...)
-	switch err {
-	case nil:
+	switch {
+	case errors.Is(err, nil):
 		rm.isContinuable = true
-	case ErrShardsNotEqual:
+	case errors.Is(err, ErrShardsNotEqual):
 		rm.isContinuable = false
-	case ErrSegmentEncodingVersionNotEqual:
+	case errors.Is(err, ErrSegmentEncodingVersionNotEqual):
 		rm.isContinuable = false
-	case ErrDestinationsNamesNotEqual:
+	case errors.Is(err, ErrDestinationsNamesNotEqual):
+		rm.isContinuable = false
+	case errors.Is(err, &ErrNotContinuableRefill{}):
 		rm.isContinuable = false
 	default:
 		return nil, err

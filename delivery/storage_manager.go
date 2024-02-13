@@ -2,6 +2,7 @@ package delivery
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -83,16 +84,21 @@ func NewStorageManager(
 	// trying to recover from a storage
 	ok, err := sm.restore()
 	if err != nil {
-		switch err {
-		case ErrServiceDataNotRestored{}:
+		switch {
+		case errors.Is(err, ErrServiceDataNotRestored{}):
 			if err = sm.storage.Truncate(0); err != nil {
 				return nil, err
 			}
-		case frames.ErrUnknownFrameType:
-			if err = sm.storage.Truncate(sm.lastWriteOffset); err != nil {
+		case errors.Is(err, frames.ErrUnknownFrameType):
+			if err = sm.storage.Truncate(sm.markupFile.LastOffset()); err != nil {
 				return nil, err
 			}
 			ok = true
+		case errors.Is(err, &ErrNotContinuableRefill{}):
+			if err = sm.storage.Truncate(sm.markupFile.LastOffset()); err != nil {
+				return nil, err
+			}
+			return nil, err
 		default:
 			return nil, err
 		}

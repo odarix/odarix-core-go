@@ -24,8 +24,6 @@ import (
 var (
 	// ErrDestinationsRequired - error no destinations found in config
 	ErrDestinationsRequired = errors.New("no destinations found in config")
-	// ErrNotContinuableRefill - error refill contains not continuable data
-	ErrNotContinuableRefill = errors.New("refill contains not continuable data")
 	// ErrShutdown - error shutdown
 	ErrShutdown = errors.New("shutdown")
 )

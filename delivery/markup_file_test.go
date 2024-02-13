@@ -2,6 +2,7 @@ package delivery_test
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -64,51 +65,14 @@ func (s *MarkupFileSuite) TearDownTest() {
 
 func (s *MarkupFileSuite) TestSegment() {
 	ctx := context.Background()
-	sm, err := delivery.NewStorageManager(
-		s.cfg,
-		s.etalonShardsNumberPower,
-		s.etalonSEVersion,
-		s.etalonBlockID,
-		nil,
-		s.etalonsNames...,
-	)
-	s.Require().NoError(err)
-
 	segKey := cppbridge.SegmentKey{
 		ShardID: 0,
 		Segment: 0,
 	}
-	err = sm.WriteSegment(ctx, segKey, s.etalonsData)
-	s.Require().NoError(err)
-
-	ok, err := sm.FileExist()
-	s.Require().NoError(err)
-	s.True(ok)
-
-	segKey.Segment++
-	err = sm.WriteSegment(ctx, segKey, s.etalonsData)
-	s.Require().NoError(err)
-
-	expectAckStatus := sm.GetAckStatus()
-	expectAckStatus.Ack(cppbridge.SegmentKey{ShardID: 0, Segment: 0}, s.etalonsNames[0])
-	err = sm.WriteAckStatus(ctx)
-	s.NoError(err)
-
-	err = sm.Close()
-	s.Require().NoError(err)
-
+	expectAckStatus := s.makeRefill(ctx, segKey)
 	reader, err := delivery.NewFileStorage(s.cfg)
 	s.Require().NoError(err)
 	err = reader.OpenFile()
-	s.Require().NoError(err)
-
-	dnameID := expectAckStatus.GetNames().StringToID(s.etalonsNames[1])
-	s.Require().NotEqual(frames.NotFoundName, dnameID)
-	fe, err := frames.NewRefillShardEOFFrame(uint32(dnameID), segKey.ShardID)
-	s.Require().NoError(err)
-	size, err := reader.Size()
-	s.Require().NoError(err)
-	_, err = fe.WriteTo(reader.Writer(ctx, size))
 	s.Require().NoError(err)
 
 	m, err := delivery.NewMarkupReader(reader).ReadFile(ctx)
@@ -128,4 +92,155 @@ func (s *MarkupFileSuite) TestSegment() {
 			return true
 		},
 	)
+
+	err = reader.Close()
+	s.Require().NoError(err)
+}
+
+func (s *MarkupFileSuite) TestReadHeaderUnexpectedEOF() {
+	ctx := context.Background()
+	segKey := cppbridge.SegmentKey{
+		ShardID: 0,
+		Segment: 0,
+	}
+	expectAckStatus := s.makeRefill(ctx, segKey)
+
+	reader, err := delivery.NewFileStorage(s.cfg)
+	s.Require().NoError(err)
+	err = reader.OpenFile()
+	s.Require().NoError(err)
+
+	err = reader.Truncate(392)
+	s.Require().NoError(err)
+	_, err = reader.Seek(0, 0)
+	s.Require().NoError(err)
+
+	m, err := delivery.NewMarkupReader(reader).ReadFile(ctx)
+	s.Require().ErrorIs(err, io.ErrUnexpectedEOF)
+
+	actualStatuses := m.CopyAckStatuses()
+	s.Equal(expectAckStatus.GetCopyAckStatuses(), actualStatuses)
+	s.Equal(s.etalonBlockID, m.BlockID())
+	s.Equal(s.etalonsNames, m.DestinationsNames().ToString())
+	s.Equal(uint8(1), m.EncodersVersion())
+	s.Equal(s.etalonShardsNumberPower, m.ShardsNumberPower())
+
+	err = reader.Close()
+	s.Require().NoError(err)
+}
+
+func (s *MarkupFileSuite) TestReadBodyEOF() {
+	ctx := context.Background()
+	segKey := cppbridge.SegmentKey{
+		ShardID: 0,
+		Segment: 0,
+	}
+	expectAckStatus := s.makeRefill(ctx, segKey)
+
+	reader, err := delivery.NewFileStorage(s.cfg)
+	s.Require().NoError(err)
+	err = reader.OpenFile()
+	s.Require().NoError(err)
+
+	err = reader.Truncate(396)
+	s.Require().NoError(err)
+	_, err = reader.Seek(0, 0)
+	s.Require().NoError(err)
+
+	m, err := delivery.NewMarkupReader(reader).ReadFile(ctx)
+	s.Require().ErrorIs(err, io.EOF)
+
+	actualStatuses := m.CopyAckStatuses()
+	s.Equal(expectAckStatus.GetCopyAckStatuses(), actualStatuses)
+	s.Equal(s.etalonBlockID, m.BlockID())
+	s.Equal(s.etalonsNames, m.DestinationsNames().ToString())
+	s.Equal(uint8(1), m.EncodersVersion())
+	s.Equal(s.etalonShardsNumberPower, m.ShardsNumberPower())
+
+	err = reader.Close()
+	s.Require().NoError(err)
+}
+
+func (s *MarkupFileSuite) TestReadBodyUnexpectedEOF() {
+	ctx := context.Background()
+	segKey := cppbridge.SegmentKey{
+		ShardID: 0,
+		Segment: 0,
+	}
+	expectAckStatus := s.makeRefill(ctx, segKey)
+
+	reader, err := delivery.NewFileStorage(s.cfg)
+	s.Require().NoError(err)
+	err = reader.OpenFile()
+	s.Require().NoError(err)
+
+	err = reader.Truncate(397)
+	s.Require().NoError(err)
+	_, err = reader.Seek(0, 0)
+	s.Require().NoError(err)
+
+	m, err := delivery.NewMarkupReader(reader).ReadFile(ctx)
+	s.Require().ErrorIs(err, io.ErrUnexpectedEOF)
+
+	actualStatuses := m.CopyAckStatuses()
+	s.Equal(expectAckStatus.GetCopyAckStatuses(), actualStatuses)
+	s.Equal(s.etalonBlockID, m.BlockID())
+	s.Equal(s.etalonsNames, m.DestinationsNames().ToString())
+	s.Equal(uint8(1), m.EncodersVersion())
+	s.Equal(s.etalonShardsNumberPower, m.ShardsNumberPower())
+
+	err = reader.Close()
+	s.Require().NoError(err)
+}
+
+func (s *MarkupFileSuite) makeRefill(ctx context.Context, segKey cppbridge.SegmentKey) *delivery.AckStatus {
+	sm, err := delivery.NewStorageManager(
+		s.cfg,
+		s.etalonShardsNumberPower,
+		s.etalonSEVersion,
+		s.etalonBlockID,
+		nil,
+		s.etalonsNames...,
+	)
+	s.Require().NoError(err)
+
+	err = sm.WriteSegment(ctx, segKey, s.etalonsData)
+	s.Require().NoError(err)
+
+	ok, err := sm.FileExist()
+	s.Require().NoError(err)
+	s.True(ok)
+
+	segKey.Segment++
+	err = sm.WriteSegment(ctx, segKey, s.etalonsData)
+	s.Require().NoError(err)
+	expectAckStatus := sm.GetAckStatus()
+	expectAckStatus.Ack(cppbridge.SegmentKey{ShardID: 0, Segment: 0}, s.etalonsNames[0])
+	err = sm.WriteAckStatus(ctx)
+	s.Require().NoError(err)
+
+	err = sm.Close()
+	s.Require().NoError(err)
+
+	reader, err := delivery.NewFileStorage(s.cfg)
+	s.Require().NoError(err)
+
+	err = reader.OpenFile()
+	s.Require().NoError(err)
+
+	dnameID := expectAckStatus.GetNames().StringToID(s.etalonsNames[1])
+	s.Require().NotEqual(frames.NotFoundName, dnameID)
+	fe, err := frames.NewRefillShardEOFFrame(uint32(dnameID), segKey.ShardID)
+	s.Require().NoError(err)
+
+	size, err := reader.Size()
+	s.Require().NoError(err)
+
+	_, err = fe.WriteTo(reader.Writer(ctx, size))
+	s.Require().NoError(err)
+
+	reader.Close()
+	s.Require().NoError(err)
+
+	return expectAckStatus
 }

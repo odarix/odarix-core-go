@@ -287,6 +287,12 @@ func (ErrServiceDataNotRestored) Permanent() bool {
 	return true
 }
 
+// Is - implements errors.Is interface.
+func (ErrServiceDataNotRestored) Is(target error) bool {
+	_, ok := target.(ErrServiceDataNotRestored)
+	return ok
+}
+
 // CorruptedEncoderError - error for currepted error.
 type CorruptedEncoderError struct {
 	err error

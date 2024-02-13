@@ -59,6 +59,8 @@ type Markup struct {
 	maxWriteSegments []uint32
 	// last frame for all segment send for shard
 	destinationsEOF map[string][]bool
+	// last successfully read offset
+	lastOffset int64
 }
 
 // NewMarkup - init new *Markup.
@@ -182,6 +184,11 @@ func (m *Markup) Last(shardID uint16, dname string) uint32 {
 	return m.ackStatus.Last(shardID, dname)
 }
 
+// LastOffset - return the last successfully read offset.
+func (m *Markup) LastOffset() int64 {
+	return m.lastOffset
+}
+
 // Reset - reset current file markup.
 func (m *Markup) Reset() {
 	m.maxWriteSegments = newShardStatuses(1 << m.title.GetShardsNumberPower())
@@ -222,9 +229,8 @@ func (m *Markup) StringToID(dname string) int32 {
 
 // MarkupReader - reader for compiling file markup.
 type MarkupReader struct {
-	r          *bufio.Reader
-	m          *Markup
-	lastOffset int64
+	r *bufio.Reader
+	m *Markup
 }
 
 // NewMarkupReader - init new *MarkupReader.
@@ -237,27 +243,37 @@ func NewMarkupReader(r io.Reader) *MarkupReader {
 
 // ReadFile - read file and create markup.
 func (mr *MarkupReader) ReadFile(ctx context.Context) (*Markup, error) {
-	for {
-		// read header frame
-		h, err := frames.ReadHeader(ctx, mr.r)
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-
-		if err = mr.readFromBody(ctx, h); err != nil {
-			return nil, err
-		}
-		mr.lastOffset += int64(h.FrameSize())
-	}
-
+	err := mr.readFull(ctx)
 	if !mr.checkRestoredServiceData() {
 		return nil, ErrServiceDataNotRestored{}
 	}
 
-	return mr.m, nil
+	return mr.m, err
+}
+
+// readFull - read full file.
+func (mr *MarkupReader) readFull(ctx context.Context) error {
+	for {
+		// read header frame
+		h, err := frames.ReadHeader(ctx, mr.r)
+		switch {
+		case errors.Is(err, nil):
+		case errors.Is(err, io.EOF):
+			return nil
+		case errors.Is(err, io.ErrUnexpectedEOF):
+			return NotContinuableRefill(err)
+		default:
+			return err
+		}
+
+		if err = mr.readFromBody(ctx, h); err != nil {
+			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+				return NotContinuableRefill(err)
+			}
+			return err
+		}
+		mr.m.lastOffset += int64(h.FrameSize())
+	}
 }
 
 // checkRestoredServiceData - check restored service data(title, destinations names),
@@ -344,7 +360,7 @@ func (mr *MarkupReader) setSegmentPosition(ctx context.Context, h *frames.Header
 			Segment: si.GetSegmentID(),
 		},
 	}
-	mr.m.markupMap[mk] = NewMarkupValue(mr.lastOffset, h.GetSize(), h.GetContentVersion())
+	mr.m.markupMap[mk] = NewMarkupValue(mr.m.lastOffset, h.GetSize(), h.GetContentVersion())
 
 	if mr.m.maxWriteSegments[mk.ShardID] == math.MaxUint32 ||
 		mk.Segment > mr.m.maxWriteSegments[mk.ShardID] {
@@ -426,4 +442,33 @@ func (mr *MarkupReader) readRefillShardEOF(ctx context.Context, h *frames.Header
 	mr.m.destinationsEOF[dname][rs.ShardID] = true
 
 	return nil
+}
+
+// ErrNotContinuableRefill - error refill contains not continuable data.
+type ErrNotContinuableRefill struct {
+	err error
+}
+
+// NotContinuableRefill - create ErrNotContinuableRefill error.
+func NotContinuableRefill(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &ErrNotContinuableRefill{err}
+}
+
+// Error - implements error.
+func (err *ErrNotContinuableRefill) Error() string {
+	return fmt.Errorf("refill contains not continuable data: %w", err.err).Error()
+}
+
+// Unwrap - implements errors.Unwrapper interface.
+func (err *ErrNotContinuableRefill) Unwrap() error {
+	return err.err
+}
+
+// Is - implements errors.Is interface.
+func (*ErrNotContinuableRefill) Is(target error) bool {
+	_, ok := target.(*ErrNotContinuableRefill)
+	return ok
 }
