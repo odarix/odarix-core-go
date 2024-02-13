@@ -86,19 +86,20 @@ func NewStorageManager(
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrServiceDataNotRestored{}):
-			if err = sm.storage.Truncate(0); err != nil {
-				return nil, err
+			if errt := sm.storage.Truncate(0); errt != nil {
+				return nil, errt
 			}
 		case errors.Is(err, frames.ErrUnknownFrameType):
-			if err = sm.storage.Truncate(sm.markupFile.LastOffset()); err != nil {
-				return nil, err
+			if errt := sm.storage.Truncate(sm.markupFile.LastOffset()); errt != nil {
+				return nil, errt
 			}
 			ok = true
 		case errors.Is(err, &ErrNotContinuableRefill{}):
-			if err = sm.storage.Truncate(sm.markupFile.LastOffset()); err != nil {
-				return nil, err
+			if errt := sm.storage.Truncate(sm.markupFile.LastOffset()); errt != nil {
+				return nil, errt
 			}
-			return nil, err
+			sm.statuses = sm.markupFile.CopyAckStatuses()
+			return sm, err
 		default:
 			return nil, err
 		}

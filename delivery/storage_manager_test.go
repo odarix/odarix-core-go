@@ -333,6 +333,62 @@ func (s *StorageManagerSuite) TestRestore() {
 	s.Equal(s.etalonsNames, actualAckStatus.GetNames().ToString())
 }
 
+func (s *StorageManagerSuite) TestNotRestoreable() {
+	ok, err := s.sm.FileExist()
+	s.NoError(err)
+	s.False(ok)
+
+	segKey := cppbridge.SegmentKey{
+		ShardID: 0,
+		Segment: 1,
+	}
+
+	err = s.sm.WriteAckStatus(context.Background())
+	s.NoError(err)
+
+	err = s.sm.WriteSegment(context.Background(), segKey, s.etalonsData)
+	s.NoError(err)
+
+	err = s.sm.WriteSegment(context.Background(), segKey, s.etalonsData)
+	s.NoError(err)
+
+	expectAckStatus := s.sm.GetAckStatus()
+	expectAckStatus.Ack(cppbridge.SegmentKey{ShardID: 0, Segment: 0}, "www.collector.com")
+	err = s.sm.WriteAckStatus(context.Background())
+	s.NoError(err)
+
+	ok, err = s.sm.FileExist()
+	s.NoError(err)
+	s.True(ok)
+
+	err = s.sm.Close()
+	s.NoError(err)
+
+	reader, err := delivery.NewFileStorage(s.cfg)
+	s.Require().NoError(err)
+	err = reader.OpenFile()
+	s.Require().NoError(err)
+	err = reader.Truncate(374)
+	s.Require().NoError(err)
+	reader.Close()
+
+	newBlockID, err := uuid.NewRandom()
+	s.NoError(err)
+	var shardsNumberPower uint8 = 1
+
+	sm, err := delivery.NewStorageManager(
+		s.cfg,
+		shardsNumberPower,
+		s.etalonSEVersion,
+		newBlockID,
+		nil,
+		s.etalonsNames...,
+	)
+	s.Require().ErrorIs(err, &delivery.ErrNotContinuableRefill{})
+	s.Require().NotNil(sm)
+	s.Require().False(sm.CheckSegmentsSent())
+}
+
 type AckStatusSuite struct {
 	suite.Suite
 
