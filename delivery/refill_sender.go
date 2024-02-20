@@ -29,6 +29,8 @@ var (
 	errRefillLimitExceeded = errors.New("refill limit exceeded")
 	// ErrCorruptedFile - error if the file is corrupted.
 	ErrCorruptedFile = errors.New("corrupted file")
+	// ErrHostIsUnavailable - error if destination host is unavailable.
+	ErrHostIsUnavailable = errors.New("destination host is unavailable")
 )
 
 const (
@@ -58,13 +60,15 @@ func DefaultRefillSendManagerConfig() RefillSendManagerConfig {
 
 // RefillSendManager - manager  for send refill to server.
 type RefillSendManager struct {
-	rsmCfg       RefillSendManagerConfig
-	dir          string
-	dialers      map[string]Dialer
-	errorHandler ErrorHandler
-	clock        clockwork.Clock
-	stop         chan struct{}
-	done         chan struct{}
+	rsmCfg             RefillSendManagerConfig
+	dir                string
+	dialers            map[string]Dialer
+	unavailableDialers map[string]struct{}
+	unavailableMX      *sync.Mutex
+	errorHandler       ErrorHandler
+	clock              clockwork.Clock
+	stop               chan struct{}
+	done               chan struct{}
 	// stat
 	registerer      prometheus.Registerer
 	fileSize        prometheus.Gauge
@@ -91,14 +95,16 @@ func NewRefillSendManager(
 	}
 	factory := util.NewUnconflictRegisterer(registerer)
 	return &RefillSendManager{
-		rsmCfg:       rsmCfg,
-		dir:          filepath.Join(workingDir, RefillDir),
-		dialers:      dialersMap,
-		errorHandler: errorHandler,
-		clock:        clock,
-		stop:         make(chan struct{}),
-		done:         make(chan struct{}),
-		registerer:   registerer,
+		rsmCfg:             rsmCfg,
+		dir:                filepath.Join(workingDir, RefillDir),
+		dialers:            dialersMap,
+		unavailableDialers: make(map[string]struct{}, len(dialers)),
+		unavailableMX:      new(sync.Mutex),
+		errorHandler:       errorHandler,
+		clock:              clock,
+		stop:               make(chan struct{}),
+		done:               make(chan struct{}),
+		registerer:         registerer,
 		fileSize: factory.NewGauge(
 			prometheus.GaugeOpts{
 				Name: "odarix_core_delivery_refill_send_manager_file_bytes",
@@ -221,6 +227,8 @@ func (rsm *RefillSendManager) processing(ctx context.Context) error {
 		}
 	}
 
+	rsm.clearUnavailableDialers()
+
 	return nil
 }
 
@@ -284,33 +292,58 @@ func (rsm *RefillSendManager) fileProcessing(ctx context.Context, fileInfo fs.Fi
 			// if the dialer is not found, then we skip the data
 			return true
 		}
-
+		if rsm.isUnavailableDialer(dname) {
+			withError.Store(true)
+			rsm.errorHandler(fmt.Sprintf("fail send to %s", dname), ErrHostIsUnavailable)
+			return true
+		}
 		wg.Add(1)
-		go func(dr Dialer, id int, data []uint32) {
+		go func(dr Dialer, dn string, id int, data []uint32) {
 			defer wg.Done()
 			if err := rsm.send(ctx, dr, reader, uint16(id), data, rsm.registerer); err != nil {
 				if !IsPermanent(err) {
+					rsm.addUnavailableDialer(dn)
 					withError.Store(true)
 				}
-
 				rsm.errorHandler("fail send", err)
 				return
 			}
-		}(dialer, shardID, shardData)
-
+		}(dialer, dname, shardID, shardData)
 		return true
 	})
-
 	wg.Wait()
-
 	// if any of the deliveries failed, file should be saved for next attempt
 	if withError.Load() {
 		return nil
 	}
-
 	rsm.deletedFileSize.With(prometheus.Labels{"cause": "delivered"}).Observe(float64(fileInfo.Size()))
 	// if file has been delivered to all known destinations, it doesn't required anymore and should be deleted
 	return reader.DeleteFile()
+}
+
+// isUnavailableDialer - if the dialer was unavailable
+// and the allowed repeat time was not reached, then we skip the data.
+func (rsm *RefillSendManager) isUnavailableDialer(dname string) bool {
+	rsm.unavailableMX.Lock()
+	_, ok := rsm.unavailableDialers[dname]
+	rsm.unavailableMX.Unlock()
+	return ok
+}
+
+// isUnavailableDialer - if the dialer was unavailable add to map.
+func (rsm *RefillSendManager) addUnavailableDialer(dname string) {
+	rsm.unavailableMX.Lock()
+	rsm.unavailableDialers[dname] = struct{}{}
+	rsm.unavailableMX.Unlock()
+}
+
+// clearUnavailableDialer - clear unavailable dialers map.
+func (rsm *RefillSendManager) clearUnavailableDialers() {
+	rsm.unavailableMX.Lock()
+	for dname := range rsm.unavailableDialers {
+		delete(rsm.unavailableDialers, dname)
+	}
+	rsm.unavailableMX.Unlock()
 }
 
 // send - sending to destinations.
