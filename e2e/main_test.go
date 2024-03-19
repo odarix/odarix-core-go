@@ -378,7 +378,7 @@ func (s *MainSuite) runWebServer(
 		Handler: router,
 		//revive:disable-next-line:add-constant not need const
 		ReadHeaderTimeout: 10 * time.Second,
-		BaseContext: func(l net.Listener) context.Context {
+		BaseContext: func(_ net.Listener) context.Context {
 			return ctx
 		},
 	}
@@ -473,15 +473,22 @@ type GeneratedData interface {
 	AsRemoteWriteProto() *prompb.WriteRequest
 }
 type Sender interface {
-	SendOpenHeadProtobuf(ctx context.Context, protoData delivery.ProtoData) (delivered bool, err error)
-	SendOpenHeadGoModel(ctx context.Context, data []model.TimeSeries) (delivered bool, err error)
+	SendOpenHeadProtobuf(ctx context.Context, protoData delivery.ProtoData) (delivery.Promise, error)
+	SendOpenHeadGoModel(ctx context.Context, data []model.TimeSeries) (delivery.Promise, error)
 }
 
 type OpenHeadSenderGenerator interface {
 	SendOpenHead(ctx context.Context, sender Sender, count int, sid int64) (generatedData GeneratedData, delivered bool, err error)
 }
 
-type protobufOpenHeadSender struct{}
+type SenderKeeper interface {
+	SendOpenHeadProtobuf(ctx context.Context, protoData delivery.ProtoData) (bool, error)
+	SendOpenHeadGoModel(ctx context.Context, data []model.TimeSeries) (bool, error)
+}
+
+type OpenHeadSenderKeeperGenerator interface {
+	SendOpenHead(ctx context.Context, sender SenderKeeper, count int, sid int64) (generatedData GeneratedData, delivered bool, err error)
+}
 
 type protobufGeneratedData struct {
 	wr *prompb.WriteRequest
@@ -491,7 +498,25 @@ func (d *protobufGeneratedData) AsRemoteWriteProto() *prompb.WriteRequest {
 	return d.wr
 }
 
+type protobufOpenHeadSender struct{}
+
 func (protobufOpenHeadSender) SendOpenHead(ctx context.Context, sender Sender, count int, sid int64) (generatedData GeneratedData, delivered bool, err error) {
+	wr := (&MainSuite{}).makeProtobufData(count, sid)
+	encodedData, err := wr.Marshal()
+	if err != nil {
+		return nil, false, err
+	}
+	promise, err := sender.SendOpenHeadProtobuf(ctx, newProtoDataTest(encodedData))
+	if err != nil {
+		return nil, false, err
+	}
+	delivered, err = promise.Await(ctx)
+	return &protobufGeneratedData{wr: wr}, delivered, err
+}
+
+type protobufOpenHeadSenderKeeper struct{}
+
+func (protobufOpenHeadSenderKeeper) SendOpenHead(ctx context.Context, sender SenderKeeper, count int, sid int64) (generatedData GeneratedData, delivered bool, err error) {
 	wr := (&MainSuite{}).makeProtobufData(count, sid)
 	encodedData, err := wr.Marshal()
 	if err != nil {
@@ -500,8 +525,6 @@ func (protobufOpenHeadSender) SendOpenHead(ctx context.Context, sender Sender, c
 	delivered, err = sender.SendOpenHeadProtobuf(ctx, newProtoDataTest(encodedData))
 	return &protobufGeneratedData{wr: wr}, delivered, err
 }
-
-type goModelOpenHeadSender struct{}
 
 type goModelGeneratedData struct {
 	timeSeriesSlice []model.TimeSeries
@@ -527,7 +550,21 @@ func (d *goModelGeneratedData) AsRemoteWriteProto() *prompb.WriteRequest {
 	return wr
 }
 
+type goModelOpenHeadSender struct{}
+
 func (goModelOpenHeadSender) SendOpenHead(ctx context.Context, sender Sender, count int, sid int64) (generatedData GeneratedData, delivered bool, err error) {
+	timeSeriesSlice := (&MainSuite{}).makeGoModelData(count, sid)
+	promise, err := sender.SendOpenHeadGoModel(ctx, timeSeriesSlice)
+	if err != nil {
+		return nil, false, err
+	}
+	delivered, err = promise.Await(ctx)
+	return &goModelGeneratedData{timeSeriesSlice: timeSeriesSlice}, delivered, err
+}
+
+type goModelOpenHeadSenderKeeper struct{}
+
+func (goModelOpenHeadSenderKeeper) SendOpenHead(ctx context.Context, sender SenderKeeper, count int, sid int64) (generatedData GeneratedData, delivered bool, err error) {
 	timeSeriesSlice := (&MainSuite{}).makeGoModelData(count, sid)
 	delivered, err = sender.SendOpenHeadGoModel(ctx, timeSeriesSlice)
 	return &goModelGeneratedData{timeSeriesSlice: timeSeriesSlice}, delivered, err

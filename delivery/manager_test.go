@@ -79,7 +79,9 @@ func (s *ManagerSuite) TestSendWithAck() {
 		expectedData := faker.Paragraph()
 		data := newShardedDataTest(expectedData)
 		sendCtx, sendCancel := context.WithTimeout(baseCtx, 100*time.Millisecond)
-		delivered, err := manager.Send(sendCtx, data)
+		promise, err := manager.Send(sendCtx, data)
+		s.NoError(err, "data should be delivered in 100 ms")
+		delivered, err := promise.Await(sendCtx)
 		s.NoError(err, "data should be delivered in 100 ms")
 		s.True(delivered, "data should be delivered in 100 ms")
 		sendCancel()
@@ -143,7 +145,9 @@ func (s *ManagerSuite) TestRejectToRefill() {
 
 	s.T().Log("Send first part of data without an error to pre-heat manager")
 	data := newShardedDataTest(faker.Paragraph())
-	delivered, err := manager.Send(baseCtx, data)
+	promise, err := manager.Send(baseCtx, data)
+	s.NoError(err)
+	delivered, err := promise.Await(baseCtx)
 	s.True(delivered)
 	s.NoError(err)
 
@@ -152,7 +156,9 @@ func (s *ManagerSuite) TestRejectToRefill() {
 	expectedData := faker.Paragraph()
 	data = newShardedDataTest(expectedData)
 	sendCtx, sendCancel := context.WithTimeout(baseCtx, time.Second)
-	delivered, err = manager.Send(sendCtx, data)
+	promise, err = manager.Send(sendCtx, data)
+	s.NoError(err)
+	delivered, err = promise.Await(sendCtx)
 	sendCancel()
 	s.False(delivered)
 	s.NoError(err)
@@ -235,7 +241,9 @@ func (s *ManagerSuite) TestAckRejectRace() {
 	s.T().Log("Send first part of data without an error to pre-heat manager")
 	expectedData := faker.Paragraph()
 	data := newShardedDataTest(expectedData)
-	delivered, err := manager.Send(baseCtx, data)
+	promise, err := manager.Send(baseCtx, data)
+	s.NoError(err)
+	delivered, err := promise.Await(baseCtx)
 	s.True(delivered)
 	s.NoError(err)
 	for j := 0; j < 4; j++ {
@@ -252,7 +260,9 @@ func (s *ManagerSuite) TestAckRejectRace() {
 	equalRejectedData := faker.Paragraph()
 	rejectedData := newShardedDataTest(equalRejectedData)
 	sendCtx, sendCancel := context.WithTimeout(baseCtx, 10*time.Millisecond)
-	delivered, err = manager.Send(sendCtx, rejectedData)
+	promise, err = manager.Send(sendCtx, rejectedData)
+	s.NoError(err)
+	delivered, err = promise.Await(sendCtx)
 	sendCancel()
 	s.False(delivered)
 	s.ErrorIs(err, context.DeadlineExceeded)
@@ -263,7 +273,9 @@ func (s *ManagerSuite) TestAckRejectRace() {
 	s.T().Log("Send next part of data")
 	expectedData = faker.Paragraph()
 	data = newShardedDataTest(expectedData)
-	delivered, err = manager.Send(baseCtx, data)
+	promise, err = manager.Send(baseCtx, data)
+	s.NoError(err)
+	delivered, err = promise.Await(baseCtx)
 	sendCancel()
 	s.True(delivered)
 	s.NoError(err)
@@ -347,7 +359,9 @@ func (s *ManagerSuite) TestRestoreFromRefill() {
 	s.T().Log("Send first part of data without an error to pre-heat manager")
 	expectedData := faker.Paragraph()
 	data := newShardedDataTest(expectedData)
-	delivered, err := manager.Send(baseCtx, data)
+	promise, err := manager.Send(baseCtx, data)
+	s.NoError(err)
+	delivered, err := promise.Await(baseCtx)
 	s.True(delivered)
 	s.NoError(err)
 	for i := 0; i < 4; i++ {
@@ -361,7 +375,9 @@ func (s *ManagerSuite) TestRestoreFromRefill() {
 	time.AfterFunc(time.Millisecond, func() {
 		clock.Advance(5 * time.Second)
 	})
-	delivered, err = manager.Send(baseCtx, data)
+	promise, err = manager.Send(baseCtx, data)
+	s.NoError(err)
+	delivered, err = promise.Await(baseCtx)
 	s.False(delivered)
 	s.NoError(err)
 
@@ -430,7 +446,9 @@ func (s *ManagerSuite) TestRestoreWithNoRefill() {
 	s.T().Log("Send first part of data without an error to pre-heat manager")
 	expectedData := faker.Paragraph()
 	data := newShardedDataTest(expectedData)
-	delivered, err := manager.Send(baseCtx, data)
+	promise, err := manager.Send(baseCtx, data)
+	s.NoError(err)
+	delivered, err := promise.Await(baseCtx)
 	s.True(delivered)
 	s.NoError(err)
 	for i := 0; i < 4; i++ {
@@ -445,7 +463,9 @@ func (s *ManagerSuite) TestRestoreWithNoRefill() {
 	})
 	expectedData = faker.Paragraph()
 	data = newShardedDataTest(expectedData)
-	delivered, err = manager.Send(baseCtx, data)
+	promise, err = manager.Send(baseCtx, data)
+	s.NoError(err)
+	delivered, err = promise.Await(baseCtx)
 	s.True(delivered)
 	s.NoError(err)
 	for i := 0; i < 4; i++ {
@@ -498,7 +518,9 @@ func (s *ManagerSuite) TestNotOpened() {
 	expectedData := faker.Paragraph()
 	data := newShardedDataTest(expectedData)
 	sendCtx, sendCancel := context.WithTimeout(baseCtx, time.Millisecond)
-	_, err = manager.Send(sendCtx, data)
+	promise, err := manager.Send(sendCtx, data)
+	s.Require().NoError(err)
+	_, err = promise.Await(sendCtx)
 	s.ErrorIs(err, context.DeadlineExceeded)
 	sendCancel()
 
@@ -531,7 +553,7 @@ func (s *ManagerSuite) TestLongDial() {
 	s.T().Log("Use dialer that wait until context done")
 	dialers := []delivery.Dialer{&DialerMock{
 		StringFunc: s.T().Name,
-		DialFunc: func(ctx context.Context, shardMeta delivery.ShardMeta) (delivery.Transport, error) {
+		DialFunc: func(ctx context.Context, _ delivery.ShardMeta) (delivery.Transport, error) {
 			<-ctx.Done()
 			return nil, context.Cause(ctx)
 		},
@@ -572,7 +594,9 @@ func (s *ManagerSuite) TestLongDial() {
 	time.AfterFunc(time.Millisecond, func() {
 		clock.Advance(time.Minute + time.Second)
 	})
-	delivered, err := manager.Send(sendCtx, data)
+	promise, err := manager.Send(sendCtx, data)
+	s.NoError(err)
+	delivered, err := promise.Await(sendCtx)
 	s.False(delivered)
 	s.NoError(err)
 	sendCancel()
@@ -639,7 +663,9 @@ func (s *ManagerSuite) TestAlwaysToRefill() {
 		expectedData := faker.Paragraph()
 		data := newShardedDataTest(expectedData)
 		sendCtx, sendCancel := context.WithTimeout(baseCtx, 100*time.Millisecond)
-		delivered, err := manager.Send(sendCtx, data)
+		promise, err := manager.Send(sendCtx, data)
+		s.NoError(err, "data should be delivered in 100 ms")
+		delivered, err := promise.Await(sendCtx)
 		s.NoError(err, "data should be delivered in 100 ms")
 		s.False(delivered, "data should be delivered in 100 ms")
 		sendCancel()
@@ -814,7 +840,7 @@ func (*ManagerSuite) transportNewAutoAck(name string, delay time.Duration, dest 
 				CloseFunc: func() error {
 					m.Lock()
 					defer m.Unlock()
-					ack = func(u uint32) {}
+					ack = func(_ uint32) {}
 					return nil
 				},
 			}
@@ -885,7 +911,7 @@ func (*ManagerSuite) inMemoryRefill() *ManagerRefillMock {
 
 func (*ManagerSuite) corruptedRefill() *ManagerRefillMock {
 	return &ManagerRefillMock{
-		GetFunc: func(_ context.Context, key cppbridge.SegmentKey) (delivery.Segment, error) {
+		GetFunc: func(_ context.Context, _ cppbridge.SegmentKey) (delivery.Segment, error) {
 			return nil, assert.AnError
 		},
 		AckFunc:    func(_ cppbridge.SegmentKey, _ string) {},
@@ -903,7 +929,7 @@ func (*ManagerSuite) corruptedRefill() *ManagerRefillMock {
 
 //revive:disable-next-line:cognitive-complexity this is test
 func (*ManagerSuite) constructorForRefill(refill *ManagerRefillMock) delivery.ManagerRefillCtor {
-	return func(_ string, blockID uuid.UUID, destinations []string, shardsNumberPower uint8, segmentEncodingVersion uint8, alwaysToRefill bool, registerer prometheus.Registerer) (delivery.ManagerRefill, error) {
+	return func(_ string, blockID uuid.UUID, destinations []string, shardsNumberPower uint8, _ uint8, _ bool, _ prometheus.Registerer) (delivery.ManagerRefill, error) {
 		if refill.BlockIDFunc == nil {
 			refill.BlockIDFunc = func() uuid.UUID { return blockID }
 		}
@@ -1028,10 +1054,15 @@ func (s *ManagerSuite) TestSend2WithAck() {
 		group.Go(func() error {
 			data := newShardedDataTest(faker.Paragraph())
 			sendCtx, sendCancel := context.WithTimeout(gCtx, 4000*time.Millisecond)
-			delivered, errSend := manager.SendOpenHeadProtobuf(sendCtx, data)
-			sendCancel()
+			promise, errSend := manager.SendOpenHeadProtobuf(sendCtx, data)
 			if errSend != nil {
+				sendCancel()
 				return errSend
+			}
+			delivered, errDelivered := promise.Await(sendCtx)
+			sendCancel()
+			if errDelivered != nil {
+				return errDelivered
 			}
 			s.True(delivered, "data should be delivered in 2600 ms")
 			return nil

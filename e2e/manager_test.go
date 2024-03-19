@@ -82,7 +82,7 @@ func (s *BlockManagerSuite) deliveryManagerHappyPath(sender OpenHeadSenderGenera
 		}
 	}
 
-	handleRefill := func(ctx context.Context, rw http.ResponseWriter, r io.Reader) {
+	handleRefill := func(_ context.Context, rw http.ResponseWriter, _ io.Reader) {
 		s.T().Log("not required")
 		s.NoError(s.response(rw, "OK", http.StatusOK), "fail to send response")
 	}
@@ -195,7 +195,7 @@ func (s *BlockManagerSuite) deliveryManagerBreakingConnection(sender OpenHeadSen
 		}
 	}
 
-	handleRefill := func(ctx context.Context, rw http.ResponseWriter, r io.Reader) {
+	handleRefill := func(_ context.Context, rw http.ResponseWriter, _ io.Reader) {
 		s.T().Log("not required")
 		s.NoError(s.response(rw, "OK", http.StatusOK), "fail to send response")
 	}
@@ -307,7 +307,7 @@ func (s *BlockManagerSuite) deliveryManagerReject(sender OpenHeadSenderGenerator
 		}
 	}
 
-	handleRefill := func(ctx context.Context, rw http.ResponseWriter, r io.Reader) {
+	handleRefill := func(_ context.Context, rw http.ResponseWriter, _ io.Reader) {
 		s.T().Log("not required")
 		s.NoError(s.response(rw, "OK", http.StatusOK), "fail to send response")
 	}

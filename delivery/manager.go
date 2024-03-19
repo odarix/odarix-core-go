@@ -60,7 +60,6 @@ type Manager struct {
 	// stat
 	registerer               prometheus.Registerer
 	encodeDuration           prometheus.Histogram
-	promiseDuration          prometheus.Histogram
 	segmentSize              prometheus.Histogram
 	lagDuration              *prometheus.HistogramVec
 	segmentSeries            prometheus.Histogram
@@ -242,13 +241,6 @@ func NewManager(
 				Buckets: prometheus.ExponentialBucketsRange(0.9, 20, 10),
 			},
 		),
-		promiseDuration: factory.NewHistogram(
-			prometheus.HistogramOpts{
-				Name:    "odarix_core_delivery_manager_promise_duration_seconds",
-				Help:    "Duration of promise await.",
-				Buckets: prometheus.ExponentialBucketsRange(0.1, 20, 10),
-			},
-		),
 		segmentSize: factory.NewHistogram(
 			prometheus.HistogramOpts{
 				Name:    "odarix_core_delivery_manager_segment_bytes",
@@ -327,16 +319,16 @@ func NewManager(
 }
 
 // Send - send data to encoders.
-func (mgr *Manager) Send(ctx context.Context, data ProtoData) (ack bool, err error) {
+func (mgr *Manager) Send(ctx context.Context, data ProtoData) (Promise, error) {
 	hx, err := mgr.hashdexFactory.Protobuf(data.Bytes(), mgr.limits.Hashdex)
 	if err != nil {
 		data.Destroy()
-		return false, err
+		return nil, err
 	}
 
 	if mgr.haTracker.IsDrop(hx.Cluster(), hx.Replica()) {
 		data.Destroy()
-		return true, nil
+		return nil, nil
 	}
 	result := NewSendPromise(len(mgr.encoders))
 	expiredAt := mgr.clock.Now().Add(mgr.uncommittedTimeWindow / 2)
@@ -370,25 +362,22 @@ func (mgr *Manager) Send(ctx context.Context, data ProtoData) (ack bool, err err
 	data.Destroy()
 	if err != nil {
 		// TODO: is encoder recoverable?
-		return false, err
+		return nil, err
 	}
-	defer func(start time.Time) {
-		mgr.promiseDuration.Observe(time.Since(start).Seconds())
-	}(time.Now())
-	return result.Await(ctx)
+	return result, nil
 }
 
 // SendOpenHeadProtobuf adds data to encoders to send it later when limits reached
-func (mgr *Manager) SendOpenHeadProtobuf(ctx context.Context, data ProtoData) (ack bool, err error) {
+func (mgr *Manager) SendOpenHeadProtobuf(ctx context.Context, data ProtoData) (Promise, error) {
 	hx, err := mgr.hashdexFactory.Protobuf(data.Bytes(), mgr.limits.Hashdex)
 	if err != nil {
 		data.Destroy()
-		return false, err
+		return nil, err
 	}
 
 	if mgr.haTracker.IsDrop(hx.Cluster(), hx.Replica()) {
 		data.Destroy()
-		return true, nil
+		return nil, ErrHADropped
 	}
 
 	mgr.encodersLock.Lock()
@@ -404,24 +393,20 @@ func (mgr *Manager) SendOpenHeadProtobuf(ctx context.Context, data ProtoData) (a
 	mgr.encodersLock.Unlock()
 	if err != nil {
 		// TODO: is encoder recoverable?
-		return false, err
+		return nil, err
 	}
-
-	defer func(start time.Time) {
-		mgr.promiseDuration.Observe(time.Since(start).Seconds())
-	}(time.Now())
-	return promise.Await(ctx)
+	return promise, nil
 }
 
 // SendOpenHeadGoModel adds data to encoders to send it later when limits reached
-func (mgr *Manager) SendOpenHeadGoModel(ctx context.Context, data []model.TimeSeries) (ack bool, err error) {
+func (mgr *Manager) SendOpenHeadGoModel(ctx context.Context, data []model.TimeSeries) (Promise, error) {
 	hx, err := mgr.hashdexFactory.GoModel(data, mgr.limits.Hashdex)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 
 	if mgr.haTracker.IsDrop(hx.Cluster(), hx.Replica()) {
-		return true, nil
+		return nil, nil
 	}
 
 	mgr.encodersLock.Lock()
@@ -436,13 +421,9 @@ func (mgr *Manager) SendOpenHeadGoModel(ctx context.Context, data []model.TimeSe
 	mgr.encodersLock.Unlock()
 	if err != nil {
 		// TODO: is encoder recoverable?
-		return false, err
+		return nil, err
 	}
-
-	defer func(start time.Time) {
-		mgr.promiseDuration.Observe(time.Since(start).Seconds())
-	}(time.Now())
-	return promise.Await(ctx)
+	return promise, nil
 }
 
 func (mgr *Manager) addData(ctx context.Context, hx cppbridge.ShardedData) ([]cppbridge.SegmentStats, error) {

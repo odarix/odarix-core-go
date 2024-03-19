@@ -142,8 +142,10 @@ type ManagerKeeper struct {
 	cgogc              *cppbridge.CGOGC
 	registerer         prometheus.Registerer
 	// stat
-	sendDuration *prometheus.HistogramVec
-	inFlight     prometheus.Gauge
+	sendDuration    *prometheus.HistogramVec
+	appendDuration  *prometheus.HistogramVec
+	promiseDuration prometheus.Histogram
+	inFlight        prometheus.Gauge
 }
 
 // NewManagerKeeper - init new DeliveryKeeper.
@@ -199,6 +201,21 @@ func NewManagerKeeper(
 				Buckets: prometheus.ExponentialBucketsRange(0.1, 20, 10),
 			},
 			[]string{"state"},
+		),
+		appendDuration: factory.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "odarix_core_delivery_manager_keeper_append_duration_seconds",
+				Help:    "Duration of sending data(s).",
+				Buckets: prometheus.ExponentialBucketsRange(0.1, 20, 10),
+			},
+			[]string{"state"},
+		),
+		promiseDuration: factory.NewHistogram(
+			prometheus.HistogramOpts{
+				Name:    "odarix_core_delivery_manager_keeper_promise_duration_seconds",
+				Help:    "Duration of promise await.",
+				Buckets: prometheus.ExponentialBucketsRange(0.1, 20, 10),
+			},
 		),
 		inFlight: factory.NewGauge(
 			prometheus.GaugeOpts{
@@ -335,13 +352,25 @@ func (dk *ManagerKeeper) Send(ctx context.Context, data ProtoData) (bool, error)
 		return false, ErrShutdown
 	default:
 	}
-	delivered, err := dk.manager.Send(ctx, data)
+	promise, err := dk.manager.Send(ctx, data)
 	if dk.manager.MaxBlockBytes() >= dk.currentState.Block().DesiredBlockSizeBytes {
 		dk.notifyOnLimits()
 	}
 	if err != nil {
+		if errors.Is(err, ErrHADropped) {
+			dk.sendDuration.With(prometheus.Labels{"state": "ha_dropped"}).Observe(time.Since(start).Seconds())
+			return true, nil
+		}
 		dk.sendDuration.With(prometheus.Labels{"state": "error"}).Observe(time.Since(start).Seconds())
-		return delivered, err
+		return false, err
+	}
+	defer func(start time.Time) {
+		dk.promiseDuration.Observe(time.Since(start).Seconds())
+	}(time.Now())
+	delivered, err := promise.Await(ctx)
+	if err != nil {
+		dk.sendDuration.With(prometheus.Labels{"state": "error"}).Observe(time.Since(start).Seconds())
+		return false, err
 	}
 	if !delivered {
 		dk.sendDuration.With(prometheus.Labels{"state": "refill"}).Observe(time.Since(start).Seconds())
@@ -364,13 +393,25 @@ func (dk *ManagerKeeper) SendOpenHeadProtobuf(ctx context.Context, data ProtoDat
 		return false, ErrShutdown
 	default:
 	}
-	delivered, err := dk.manager.SendOpenHeadProtobuf(ctx, data)
+	promise, err := dk.manager.SendOpenHeadProtobuf(ctx, data)
 	if dk.manager.MaxBlockBytes() >= dk.currentState.Block().DesiredBlockSizeBytes {
 		dk.notifyOnLimits()
 	}
 	if err != nil {
+		if errors.Is(err, ErrHADropped) {
+			dk.sendDuration.With(prometheus.Labels{"state": "ha_dropped"}).Observe(time.Since(start).Seconds())
+			return true, nil
+		}
 		dk.sendDuration.With(prometheus.Labels{"state": "error"}).Observe(time.Since(start).Seconds())
-		return delivered, err
+		return false, err
+	}
+	defer func(start time.Time) {
+		dk.promiseDuration.Observe(time.Since(start).Seconds())
+	}(time.Now())
+	delivered, err := promise.Await(ctx)
+	if err != nil {
+		dk.sendDuration.With(prometheus.Labels{"state": "error"}).Observe(time.Since(start).Seconds())
+		return false, err
 	}
 	if !delivered {
 		dk.sendDuration.With(prometheus.Labels{"state": "refill"}).Observe(time.Since(start).Seconds())
@@ -393,13 +434,25 @@ func (dk *ManagerKeeper) SendOpenHeadGoModel(ctx context.Context, data []model.T
 		return false, ErrShutdown
 	default:
 	}
-	delivered, err := dk.manager.SendOpenHeadGoModel(ctx, data)
+	promise, err := dk.manager.SendOpenHeadGoModel(ctx, data)
 	if dk.manager.MaxBlockBytes() >= dk.currentState.Block().DesiredBlockSizeBytes {
 		dk.notifyOnLimits()
 	}
 	if err != nil {
+		if errors.Is(err, ErrHADropped) {
+			dk.sendDuration.With(prometheus.Labels{"state": "ha_dropped"}).Observe(time.Since(start).Seconds())
+			return true, nil
+		}
 		dk.sendDuration.With(prometheus.Labels{"state": "error"}).Observe(time.Since(start).Seconds())
-		return delivered, err
+		return false, err
+	}
+	defer func(start time.Time) {
+		dk.promiseDuration.Observe(time.Since(start).Seconds())
+	}(time.Now())
+	delivered, err := promise.Await(ctx)
+	if err != nil {
+		dk.sendDuration.With(prometheus.Labels{"state": "error"}).Observe(time.Since(start).Seconds())
+		return false, err
 	}
 	if !delivered {
 		dk.sendDuration.With(prometheus.Labels{"state": "refill"}).Observe(time.Since(start).Seconds())
@@ -407,6 +460,62 @@ func (dk *ManagerKeeper) SendOpenHeadGoModel(ctx context.Context, data []model.T
 	}
 	dk.sendDuration.With(prometheus.Labels{"state": "success"}).Observe(time.Since(start).Seconds())
 	return delivered, nil
+}
+
+// AppendOpenHeadProtobuf - append metrics data to encode.
+func (dk *ManagerKeeper) AppendOpenHeadProtobuf(ctx context.Context, data ProtoData) (bool, error) {
+	dk.inFlight.Inc()
+	defer dk.inFlight.Dec()
+	start := time.Now()
+	dk.rwm.RLock()
+	defer dk.rwm.RUnlock()
+	select {
+	case <-dk.stop:
+		return false, ErrShutdown
+	default:
+	}
+	_, err := dk.manager.SendOpenHeadProtobuf(ctx, data)
+	if dk.manager.MaxBlockBytes() >= dk.currentState.Block().DesiredBlockSizeBytes {
+		dk.notifyOnLimits()
+	}
+	if err != nil {
+		if errors.Is(err, ErrHADropped) {
+			dk.appendDuration.With(prometheus.Labels{"state": "ha_dropped"}).Observe(time.Since(start).Seconds())
+			return true, nil
+		}
+		dk.appendDuration.With(prometheus.Labels{"state": "error"}).Observe(time.Since(start).Seconds())
+		return false, err
+	}
+	dk.appendDuration.With(prometheus.Labels{"state": "success"}).Observe(time.Since(start).Seconds())
+	return true, nil
+}
+
+// AppendOpenHeadGoModel - append metrics data to encode.
+func (dk *ManagerKeeper) AppendOpenHeadGoModel(ctx context.Context, data []model.TimeSeries) (bool, error) {
+	dk.inFlight.Inc()
+	defer dk.inFlight.Dec()
+	start := time.Now()
+	dk.rwm.RLock()
+	defer dk.rwm.RUnlock()
+	select {
+	case <-dk.stop:
+		return false, ErrShutdown
+	default:
+	}
+	_, err := dk.manager.SendOpenHeadGoModel(ctx, data)
+	if dk.manager.MaxBlockBytes() >= dk.currentState.Block().DesiredBlockSizeBytes {
+		dk.notifyOnLimits()
+	}
+	if err != nil {
+		if errors.Is(err, ErrHADropped) {
+			dk.appendDuration.With(prometheus.Labels{"state": "ha_dropped"}).Observe(time.Since(start).Seconds())
+			return true, nil
+		}
+		dk.appendDuration.With(prometheus.Labels{"state": "error"}).Observe(time.Since(start).Seconds())
+		return false, err
+	}
+	dk.appendDuration.With(prometheus.Labels{"state": "success"}).Observe(time.Since(start).Seconds())
+	return true, nil
 }
 
 // notifyOnLimits - triggers a notification regardless of the remaining block time.

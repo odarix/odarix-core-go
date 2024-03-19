@@ -45,11 +45,11 @@ func (s *ManagerKeeperSuite) errorHandler(msg string, err error) {
 }
 
 func (s *ManagerKeeperSuite) TestManagerKeeperHappyPath() {
-	s.managerKeeperHappyPath(protobufOpenHeadSender{})
-	s.managerKeeperHappyPath(goModelOpenHeadSender{})
+	s.managerKeeperHappyPath(protobufOpenHeadSenderKeeper{})
+	s.managerKeeperHappyPath(goModelOpenHeadSenderKeeper{})
 }
 
-func (s *ManagerKeeperSuite) managerKeeperHappyPath(sender OpenHeadSenderGenerator) {
+func (s *ManagerKeeperSuite) managerKeeperHappyPath(sender OpenHeadSenderKeeperGenerator) {
 	count := 10
 	baseCtx := context.Background()
 	retCh := make(chan *frames.ReadSegmentV4, count)
@@ -85,7 +85,7 @@ func (s *ManagerKeeperSuite) managerKeeperHappyPath(sender OpenHeadSenderGenerat
 		}
 	}
 
-	handleRefill := func(ctx context.Context, rw http.ResponseWriter, r io.Reader) {
+	handleRefill := func(_ context.Context, rw http.ResponseWriter, _ io.Reader) {
 		s.T().Log("not required")
 		s.NoError(s.response(rw, "OK", http.StatusOK), "fail to send response")
 	}
@@ -125,12 +125,12 @@ func (s *ManagerKeeperSuite) managerKeeperHappyPath(sender OpenHeadSenderGenerat
 }
 
 func (s *ManagerKeeperSuite) TestWithRotate() {
-	s.withRotate(protobufOpenHeadSender{})
+	s.withRotate(protobufOpenHeadSenderKeeper{})
 }
 
 //revive:disable-next-line:cyclomatic this is test
 //revive:disable-next-line:cognitive-complexity this is test
-func (s *ManagerKeeperSuite) withRotate(sender OpenHeadSenderGenerator) {
+func (s *ManagerKeeperSuite) withRotate(sender OpenHeadSenderKeeperGenerator) {
 	count := 10
 	baseCtx := context.Background()
 	retCh := make(chan *frames.ReadSegmentV4, count*2)
@@ -165,7 +165,7 @@ func (s *ManagerKeeperSuite) withRotate(sender OpenHeadSenderGenerator) {
 		}
 	}
 
-	handleRefill := func(ctx context.Context, rw http.ResponseWriter, r io.Reader) {
+	handleRefill := func(_ context.Context, rw http.ResponseWriter, _ io.Reader) {
 		s.T().Log("not required")
 		s.NoError(s.response(rw, "OK", http.StatusOK), "fail to send response")
 	}
@@ -224,13 +224,13 @@ func (s *ManagerKeeperSuite) withRotate(sender OpenHeadSenderGenerator) {
 }
 
 func (s *ManagerKeeperSuite) TestWithReject() {
-	s.withReject(protobufOpenHeadSender{})
-	s.withReject(goModelOpenHeadSender{})
+	s.withReject(protobufOpenHeadSenderKeeper{})
+	s.withReject(goModelOpenHeadSenderKeeper{})
 }
 
 //revive:disable-next-line:cyclomatic this is test
 //revive:disable-next-line:cognitive-complexity this is test
-func (s *ManagerKeeperSuite) withReject(sender OpenHeadSenderGenerator) {
+func (s *ManagerKeeperSuite) withReject(sender OpenHeadSenderKeeperGenerator) {
 	count := 10
 	baseCtx := context.Background()
 	retCh := make(chan *frames.ReadSegmentV4, count*2)

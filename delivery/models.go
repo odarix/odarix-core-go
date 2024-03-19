@@ -17,6 +17,8 @@ import (
 var (
 	// ErrAborted - error for promise is aborted
 	ErrAborted = errors.New("promise is aborted")
+	// ErrHADropped - error when metrics skip from High Availability.
+	ErrHADropped = errors.New("dropped from HA")
 )
 
 // Segment is an universal interface for blob segment data
@@ -33,6 +35,11 @@ type ProtoData interface {
 // ErrorHandler useful for logging errors caused in delivery box
 type ErrorHandler func(msg string, err error)
 
+// Promise - is a status aggregator.
+type Promise interface {
+	Await(ctx context.Context) (ack bool, err error)
+}
+
 // SendPromise is a status aggregator
 //
 // Promise is created for batch of data and aggregate statuses of all segments
@@ -44,6 +51,8 @@ type SendPromise struct {
 	counter int32
 	refills int32
 }
+
+var _ Promise = (*SendPromise)(nil)
 
 // NewSendPromise is a constructor
 func NewSendPromise(shardsNumber int) *SendPromise {
@@ -168,6 +177,8 @@ type OpenHeadPromise struct {
 	clock    clockwork.Clock
 	timeout  time.Duration
 }
+
+var _ Promise = (*OpenHeadPromise)(nil)
 
 // NewOpenHeadPromise is a constructor
 func NewOpenHeadPromise(
