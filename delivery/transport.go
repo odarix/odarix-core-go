@@ -573,6 +573,10 @@ func (d *WebSocketDialer) SendRefill(ctx context.Context, r io.Reader, shardMeta
 			DialTLSContext: func(dctx context.Context, _ string, _ string) (net.Conn, error) {
 				return d.connDialer.Dial(dctx)
 			},
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          32, //revive:disable-line:add-constant it's finger to the sky
+			IdleConnTimeout:       time.Minute,
+			ExpectContinueTimeout: time.Second,
 		},
 	}
 	req.Header = d.makeHeader(refillMethod, shardMeta)
