@@ -170,12 +170,13 @@ func (l *OpenHeadLimits) UnmarshalBinary(data []byte) error {
 // OpenHeadPromise is a SendPromise wrapper to combine several Sends in one segment
 type OpenHeadPromise struct {
 	*SendPromise
-	done     chan struct{}
-	timer    clockwork.Timer
-	deadline time.Time
-	samples  []uint32 // limit to decrease
-	clock    clockwork.Clock
-	timeout  time.Duration
+	done       chan struct{}
+	atomicDone int32
+	timer      clockwork.Timer
+	deadline   time.Time
+	clock      clockwork.Clock
+	samples    []uint32 // limit to decrease
+	timeout    time.Duration
 }
 
 var _ Promise = (*OpenHeadPromise)(nil)
@@ -193,27 +194,30 @@ func NewOpenHeadPromise(
 	for i := range samples {
 		samples[i] = limits.MaxSamples
 	}
-	return &OpenHeadPromise{
+
+	p := &OpenHeadPromise{
 		SendPromise: NewSendPromise(shards),
 		done:        done,
-		timer: clock.AfterFunc(limits.MaxDuration, func() {
-			callback()
-			// We catch bug when timer.Stop return true even if function is called.
-			// In this case we have double close channel. It's not clear how reproduce it in tests
-			// or why it's happen. So here is a crutch
-			// FIXME: double close channel on timer.Stop race
-			select {
-			case <-done:
-				raceCounter.Inc()
-			default:
-				close(done)
-			}
-		}),
-		deadline: clock.Now().Add(limits.MaxDuration),
-		samples:  samples,
-		clock:    clock,
-		timeout:  limits.LastAddTimeout,
+		deadline:    clock.Now().Add(limits.MaxDuration),
+		samples:     samples,
+		clock:       clock,
+		timeout:     limits.LastAddTimeout,
 	}
+
+	p.timer = clock.AfterFunc(limits.MaxDuration, func() {
+		callback()
+		// We catch bug when timer.Stop return true even if function is called.
+		// In this case we have double close channel. It's not clear how reproduce it in tests
+		// or why it's happen. So here is a crutch
+		// FIXME: double close channel on timer.Stop race
+		if atomic.CompareAndSwapInt32(&p.atomicDone, 0, 1) {
+			close(done)
+			return
+		}
+		raceCounter.Inc()
+	})
+
+	return p
 }
 
 // Add appends data to promise and checks limits. It returns true if limits reached.

@@ -1,6 +1,7 @@
 package delivery_test
 
 import (
+	"hash/crc32"
 	"io"
 
 	"github.com/odarix/odarix-core-go/cppbridge"
@@ -20,9 +21,22 @@ func newDataTest(data []byte) *dataTest {
 	}
 }
 
+// Add - sum incoming stats.
+func (*dataTest) Add(_ cppbridge.SegmentStats) {
+}
+
+// AllocatedMemory - .
+func (*dataTest) AllocatedMemory() uint64 {
+	return 0
+}
+
 // Size returns count of bytes in data
 func (dt *dataTest) Size() int64 {
 	return int64(len(dt.data))
+}
+
+func (dt *dataTest) CRC32() uint32 {
+	return crc32.ChecksumIEEE(dt.data)
 }
 
 // WriteTo implements io.WriterTo interface

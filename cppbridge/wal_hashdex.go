@@ -2,8 +2,11 @@ package cppbridge
 
 import (
 	"encoding/binary"
+	"errors"
+	"fmt"
 	"runtime"
 	"strings"
+	"unsafe"
 
 	"github.com/odarix/odarix-core-go/model"
 )
@@ -160,4 +163,166 @@ func (HashdexFactory) Protobuf(data []byte, limits WALHashdexLimits) (ShardedDat
 // GoModel - constructs model.TimeSeries based hashdex.
 func (HashdexFactory) GoModel(data []model.TimeSeries, limits WALHashdexLimits) (ShardedData, error) {
 	return NewWALGoModelHashdex(limits, data)
+}
+
+// MetaInjection metedata for injection metrics.
+type MetaInjection struct {
+	Now       int64
+	SentAt    int64
+	AgentUUID string
+	Hostname  string
+}
+
+// WALBasicDecoderHashdex Go wrapper for OkDB::WAL::WALBasicDecoderHashdex.
+type WALBasicDecoderHashdex struct {
+	hashdex  uintptr
+	metadata *MetaInjection
+	cluster  string
+	replica  string
+}
+
+// NewWALBasicDecoderHashdex init new WALBasicDecoderHashdex with c-pointer OkDB::WAL::WALBasicDecoderHashdex.
+func NewWALBasicDecoderHashdex(hashdex uintptr, meta *MetaInjection, cluster, replica string) *WALBasicDecoderHashdex {
+	h := &WALBasicDecoderHashdex{
+		hashdex:  hashdex,
+		metadata: meta,
+		cluster:  cluster,
+		replica:  replica,
+	}
+	runtime.SetFinalizer(h, func(h *WALBasicDecoderHashdex) {
+		runtime.KeepAlive(h.metadata)
+		if h.hashdex == 0 {
+			return
+		}
+		walBasicDecoderHashdexDtor(h.hashdex)
+	})
+	return h
+}
+
+// Cluster get Cluster name.
+func (h *WALBasicDecoderHashdex) Cluster() string {
+	return strings.Clone(h.cluster)
+}
+
+// Replica get Replica name.
+func (h *WALBasicDecoderHashdex) Replica() string {
+	return strings.Clone(h.replica)
+}
+
+// cptr pointer to underlying c++ object.
+func (h *WALBasicDecoderHashdex) cptr() uintptr {
+	return h.hashdex
+}
+
+const (
+	// Error codes from parsing.
+	scraperParseNoError uint32 = iota
+	scraperParseUnexpectedToken
+	scraperParseNoMetricName
+	scraperInvalidUtf8
+	scraperParseInvalidValue
+	scraperParseInvalidTimestamp
+)
+
+var (
+	// ErrScraperParseUnexpectedToken error when parse unexpected token.
+	ErrScraperParseUnexpectedToken = errors.New("scraper parse unexpected token")
+	// ErrScraperParseNoMetricName error when parse no metric name.
+	ErrScraperParseNoMetricName = errors.New("scraper parse no metric name")
+	// ErrScraperInvalidUtf8 error when parse invalid utf8.
+	ErrScraperInvalidUtf8 = errors.New("scraper parse invalid utf8")
+	// ErrScraperParseInvalidValue error when parse invalid value.
+	ErrScraperParseInvalidValue = errors.New("scraper parse invalid value")
+	// ErrScraperParseInvalidTimestamp error when parse invalid timestamp.
+	ErrScraperParseInvalidTimestamp = errors.New("scraper parse invalid timestamp")
+
+	codeToError = map[uint32]error{
+		scraperParseNoError:          nil,
+		scraperParseUnexpectedToken:  ErrScraperParseUnexpectedToken,
+		scraperParseNoMetricName:     ErrScraperParseNoMetricName,
+		scraperInvalidUtf8:           ErrScraperInvalidUtf8,
+		scraperParseInvalidValue:     ErrScraperParseInvalidValue,
+		scraperParseInvalidTimestamp: ErrScraperParseInvalidTimestamp,
+	}
+)
+
+func errorFromCode(code uint32) error {
+	if code == scraperParseNoError {
+		return nil
+	}
+
+	if err, ok := codeToError[code]; ok {
+		return err
+	}
+
+	return fmt.Errorf("scraper parse unknown code error: %d", code)
+}
+
+// WALScraperHashdex hashdex for sraped incoming data.
+type WALScraperHashdex struct {
+	hashdex uintptr
+	buffer  []byte
+}
+
+const (
+	// ScraperMetadataHelp type of metadata "Help" from hashdex metadata.
+	ScraperMetadataHelp uint32 = iota
+	// ScraperMetadataType type of metadata "Type" from hashdex metadata.
+	ScraperMetadataType
+)
+
+// WALScraperHashdexMetadata metadata from hashdex.
+type WALScraperHashdexMetadata struct {
+	MetricName string
+	Text       string
+	Type       uint32
+}
+
+var _ ShardedData = (*WALScraperHashdex)(nil)
+
+// NewScraperHashdex init new *WALScraperHashdex.
+func NewScraperHashdex() *WALScraperHashdex {
+	h := &WALScraperHashdex{
+		hashdex: walScraperHashdexCtor(),
+		buffer:  nil,
+	}
+	runtime.SetFinalizer(h, func(h *WALScraperHashdex) {
+		walScraperHashdexDtor(h.hashdex)
+	})
+	return h
+}
+
+// Parse parsing incoming slice byte with default timestamp to hashdex.
+func (h *WALScraperHashdex) Parse(buffer []byte, default_timestamp int64) error {
+	h.buffer = buffer
+	return errorFromCode(walScraperHashdexParse(h.hashdex, h.buffer, default_timestamp))
+}
+
+// RangeMetadata calls f sequentially for each metadata present in the hashdex.
+// If f returns false, range stops the iteration.
+func (h *WALScraperHashdex) RangeMetadata(f func(metadata WALScraperHashdexMetadata) bool) {
+	mds := walScraperHashdexGetMetadata(h.hashdex)
+
+	for i := range mds {
+		if !f(mds[i]) {
+			break
+		}
+	}
+
+	freeBytes(*(*[]byte)(unsafe.Pointer(&mds)))
+}
+
+// Cluster get Cluster name.
+func (*WALScraperHashdex) Cluster() string {
+	return ""
+}
+
+// Replica get Replica name.
+func (*WALScraperHashdex) Replica() string {
+	return ""
+}
+
+// cptr pointer to underlying c++ object.
+func (h *WALScraperHashdex) cptr() uintptr {
+	return h.hashdex
 }
