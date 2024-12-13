@@ -1231,15 +1231,58 @@ void opcore_wal_output_decoder_load_from(void* args, void* res);
  * @brief decode segment to slice RefSample.
  *
  * @param args {
- *     decoder             uintptr      // pointer to constructed output decoder
+ *     decoder               uintptr     // pointer to constructed output decoder
+ *     lower_limit_timestamp int64       // lower limit timestamp
  * }
  *
  * @param res {
- *     ref_samples         []RefSample  // slice RefSample
- *     error               []byte       // error string if thrown
+ *     max_timestamp         int64       // max timestamp in slice RefSample
+ *     ref_samples           []RefSample // slice RefSample
+ *     error                 []byte      // error string if thrown
  * }
  */
 void opcore_wal_output_decoder_decode(void* args, void* res);
+
+//
+// ProtobufEncoder
+//
+
+/**
+ * @brief Construct a new Protobuf Encoder
+ *
+ * @param args {
+ *     output_lsses        uintptr           // pointer to constructed slice with output label sets;
+ * }
+ *
+ * @param res {
+ *     encoder             uintptr           // pointer to constructed Protobuf Encoder
+ * }
+ */
+void opcore_wal_protobuf_encoder_ctor(void* args, void* res);
+
+/**
+ * @brief Destroy Protobuf Encoder
+ *
+ * @param args {
+ *     encoder             uintptr           // pointer to constructed Protobuf Encoder
+ * }
+ */
+void opcore_wal_protobuf_encoder_dtor(void* args);
+
+/**
+ * @brief encode batch slice ShardRefSamples to snapped protobufs on shards.
+ *
+ * @param args {
+ *     batch               []*ShardRefSample // slice with go pointers to ShardRefSample
+ *     out_slices          [][]byte          // slice RefSample
+ *     encoder             uintptr           // pointer to constructed output decoder
+ * }
+ *
+ * @param res {
+ *     error               []byte            // error string if thrown
+ * }
+ */
+void opcore_wal_protobuf_encoder_encode(void* args, void* res);
 
 #ifdef __cplusplus
 }  // extern "C"
@@ -1526,7 +1569,7 @@ void opcore_wal_protobuf_hashdex_ctor(void* args, void* res);
  *     hashdex uintptr // pointer to constructed hashdex
  * }
  */
-void opcore_wal_protobuf_hashdex_dtor(void* args);
+void opcore_wal_hashdex_dtor(void* args);
 
 /**
  * @brief Fill hashdex from protobuf
@@ -1564,15 +1607,6 @@ void opcore_wal_protobuf_hashdex_presharding(void* args, void* res);
 void opcore_wal_go_model_hashdex_ctor(void* args, void* res);
 
 /**
- * @brief Destroy hashdex
- *
- * @param args {
- *     hashdex uintptr // pointer to constructed hashdex
- * }
- */
-void opcore_wal_go_model_hashdex_dtor(void* args);
-
-/**
  * @brief Fill hashdex from Go memory
  *
  * Hashdex only indexing go memory (model.TimeSeries) and doesn't copy all data.
@@ -1591,15 +1625,6 @@ void opcore_wal_go_model_hashdex_dtor(void* args);
  * }
  */
 void opcore_wal_go_model_hashdex_presharding(void* args, void* res);
-
-/**
- * @brief Destroy hashdex
- *
- * @param args {
- *     hashdex uintptr // pointer to constructed hashdex
- * }
- */
-void opcore_wal_basic_decoder_hashdex_dtor(void* args);
 
 /**
  * @brief Construct a new OkDB::WAL::hashdex::Scraper based on Prometheus parser
@@ -1641,15 +1666,6 @@ void opcore_wal_prometheus_scraper_hashdex_parse(void* args, void* res);
 void opcore_wal_prometheus_scraper_hashdex_get_metadata(void* args, void* res);
 
 /**
- * @brief Destroy hashdex
- *
- * @param args {
- *     hashdex uintptr // pointer to constructed hashdex
- * }
- */
-void opcore_wal_prometheus_scraper_hashdex_dtor(void* args);
-
-/**
  * @brief Construct a new OkDB::WAL::hashdex::Scraper based on OpenMetrics parser
  *
  * @param res {
@@ -1687,15 +1703,6 @@ void opcore_wal_open_metrics_scraper_hashdex_parse(void* args, void* res);
  * }
  */
 void opcore_wal_open_metrics_scraper_hashdex_get_metadata(void* args, void* res);
-
-/**
- * @brief Destroy hashdex
- *
- * @param args {
- *     hashdex uintptr // pointer to constructed hashdex
- * }
- */
-void opcore_wal_open_metrics_scraper_hashdex_dtor(void* args);
 
 #ifdef __cplusplus
 }  // extern "C"
