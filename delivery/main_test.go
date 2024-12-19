@@ -92,6 +92,11 @@ type shardedDataTest struct {
 	data string
 }
 
+func (dt *shardedDataTest) RangeMetadata(f func(metadata cppbridge.WALScraperHashdexMetadata) bool) {
+	//TODO implement me
+	panic("implement me")
+}
+
 func newByteShardedDataTest(data []byte, _ cppbridge.WALHashdexLimits) (cppbridge.ShardedData, error) {
 	return newShardedDataTest(string(data)), nil
 }
@@ -127,6 +132,11 @@ func (dt *shardedDataTest) Destroy() {
 }
 
 type noOpShardedData struct{}
+
+func (d noOpShardedData) RangeMetadata(f func(metadata cppbridge.WALScraperHashdexMetadata) bool) {
+	//TODO implement me
+	panic("implement me")
+}
 
 func (noOpShardedData) Type() uint8 {
 	return 1
