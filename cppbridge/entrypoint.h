@@ -199,6 +199,20 @@ void opcore_head_wal_decoder_dtor(void* args);
  */
 void opcore_head_wal_decoder_decode(void* args, void* res);
 
+/**
+ * @brief Decode WAL-segment into DataStorage
+ *
+ * @param args {
+ *     decoder uintptr // pointer to constructed decoder
+ *     segment []byte  // segment content
+ *     encoder uintptr // pointer to constructed data_storage encoder
+ * }
+ * @param res {
+ *     error      []byte // error string if thrown
+ * }
+ */
+void opcore_head_wal_decoder_decode_to_data_storage(void* args, void* res);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif
@@ -1231,12 +1245,15 @@ void opcore_wal_output_decoder_load_from(void* args, void* res);
  * @brief decode segment to slice RefSample.
  *
  * @param args {
+ *     segment               []byte      // segment content
  *     decoder               uintptr     // pointer to constructed output decoder
  *     lower_limit_timestamp int64       // lower limit timestamp
  * }
  *
  * @param res {
  *     max_timestamp         int64       // max timestamp in slice RefSample
+ *     outdated_sample_count uint64      // count of dropped samples on outdated
+ *     dropped_sample_count  uint64      // count of dropped samples on relabeling rules
  *     ref_samples           []RefSample // slice RefSample
  *     error                 []byte      // error string if thrown
  * }
