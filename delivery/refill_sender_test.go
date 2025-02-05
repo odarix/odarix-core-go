@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -181,14 +182,6 @@ func (s *RefillSenderSuite) TestHappyPath() {
 		dialers[i] = s.createDialerHappyPath(dname, recv)
 	}
 
-	ctx, cancel := context.WithCancelCause(s.baseCtx)
-	time.AfterFunc(
-		1*time.Second,
-		func() {
-			cancel(delivery.ErrShutdown)
-		},
-	)
-
 	s.T().Log("init and run refill manager")
 	clock := clockwork.NewFakeClock()
 	rsmanager, err := delivery.NewRefillSendManager(
@@ -201,14 +194,41 @@ func (s *RefillSenderSuite) TestHappyPath() {
 	)
 	s.Require().NoError(err)
 
-	time.AfterFunc(
-		100*time.Millisecond,
-		func() {
-			s.T().Log("time shift")
-			clock.Advance(1 * time.Second)
-		},
-	)
-	rsmanager.Run(ctx)
+	ctx, cancel := context.WithCancelCause(s.baseCtx)
+	wg := new(sync.WaitGroup)
+	wg.Add(2)
+	go func() {
+		i := len(s.destinationsNames)
+		for {
+			select {
+			case <-time.NewTimer(2 * time.Second).C:
+				cancel(delivery.ErrShutdown)
+				wg.Done()
+				return
+			case <-recv:
+				i--
+				if i == 0 {
+					cancel(delivery.ErrShutdown)
+					wg.Done()
+					return
+				}
+			}
+		}
+	}()
+
+	go func() {
+		s.T().Log("Run")
+		rsmanager.Run(ctx)
+		wg.Done()
+	}()
+
+	clockCtx, clockCancel := context.WithTimeout(s.baseCtx, 50*time.Millisecond)
+	clock.BlockUntilContext(clockCtx, 1)
+	clockCancel()
+	s.T().Log("time shift")
+	clock.Advance(2 * time.Second)
+
+	wg.Wait()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer shutdownCancel()
@@ -223,7 +243,7 @@ func (s *RefillSenderSuite) TestHappyPath() {
 	err = os.RemoveAll(filepath.Clean(s.workDir))
 	s.Require().NoError(err)
 
-	s.Equal(len(s.destinationsNames), len(recv))
+	s.Equal(0, len(recv))
 }
 
 func (s *RefillSenderSuite) TestHappyPathWithChangeDestinations() {
@@ -241,14 +261,6 @@ func (s *RefillSenderSuite) TestHappyPathWithChangeDestinations() {
 		dialers[i] = s.createDialerHappyPath(dname, recv)
 	}
 
-	ctx, cancel := context.WithCancelCause(s.baseCtx)
-	time.AfterFunc(
-		1*time.Second,
-		func() {
-			cancel(delivery.ErrShutdown)
-		},
-	)
-
 	s.T().Log("init and run refill manager")
 	clock := clockwork.NewFakeClock()
 	rsmanager, err := delivery.NewRefillSendManager(
@@ -261,14 +273,41 @@ func (s *RefillSenderSuite) TestHappyPathWithChangeDestinations() {
 	)
 	s.Require().NoError(err)
 
-	time.AfterFunc(
-		100*time.Millisecond,
-		func() {
-			s.T().Log("time shift")
-			clock.Advance(1 * time.Second)
-		},
-	)
-	rsmanager.Run(ctx)
+	ctx, cancel := context.WithCancelCause(s.baseCtx)
+	wg := new(sync.WaitGroup)
+	wg.Add(2)
+	go func() {
+		i := len(s.destinationsNames[2:])
+		for {
+			select {
+			case <-time.NewTimer(2 * time.Second).C:
+				cancel(delivery.ErrShutdown)
+				wg.Done()
+				return
+			case <-recv:
+				i--
+				if i == 0 {
+					cancel(delivery.ErrShutdown)
+					wg.Done()
+					return
+				}
+			}
+		}
+	}()
+
+	go func() {
+		s.T().Log("Run")
+		rsmanager.Run(ctx)
+		wg.Done()
+	}()
+
+	clockCtx, clockCancel := context.WithTimeout(s.baseCtx, 50*time.Millisecond)
+	clock.BlockUntilContext(clockCtx, 1)
+	clockCancel()
+	s.T().Log("time shift")
+	clock.Advance(2 * time.Second)
+
+	wg.Wait()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer shutdownCancel()
@@ -283,7 +322,7 @@ func (s *RefillSenderSuite) TestHappyPathWithChangeDestinations() {
 	err = os.RemoveAll(filepath.Clean(s.workDir))
 	s.Require().NoError(err)
 
-	s.Equal(len(s.destinationsNames[2:]), len(recv))
+	s.Equal(0, len(recv))
 }
 
 //revive:disable-next-line:cognitive-complexity this is test
@@ -337,14 +376,6 @@ func (s *RefillSenderSuite) TestRejectAndAck() {
 		dialers[i] = s.createDialerReject(dname, recv)
 	}
 
-	ctx, cancel := context.WithCancelCause(s.baseCtx)
-	time.AfterFunc(
-		2*time.Second,
-		func() {
-			cancel(delivery.ErrShutdown)
-		},
-	)
-
 	s.T().Log("init and run refill manager")
 	s.rcfg.ScanInterval = time.Second
 	clock := clockwork.NewFakeClock()
@@ -358,14 +389,41 @@ func (s *RefillSenderSuite) TestRejectAndAck() {
 	)
 	s.Require().NoError(err)
 
-	time.AfterFunc(
-		100*time.Millisecond,
-		func() {
-			s.T().Log("time shift")
-			clock.Advance(2 * time.Second)
-		},
-	)
-	rsmanager.Run(ctx)
+	ctx, cancel := context.WithCancelCause(s.baseCtx)
+	wg := new(sync.WaitGroup)
+	wg.Add(2)
+	go func() {
+		i := len(s.destinationsNames)
+		for {
+			select {
+			case <-time.NewTimer(2 * time.Second).C:
+				cancel(delivery.ErrShutdown)
+				wg.Done()
+				return
+			case <-recv:
+				i--
+				if i == 0 {
+					cancel(delivery.ErrShutdown)
+					wg.Done()
+					return
+				}
+			}
+		}
+	}()
+
+	go func() {
+		s.T().Log("Run")
+		rsmanager.Run(ctx)
+		wg.Done()
+	}()
+
+	clockCtx, clockCancel := context.WithTimeout(s.baseCtx, 50*time.Millisecond)
+	clock.BlockUntilContext(clockCtx, 1)
+	clockCancel()
+	s.T().Log("time shift")
+	clock.Advance(2 * time.Second)
+
+	wg.Wait()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer shutdownCancel()
@@ -380,7 +438,34 @@ func (s *RefillSenderSuite) TestRejectAndAck() {
 	err = os.RemoveAll(filepath.Clean(s.workDir))
 	s.Require().NoError(err)
 
-	s.Equal(len(s.destinationsNames), len(recv))
+	s.Equal(0, len(recv))
+}
+
+//revive:disable-next-line:cognitive-complexity this is test
+func (*RefillSenderSuite) createDialerOnlyReject(name string, reject chan struct{}) delivery.Dialer {
+	return &DialerMock{
+		StringFunc: func() string { return name },
+		DialFunc: func(ctx context.Context, shardMeta delivery.ShardMeta) (delivery.Transport, error) {
+			transport := &TransportMock{
+				OnAckFunc:       func(fn func(uint32)) {},
+				OnRejectFunc:    func(fn func(uint32)) {},
+				OnReadErrorFunc: func(fn func(error)) {},
+				SendFunc: func(ctx context.Context, frame frames.FrameWriter) error {
+					return nil
+				},
+				ListenFunc: func(ctx context.Context) {},
+				CloseFunc: func() error {
+					return nil
+				},
+			}
+
+			return transport, nil
+		},
+		SendRefillFunc: func(ctx context.Context, r io.Reader, shardMeta delivery.ShardMeta) error {
+			reject <- struct{}{}
+			return errors.New("some errors")
+		},
+	}
 }
 
 func (s *RefillSenderSuite) TestClearing() {
@@ -390,21 +475,13 @@ func (s *RefillSenderSuite) TestClearing() {
 	s.Require().NoError(err)
 	s.LessOrEqual(1, len(files))
 
-	recv := make(chan struct{}, len(s.destinationsNames)*2)
+	reject := make(chan struct{}, len(s.destinationsNames)*2)
 
 	s.T().Log("init dialers")
 	dialers := make([]delivery.Dialer, len(s.destinationsNames))
 	for i, dname := range s.destinationsNames {
-		dialers[i] = s.createDialerReject(dname, recv)
+		dialers[i] = s.createDialerOnlyReject(dname, reject)
 	}
-
-	ctx, cancel := context.WithCancelCause(s.baseCtx)
-	time.AfterFunc(
-		1*time.Second,
-		func() {
-			cancel(delivery.ErrShutdown)
-		},
-	)
 
 	s.T().Log("init and run refill manager")
 	s.rcfg.MaxRefillSize = 1
@@ -419,19 +496,46 @@ func (s *RefillSenderSuite) TestClearing() {
 	)
 	s.Require().NoError(err)
 
-	time.AfterFunc(
-		100*time.Millisecond,
-		func() {
-			s.T().Log("time shift")
-			clock.Advance(1 * time.Second)
-		},
-	)
-	rsmanager.Run(ctx)
+	ctx, cancel := context.WithCancelCause(s.baseCtx)
+	wg := new(sync.WaitGroup)
+	wg.Add(2)
+	go func() {
+		i := len(s.destinationsNames)
+		for {
+			select {
+			case <-time.NewTimer(2 * time.Second).C:
+				cancel(delivery.ErrShutdown)
+				wg.Done()
+				return
+			case <-reject:
+				i--
+				if i == 0 {
+					cancel(delivery.ErrShutdown)
+					wg.Done()
+					return
+				}
+			}
+		}
+	}()
+
+	go func() {
+		s.T().Log("Run")
+		rsmanager.Run(ctx)
+		wg.Done()
+	}()
+
+	clockCtx, clockCancel := context.WithTimeout(s.baseCtx, 100*time.Millisecond)
+	clock.BlockUntilContext(clockCtx, 1)
+	clockCancel()
+	s.T().Log("time shift")
+	clock.Advance(1 * time.Second)
+
+	wg.Wait()
 
 	s.T().Log("refill manager shutdown")
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer shutdownCancel()
 	err = rsmanager.Shutdown(shutdownCtx)
+	shutdownCancel()
 	s.Require().NoError(err)
 
 	s.T().Log("check that old files have been deleted")
@@ -442,7 +546,7 @@ func (s *RefillSenderSuite) TestClearing() {
 	err = os.RemoveAll(filepath.Clean(s.workDir))
 	s.Require().NoError(err)
 
-	s.Equal(0, len(recv))
+	s.Equal(0, len(reject))
 }
 
 func TestSendMap(t *testing.T) {

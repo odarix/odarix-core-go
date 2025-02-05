@@ -141,7 +141,7 @@ func TestOpenHeadPromise(t *testing.T) {
 
 type OpenHeadPromiseSuite struct {
 	suite.Suite
-	clock        clockwork.FakeClock
+	clock        *clockwork.FakeClock
 	encodersLock *sync.Mutex
 	finalized    *atomic.Bool
 }
