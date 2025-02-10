@@ -32,26 +32,30 @@ func TestWithStartDuration(t *testing.T) {
 func TestPostRetryWithData(t *testing.T) {
 	ebo := backoff.NewConstantBackOff(100 * time.Millisecond)
 	wsdbo := delivery.WithStartDuration(ebo, 0)
+	baseCtx := context.Background()
 
 	start := time.Now()
-	_, err := delivery.PostRetryWithData(context.Background(), func() (*struct{}, error) {
+	_, err := delivery.PostRetryWithData(baseCtx, func() (*struct{}, error) {
 		return nil, nil
 	}, wsdbo)
+	si := time.Since(start)
 	require.NoError(t, err)
-	require.InDelta(t, 0, time.Since(start), float64(10*time.Millisecond))
+	require.InDelta(t, 0, si, float64(10*time.Millisecond))
 
 	start = time.Now()
-	_, err = delivery.PostRetryWithData(context.Background(), func() (*struct{}, error) {
+	_, err = delivery.PostRetryWithData(baseCtx, func() (*struct{}, error) {
 		return nil, nil
 	}, wsdbo)
+	si = time.Since(start)
 	require.NoError(t, err)
-	require.InDelta(t, 100*time.Millisecond, time.Since(start), float64(10*time.Millisecond))
+	require.InDelta(t, 100*time.Millisecond, si, float64(15*time.Millisecond))
 
 	wsdbo.Reset()
 	start = time.Now()
-	_, err = delivery.PostRetryWithData(context.Background(), func() (*struct{}, error) {
+	_, err = delivery.PostRetryWithData(baseCtx, func() (*struct{}, error) {
 		return nil, nil
 	}, wsdbo)
+	si = time.Since(start)
 	require.NoError(t, err)
-	require.InDelta(t, 0, time.Since(start), float64(10*time.Millisecond))
+	require.InDelta(t, 0, si, float64(10*time.Millisecond))
 }

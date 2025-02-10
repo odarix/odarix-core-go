@@ -2,6 +2,7 @@ package appender
 
 import (
 	"context"
+
 	"github.com/odarix/odarix-core-go/cppbridge"
 	"github.com/odarix/odarix-core-go/relabeler"
 	"github.com/odarix/odarix-core-go/relabeler/config"
@@ -42,6 +43,11 @@ func (h *RotatableHead) ID() string {
 // Generation - relabeler.Head interface implementation.
 func (h *RotatableHead) Generation() uint64 {
 	return h.head.Generation()
+}
+
+// String serialize as string.
+func (h *RotatableHead) String() string {
+	return h.head.String()
 }
 
 // Append - relabeler.Head interface implementation.
@@ -163,6 +169,11 @@ func (h *HeapProfileWritableHead) ID() string {
 
 func (h *HeapProfileWritableHead) Generation() uint64 {
 	return h.head.Generation()
+}
+
+// String serialize as string.
+func (h *HeapProfileWritableHead) String() string {
+	return h.head.String()
 }
 
 func (h *HeapProfileWritableHead) Append(

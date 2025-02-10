@@ -490,9 +490,10 @@ func (s *ManagerKeeperSuite) TestSendWithRotate() {
 
 func (s *ManagerKeeperSuite) TestSendWithReject() {
 	baseCtx := context.Background()
+	count := 15
 
 	s.T().Log("use auto-ack transport (ack segements after ms delay), default 1 shards")
-	destination := make(chan string, 1)
+	destination := make(chan string, count)
 	dialers := []delivery.Dialer{s.transportWithReject(s.T().Name(), 50*time.Millisecond, destination)}
 
 	s.T().Log("Use full-implemented refill in memory")
@@ -547,7 +548,7 @@ func (s *ManagerKeeperSuite) TestSendWithReject() {
 	)
 
 	s.T().Log("send and check a few parts of data")
-	for i := 0; i < 15; i++ {
+	for i := 0; i < count; i++ {
 		expectedData := faker.Paragraph()
 		data := newShardedDataTest(expectedData)
 		sendCtx, sendCancel := context.WithTimeout(baseCtx, 300*time.Millisecond)

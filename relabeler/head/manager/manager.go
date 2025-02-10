@@ -3,6 +3,11 @@ package manager
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+
 	"github.com/jonboulle/clockwork"
 	"github.com/odarix/odarix-core-go/relabeler"
 	"github.com/odarix/odarix-core-go/relabeler/config"
@@ -11,10 +16,6 @@ import (
 	"github.com/odarix/odarix-core-go/relabeler/logger"
 	"github.com/odarix/odarix-core-go/util"
 	"github.com/prometheus/client_golang/prometheus"
-	"os"
-	"path/filepath"
-	"sync"
-	"time"
 )
 
 type ConfigSource interface {
