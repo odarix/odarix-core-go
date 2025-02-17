@@ -531,24 +531,16 @@ func (s *ManagerKeeperSuite) TestSendWithReject() {
 	)
 	s.Require().NoError(err)
 
-	time.AfterFunc(
-		300*time.Millisecond,
-		func() {
-			s.T().Log("first rotate")
-			clock.Advance(2 * time.Second)
-		},
-	)
-
-	time.AfterFunc(
-		600*time.Millisecond,
-		func() {
-			s.T().Log("second rotate")
-			clock.Advance(2 * time.Second)
-		},
-	)
+	rotate := func() {
+		s.T().Log("call rotate")
+		clock.Advance(2 * time.Second)
+	}
 
 	s.T().Log("send and check a few parts of data")
 	for i := 0; i < count; i++ {
+		if i%5 == 0 {
+			go rotate()
+		}
 		expectedData := faker.Paragraph()
 		data := newShardedDataTest(expectedData)
 		sendCtx, sendCancel := context.WithTimeout(baseCtx, 300*time.Millisecond)

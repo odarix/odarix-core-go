@@ -1,8 +1,9 @@
 package appender
 
 import (
-	"github.com/jonboulle/clockwork"
 	"time"
+
+	"github.com/jonboulle/clockwork"
 
 	"github.com/odarix/odarix-core-go/relabeler/logger"
 	"github.com/odarix/odarix-core-go/util"
