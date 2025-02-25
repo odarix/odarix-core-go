@@ -116,7 +116,7 @@ type (
 
 	// HashdexFactory - constructor factory for Hashdex.
 	HashdexFactory interface {
-		Protobuf(data []byte, limits cppbridge.WALHashdexLimits) (cppbridge.ShardedData, error)
+		SnappyProtobuf(data []byte, limits cppbridge.WALHashdexLimits) (cppbridge.ShardedData, error)
 		GoModel(data []model.TimeSeries, limits cppbridge.WALHashdexLimits) (cppbridge.ShardedData, error)
 	}
 
@@ -320,7 +320,7 @@ func NewManager(
 
 // Send - send data to encoders.
 func (mgr *Manager) Send(ctx context.Context, data ProtoData) (Promise, error) {
-	hx, err := mgr.hashdexFactory.Protobuf(data.Bytes(), mgr.limits.Hashdex)
+	hx, err := mgr.hashdexFactory.SnappyProtobuf(data.Bytes(), mgr.limits.Hashdex)
 	if err != nil {
 		data.Destroy()
 		return nil, err
@@ -369,7 +369,7 @@ func (mgr *Manager) Send(ctx context.Context, data ProtoData) (Promise, error) {
 
 // SendOpenHeadProtobuf adds data to encoders to send it later when limits reached
 func (mgr *Manager) SendOpenHeadProtobuf(ctx context.Context, data ProtoData) (Promise, error) {
-	hx, err := mgr.hashdexFactory.Protobuf(data.Bytes(), mgr.limits.Hashdex)
+	hx, err := mgr.hashdexFactory.SnappyProtobuf(data.Bytes(), mgr.limits.Hashdex)
 	if err != nil {
 		data.Destroy()
 		return nil, err

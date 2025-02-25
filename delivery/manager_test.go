@@ -590,12 +590,16 @@ func (s *ManagerSuite) TestLongDial() {
 	s.T().Log("Send data will be rejected")
 	expectedData := faker.Paragraph()
 	data := newShardedDataTest(expectedData)
+
 	sendCtx, sendCancel := context.WithTimeout(baseCtx, 100*time.Millisecond)
-	time.AfterFunc(time.Millisecond, func() {
-		clock.Advance(time.Minute + time.Second)
-	})
 	promise, err := manager.Send(sendCtx, data)
 	s.NoError(err)
+
+	clockCtx, clockCancel := context.WithTimeout(baseCtx, 1000*time.Millisecond)
+	clock.BlockUntilContext(clockCtx, 2)
+	clockCancel()
+	clock.Advance(time.Minute + time.Second)
+
 	delivered, err := promise.Await(sendCtx)
 	s.False(delivered)
 	s.NoError(err)

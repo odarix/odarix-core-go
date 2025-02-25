@@ -79,7 +79,7 @@ func (dt *dataTest) Destroy() {
 
 type testHashdexFactory struct{}
 
-func (testHashdexFactory) Protobuf(data []byte, _ cppbridge.WALHashdexLimits) (cppbridge.ShardedData, error) {
+func (testHashdexFactory) SnappyProtobuf(data []byte, _ cppbridge.WALHashdexLimits) (cppbridge.ShardedData, error) {
 	return newShardedDataTest(string(data)), nil
 }
 
